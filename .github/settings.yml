@@ -1,0 +1,26 @@
+repository:
+  name: omnimem
+  description: "OmniMem — 五层混合记忆系统：感知→工作→结构化→深层→内化，含治理引擎(冲突/衰减/遗忘/隐私/溯源)"
+  topics:
+    - memory-system
+    - ai-agent
+    - rag
+    - vector-database
+    - knowledge-graph
+    - chromadb
+    - python
+    - memory-provider
+    - hermes-plugin
+    - consolidation
+    - forgetting-curve
+    - privacy-protection
+    - provenance-tracking
+  has_issues: true
+  has_projects: false
+  has_wiki: false
+  has_discussions: false
+  default_branch: main
+  allow_squash_merge: true
+  allow_merge_commit: true
+  allow_rebase_merge: true
+  delete_branch_on_merge: true
