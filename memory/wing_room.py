@@ -160,7 +160,7 @@ class WingRoomManager:
         """
         # 策略 1: 尝试使用 KG 的 extract_entities
         try:
-            from plugins.memory.omnimem.deep.knowledge_graph import extract_entities
+            from omnimem.deep.knowledge_graph import extract_entities
             entities = extract_entities(content)
             # 过滤停用词和太短的实体
             valid = [e for e in entities

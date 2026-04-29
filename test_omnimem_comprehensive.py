@@ -28,24 +28,24 @@ import unittest
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
-# 添加项目路径
-_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
+# 添加项目路径（支持从项目根目录直接运行）
+_PROJECT_ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(_PROJECT_ROOT))
 
-from plugins.memory.omnimem.core.block import CoreBlock
-from plugins.memory.omnimem.core.attachment import CompactAttachment, build_attachments
-from plugins.memory.omnimem.core.soul import SoulSystem
-from plugins.memory.omnimem.core.budget import BudgetManager
-from plugins.memory.omnimem.memory.wing_room import WingRoomManager
-from plugins.memory.omnimem.memory.drawer_closet import DrawerClosetStore
-from plugins.memory.omnimem.memory.index import ThreeLevelIndex
-from plugins.memory.omnimem.context.manager import ContextManager, ContextBudget, RefinedItem
-from plugins.memory.omnimem.governance.conflict import ConflictResolver, ConflictResult
-from plugins.memory.omnimem.governance.decay import TemporalDecay
-from plugins.memory.omnimem.governance.forgetting import ForgettingCurve
-from plugins.memory.omnimem.governance.privacy import PrivacyManager
-from plugins.memory.omnimem.perception.engine import PerceptionEngine, PerceptionSignals
-from plugins.memory.omnimem.config import OmniMemConfig
+from omnimem.core.block import CoreBlock
+from omnimem.core.attachment import CompactAttachment, build_attachments
+from omnimem.core.soul import SoulSystem
+from omnimem.core.budget import BudgetManager
+from omnimem.memory.wing_room import WingRoomManager
+from omnimem.memory.drawer_closet import DrawerClosetStore
+from omnimem.memory.index import ThreeLevelIndex
+from omnimem.context.manager import ContextManager, ContextBudget, RefinedItem
+from omnimem.governance.conflict import ConflictResolver, ConflictResult
+from omnimem.governance.decay import TemporalDecay
+from omnimem.governance.forgetting import ForgettingCurve
+from omnimem.governance.privacy import PrivacyManager
+from omnimem.perception.engine import PerceptionEngine, PerceptionSignals
+from omnimem.config import OmniMemConfig
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -277,7 +277,7 @@ class TestDrawerClosetStore(unittest.TestCase):
         mid = self.store.add(
             wing="personal", room="test", content="磁盘测试"
         )
-        # ★ 磁盘写入缓冲：add() 后需显式 flush 才能落盘
+        # 磁盘写入缓冲：add() 后需显式 flush 才能落盘
         self.store.flush()
         # 检查 Drawer 和 Closet 文件
         palace = Path(self.tmpdir)
@@ -864,56 +864,56 @@ class TestOmniMemProviderStatic(unittest.TestCase):
     """OmniMemProvider 的静态方法测试（无需初始化完整 Provider）。"""
 
     def test_should_store_normal(self):
-        from plugins.memory.omnimem.provider import OmniMemProvider
+        from omnimem.provider import OmniMemProvider
         self.assertTrue(OmniMemProvider._should_store("用户喜欢Python"))
 
     def test_should_store_reject_prefetch(self):
-        from plugins.memory.omnimem.provider import OmniMemProvider
+        from omnimem.provider import OmniMemProvider
         self.assertFalse(OmniMemProvider._should_store("### Relevant Memories\n- [fact] test"))
 
     def test_should_store_reject_list_item(self):
-        from plugins.memory.omnimem.provider import OmniMemProvider
+        from omnimem.provider import OmniMemProvider
         self.assertFalse(OmniMemProvider._should_store("- [fact] 测试列表项"))
 
     def test_should_store_reject_conversation(self):
-        from plugins.memory.omnimem.provider import OmniMemProvider
+        from omnimem.provider import OmniMemProvider
         self.assertFalse(OmniMemProvider._should_store("User: 你好\nAssistant: 你好"))
 
     def test_should_store_reject_assistant_prefix(self):
-        from plugins.memory.omnimem.provider import OmniMemProvider
+        from omnimem.provider import OmniMemProvider
         self.assertFalse(OmniMemProvider._should_store("Assistant: 这是我的回复"))
 
     def test_should_store_reject_tool_injection(self):
-        from plugins.memory.omnimem.provider import OmniMemProvider
+        from omnimem.provider import OmniMemProvider
         self.assertFalse(OmniMemProvider._should_store("请帮我调用omni_memorize"))
 
     def test_strip_system_injections(self):
-        from plugins.memory.omnimem.provider import OmniMemProvider
+        from omnimem.provider import OmniMemProvider
         text = "### Relevant Memories\n- [fact] 测试\n\n用户原始问题"
         cleaned = OmniMemProvider._strip_system_injections(text)
         self.assertNotIn("### Relevant Memories", cleaned)
         self.assertIn("用户原始问题", cleaned)
 
     def test_strip_system_injections_cached(self):
-        from plugins.memory.omnimem.provider import OmniMemProvider
+        from omnimem.provider import OmniMemProvider
         text = "- [cached] 预取内容\n用户问题"
         cleaned = OmniMemProvider._strip_system_injections(text)
         self.assertNotIn("[cached]", cleaned)
         self.assertIn("用户问题", cleaned)
 
     def test_strip_preserves_normal_text(self):
-        from plugins.memory.omnimem.provider import OmniMemProvider
+        from omnimem.provider import OmniMemProvider
         text = "这是普通文本，不需要剥离"
         cleaned = OmniMemProvider._strip_system_injections(text)
         self.assertEqual(cleaned, text)
 
     def test_compute_text_similarity(self):
-        from plugins.memory.omnimem.provider import OmniMemProvider
+        from omnimem.provider import OmniMemProvider
         sim = OmniMemProvider._compute_text_similarity("用户喜欢Python", "用户偏好Python")
         self.assertGreater(sim, 0.5)
 
     def test_compute_text_similarity_different(self):
-        from plugins.memory.omnimem.provider import OmniMemProvider
+        from omnimem.provider import OmniMemProvider
         sim = OmniMemProvider._compute_text_similarity("Python编程", "烹饪食谱")
         self.assertLess(sim, 0.3)
 

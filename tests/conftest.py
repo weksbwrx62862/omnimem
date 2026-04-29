@@ -2,8 +2,17 @@
 
 from __future__ import annotations
 
+import sys
 import tempfile
 from pathlib import Path
+from unittest.mock import MagicMock
+
+# Mock agent.memory_provider 模块（Hermes 框架依赖）
+_mock_agent = MagicMock()
+_mock_agent.memory_provider = MagicMock()
+_mock_agent.memory_provider.MemoryProvider = object
+sys.modules.setdefault("agent", _mock_agent)
+sys.modules.setdefault("agent.memory_provider", _mock_agent.memory_provider)
 
 import pytest
 

@@ -11,8 +11,8 @@ import re
 from datetime import datetime, timezone
 from typing import Any, Dict
 
-from plugins.memory.omnimem.handlers._compat import compat_scan_memory_content
-from plugins.memory.omnimem.core.saga import SagaStep
+from omnimem.handlers._compat import compat_scan_memory_content
+from omnimem.core.saga import SagaStep
 
 logger = logging.getLogger(__name__)
 

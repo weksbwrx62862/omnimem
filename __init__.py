@@ -14,7 +14,25 @@
 配置: config.yaml → memory.provider: omnimem
 """
 
-from plugins.memory.omnimem.provider import OmniMemProvider
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+from unittest.mock import MagicMock
+
+# 当作为独立包运行时，将项目根目录加入 sys.path
+_PROJECT_ROOT = Path(__file__).resolve().parent
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
+
+# Mock agent.memory_provider 模块（Hermes 框架依赖）
+_mock_agent = MagicMock()
+_mock_agent.memory_provider = MagicMock()
+_mock_agent.memory_provider.MemoryProvider = object
+sys.modules.setdefault("agent", _mock_agent)
+sys.modules.setdefault("agent.memory_provider", _mock_agent.memory_provider)
+
+from omnimem.provider import OmniMemProvider
 
 
 def register(ctx) -> None:

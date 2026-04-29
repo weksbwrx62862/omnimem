@@ -11,10 +11,11 @@ import sys
 import tempfile
 from pathlib import Path
 
-# 添加项目路径
-sys.path.insert(0, "/home/xxh/claudecode源码(仅用于学习交流)/架构/hermes-agent-main")
+# 添加项目路径（支持从项目根目录直接运行）
+_PROJECT_ROOT = Path(__file__).resolve().parent
+sys.path.insert(0, str(_PROJECT_ROOT))
 
-from plugins.memory.omnimem.retrieval.engine import HybridRetriever
+from omnimem.retrieval.engine import HybridRetriever
 
 
 def test_quantum_computing_retrieval():
@@ -28,7 +29,7 @@ def test_quantum_computing_retrieval():
         data_dir = Path(tmpdir)
         retriever = HybridRetriever(data_dir=data_dir)
 
-        # ★ 构造包含多个子主题的量子计算长文本
+        # 构造包含多个子主题的量子计算长文本
         quantum_text = """
 量子计算是利用量子力学原理（如叠加和纠缠）进行信息处理的革命性技术。
 与传统计算机使用比特不同，量子计算机使用量子比特，可以同时处于0和1的叠加态。

@@ -22,7 +22,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, List
 
-from plugins.memory.omnimem.governance.encryption import MemoryEncryption
+from omnimem.governance.encryption import MemoryEncryption
 
 logger = logging.getLogger(__name__)
 
