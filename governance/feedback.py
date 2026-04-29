@@ -1,0 +1,233 @@
+"""FeedbackCollector — 检索反馈收集器。
+
+Cross-Encoder 在线学习的基础层：
+  1. 记录 Agent 实际使用了哪些召回结果（通过 omni_detail 调用追踪）
+  2. 记录 recall 返回的候选列表与最终 Agent 的选择
+  3. 基于统计生成来源权重（vector/bm25/graph/store_supplement），
+     供 HybridRetriever 的 RRF 融合动态调整
+
+设计为轻量级实现：不训练神经网络，而是用统计反馈做来源加权。
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import sqlite3
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+
+logger = logging.getLogger(__name__)
+
+
+class FeedbackCollector:
+    """检索反馈收集器。
+
+    表结构：
+      feedback_clicks   — 用户/Agent 实际点击/使用的记忆
+      feedback_shown    — recall/prefetch 返回但未使用的候选
+    """
+
+    def __init__(self, data_dir: Path):
+        self._data_dir = data_dir
+        self._data_dir.mkdir(parents=True, exist_ok=True)
+        self._db_path = self._data_dir / "feedback.db"
+        self._conn: Optional[sqlite3.Connection] = None
+        self._init_db()
+
+    def _init_db(self) -> None:
+        """初始化反馈数据库。"""
+        self._conn = sqlite3.connect(str(self._db_path), check_same_thread=False)
+        self._conn.execute("PRAGMA journal_mode=WAL")
+
+        self._conn.execute("""
+            CREATE TABLE IF NOT EXISTS feedback_clicks (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                query TEXT,
+                memory_id TEXT,
+                source_type TEXT,
+                rank INTEGER,
+                action TEXT DEFAULT 'click',
+                timestamp TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        self._conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_fb_query ON feedback_clicks(query)
+        """)
+        self._conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_fb_mid ON feedback_clicks(memory_id)
+        """)
+
+        self._conn.execute("""
+            CREATE TABLE IF NOT EXISTS feedback_shown (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                query TEXT,
+                memory_id TEXT,
+                source_type TEXT,
+                rank INTEGER,
+                was_clicked INTEGER DEFAULT 0,
+                timestamp TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        self._conn.commit()
+
+    def record_click(
+        self,
+        query: str,
+        memory_id: str,
+        source_type: str = "",
+        rank: int = 0,
+    ) -> None:
+        """记录 Agent 实际使用了一条记忆（如通过 omni_detail 拉取）。"""
+        if not self._conn:
+            return
+        try:
+            self._conn.execute(
+                """INSERT INTO feedback_clicks (query, memory_id, source_type, rank)
+                   VALUES (?, ?, ?, ?)""",
+                (query, memory_id, source_type, rank),
+            )
+            self._conn.commit()
+        except Exception as e:
+            logger.debug("Feedback click record failed: %s", e)
+
+    def record_shown(
+        self,
+        query: str,
+        candidates: List[Dict[str, Any]],
+    ) -> None:
+        """记录 recall/prefetch 返回的候选列表。
+
+        Args:
+            query: 查询文本
+            candidates: 候选结果列表，每项需含 memory_id 和 _source/type
+        """
+        if not self._conn or not candidates:
+            return
+        try:
+            for rank, c in enumerate(candidates[:20], start=1):  # 只记录前 20
+                self._conn.execute(
+                    """INSERT INTO feedback_shown (query, memory_id, source_type, rank)
+                       VALUES (?, ?, ?, ?)""",
+                    (
+                        query,
+                        c.get("memory_id", ""),
+                        c.get("_source", "") or c.get("type", "unknown"),
+                        rank,
+                    ),
+                )
+            self._conn.commit()
+        except Exception as e:
+            logger.debug("Feedback shown record failed: %s", e)
+
+    def get_source_weights(self, window: int = 100) -> Dict[str, float]:
+        """基于最近反馈计算各来源的权重。
+
+        逻辑：
+          weight(source) = 1.0 + 0.5 * (点击率 - 基准点击率)
+          点击率 = clicks / shown
+
+        Args:
+            window: 最近多少条 click 记录参与计算
+
+        Returns:
+            source → weight 映射，默认 1.0
+        """
+        if not self._conn:
+            return {}
+        try:
+            # 获取最近 window 次点击涉及的查询
+            rows = self._conn.execute(
+                """SELECT DISTINCT query FROM feedback_clicks
+                   ORDER BY timestamp DESC LIMIT ?""",
+                (window,),
+            ).fetchall()
+            recent_queries = [r[0] for r in rows if r[0]]
+            if not recent_queries:
+                return {}
+
+            placeholders = ",".join("?" * len(recent_queries))
+            # 各来源被点击次数
+            click_rows = self._conn.execute(
+                f"""SELECT source_type, COUNT(*) FROM feedback_clicks
+                    WHERE query IN ({placeholders}) AND source_type != ''
+                    GROUP BY source_type""",
+                recent_queries,
+            ).fetchall()
+            # 各来源被展示次数
+            shown_rows = self._conn.execute(
+                f"""SELECT source_type, COUNT(*) FROM feedback_shown
+                    WHERE query IN ({placeholders}) AND source_type != ''
+                    GROUP BY source_type""",
+                recent_queries,
+            ).fetchall()
+
+            clicks = {r[0]: r[1] for r in click_rows}
+            shown = {r[0]: r[1] for r in shown_rows}
+
+            weights: Dict[str, float] = {}
+            for src, s_count in shown.items():
+                c_count = clicks.get(src, 0)
+                ctr = c_count / s_count if s_count > 0 else 0
+                # 基准点击率假设 0.3，高于则加权，低于则降权
+                weights[src] = round(1.0 + 0.8 * (ctr - 0.3), 2)
+            return weights
+        except Exception as e:
+            logger.debug("Source weights calculation failed: %s", e)
+            return {}
+
+    def get_training_triplets(
+        self,
+        limit: int = 100,
+    ) -> List[Dict[str, Any]]:
+        """获取用于 Cross-Encoder 微调的三元组样本。
+
+        Returns:
+            [{"query": str, "positive": str, "negative": str}, ...]
+        """
+        if not self._conn:
+            return []
+        try:
+            rows = self._conn.execute(
+                """SELECT query, memory_id FROM feedback_clicks
+                   ORDER BY timestamp DESC LIMIT ?""",
+                (limit,),
+            ).fetchall()
+            triplets = []
+            for query, mid in rows:
+                # 找到同一查询下被展示但未点击的作为负例
+                neg = self._conn.execute(
+                    """SELECT memory_id FROM feedback_shown
+                       WHERE query = ? AND memory_id != ?
+                       ORDER BY rank DESC LIMIT 1""",
+                    (query, mid),
+                ).fetchone()
+                if neg:
+                    triplets.append({
+                        "query": query,
+                        "positive": mid,
+                        "negative": neg[0],
+                    })
+            return triplets
+        except Exception as e:
+            logger.debug("Training triplets fetch failed: %s", e)
+            return []
+
+    def get_stats(self) -> Dict[str, Any]:
+        """返回反馈统计。"""
+        stats = {"total_clicks": 0, "total_shown": 0, "sources": {}}
+        if not self._conn:
+            return stats
+        try:
+            row = self._conn.execute("SELECT COUNT(*) FROM feedback_clicks").fetchone()
+            stats["total_clicks"] = row[0] if row else 0
+            row = self._conn.execute("SELECT COUNT(*) FROM feedback_shown").fetchone()
+            stats["total_shown"] = row[0] if row else 0
+            rows = self._conn.execute(
+                "SELECT source_type, COUNT(*) FROM feedback_clicks GROUP BY source_type"
+            ).fetchall()
+            stats["sources"] = {r[0]: r[1] for r in rows}
+        except Exception:
+            pass
+        return stats
