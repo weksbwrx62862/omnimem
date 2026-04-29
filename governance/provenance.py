@@ -40,7 +40,8 @@ class ProvenanceTracker:
         db_path = data_dir / "provenance.db"
         self._conn = sqlite3.connect(str(db_path), check_same_thread=False)
         self._conn.execute("PRAGMA journal_mode=WAL")
-        self._conn.execute("""
+        self._conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS provenance (
                 memory_id TEXT PRIMARY KEY,
                 source TEXT,
@@ -50,7 +51,8 @@ class ProvenanceTracker:
                 parent_id TEXT,
                 metadata TEXT
             )
-        """)
+        """
+        )
         self._conn.commit()
         # 从数据库恢复内存索引
         self._restore()

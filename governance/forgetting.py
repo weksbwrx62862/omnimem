@@ -51,7 +51,8 @@ class ForgettingCurve:
         """初始化遗忘数据库。"""
         self._conn = sqlite3.connect(str(self._db_path), check_same_thread=False)
         self._conn.execute("PRAGMA journal_mode=WAL")
-        self._conn.execute("""
+        self._conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS forgetting_state (
                 memory_id TEXT PRIMARY KEY,
                 stage TEXT NOT NULL DEFAULT 'active',
@@ -60,7 +61,8 @@ class ForgettingCurve:
                 archive_count INTEGER DEFAULT 0,
                 recall_count INTEGER DEFAULT 0
             )
-        """)
+        """
+        )
         # ★ 兼容旧表：如果 recall_count 列不存在则添加
         try:
             self._conn.execute(

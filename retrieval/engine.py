@@ -521,8 +521,7 @@ class HybridRetriever:
         import uuid
 
         clean_user = re.sub(
-            r"### Relevant Memories(?:\s*\(prefetched\))?\s*\n.*"
-            r"(?=\n(?!- )|\Z)",
+            r"### Relevant Memories(?:\s*\(prefetched\))?\s*\n.*" r"(?=\n(?!- )|\Z)",
             "",
             user_content,
             flags=re.DOTALL | re.IGNORECASE,

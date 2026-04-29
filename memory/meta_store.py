@@ -43,7 +43,8 @@ class MetaStore:
         self._conn.execute("PRAGMA synchronous=NORMAL")
 
         # 核心元数据表
-        self._conn.execute("""
+        self._conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS memories (
                 memory_id TEXT PRIMARY KEY,
                 wing TEXT,
@@ -59,7 +60,8 @@ class MetaStore:
                 vc TEXT,
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP
             )
-        """)
+        """
+        )
 
         # 向后兼容：旧表无 vc 列时自动迁移
         try:
@@ -77,7 +79,8 @@ class MetaStore:
 
         # 尝试创建 FTS5 虚拟表（全文搜索）
         try:
-            self._conn.execute("""
+            self._conn.execute(
+                """
                 CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
                     memory_id UNINDEXED,
                     summary,
@@ -85,28 +88,35 @@ class MetaStore:
                     content='memories',
                     content_rowid='rowid'
                 )
-            """)
+            """
+            )
             # 创建触发器保持 FTS 表同步
-            self._conn.execute("""
+            self._conn.execute(
+                """
                 CREATE TRIGGER IF NOT EXISTS mem_ai AFTER INSERT ON memories BEGIN
                     INSERT INTO memories_fts(rowid, summary, content_preview)
                     VALUES (new.rowid, new.summary, new.content_preview);
                 END
-            """)
-            self._conn.execute("""
+            """
+            )
+            self._conn.execute(
+                """
                 CREATE TRIGGER IF NOT EXISTS mem_ad AFTER DELETE ON memories BEGIN
                     INSERT INTO memories_fts(memories_fts, rowid, summary, content_preview)
                     VALUES ('delete', old.rowid, old.summary, old.content_preview);
                 END
-            """)
-            self._conn.execute("""
+            """
+            )
+            self._conn.execute(
+                """
                 CREATE TRIGGER IF NOT EXISTS mem_au AFTER UPDATE ON memories BEGIN
                     INSERT INTO memories_fts(memories_fts, rowid, summary, content_preview)
                     VALUES ('delete', old.rowid, old.summary, old.content_preview);
                     INSERT INTO memories_fts(rowid, summary, content_preview)
                     VALUES (new.rowid, new.summary, new.content_preview);
                 END
-            """)
+            """
+            )
             self._fts_enabled = True
             logger.debug("MetaStore FTS5 enabled")
         except Exception:

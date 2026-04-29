@@ -251,7 +251,8 @@ class KnowledgeGraph:
         self._conn.execute("PRAGMA journal_mode=WAL")
 
         # 三元组表（含时序有效性）
-        self._conn.execute("""
+        self._conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS triples (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 subject TEXT NOT NULL,
@@ -264,19 +265,27 @@ class KnowledgeGraph:
                 valid_to TEXT,
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP
             )
-        """)
-        self._conn.execute("""
+        """
+        )
+        self._conn.execute(
+            """
             CREATE INDEX IF NOT EXISTS idx_subject ON triples(subject)
-        """)
-        self._conn.execute("""
+        """
+        )
+        self._conn.execute(
+            """
             CREATE INDEX IF NOT EXISTS idx_object ON triples(object)
-        """)
-        self._conn.execute("""
+        """
+        )
+        self._conn.execute(
+            """
             CREATE INDEX IF NOT EXISTS idx_predicate ON triples(predicate)
-        """)
+        """
+        )
 
         # 实体表
-        self._conn.execute("""
+        self._conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS entities (
                 name TEXT PRIMARY KEY,
                 entity_type TEXT DEFAULT 'unknown',
@@ -284,7 +293,8 @@ class KnowledgeGraph:
                 first_seen TEXT,
                 last_seen TEXT
             )
-        """)
+        """
+        )
 
         self._conn.commit()
 

@@ -128,9 +128,9 @@ def handle_recall(provider, args: dict[str, Any]) -> str:
             graph_results = provider._knowledge_graph.graph_search(query, max_depth=2, limit=10)
             if graph_results:
                 for gr in graph_results[:5]:
-                    gr["content"] = (
-                        f"{gr.get('subject', '')} {gr.get('predicate', '')} {gr.get('object', '')}"
-                    )
+                    gr[
+                        "content"
+                    ] = f"{gr.get('subject', '')} {gr.get('predicate', '')} {gr.get('object', '')}"
                     gr["type"] = "graph_triple"
                     gr["confidence"] = gr.get("confidence", 0.5)
                 results.extend(graph_results[:5])
