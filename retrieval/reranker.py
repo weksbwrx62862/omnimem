@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +25,7 @@ class CrossEncoderReranker:
             return True
         try:
             from sentence_transformers import CrossEncoder
+
             self._model = CrossEncoder(self._model_name)
             return True
         except ImportError:
@@ -37,9 +38,9 @@ class CrossEncoderReranker:
     def rerank(
         self,
         query: str,
-        results: List[Dict[str, Any]],
+        results: list[dict[str, Any]],
         top_k: int = 10,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """对检索结果进行 Cross-Encoder 重排。
 
         Args:
@@ -55,10 +56,12 @@ class CrossEncoderReranker:
 
         try:
             pairs = [(query, r.get("content", "")) for r in results]
+            if self._model is None:
+                return results[:top_k]
             scores = self._model.predict(pairs)
 
             # 按 score 降序排列
-            scored = list(zip(results, scores))
+            scored = list(zip(results, scores, strict=False))
             scored.sort(key=lambda x: x[1], reverse=True)
 
             reranked = []

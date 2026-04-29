@@ -11,12 +11,10 @@ Cross-Encoder 在线学习的基础层：
 
 from __future__ import annotations
 
-import json
 import logging
 import sqlite3
-from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +31,7 @@ class FeedbackCollector:
         self._data_dir = data_dir
         self._data_dir.mkdir(parents=True, exist_ok=True)
         self._db_path = self._data_dir / "feedback.db"
-        self._conn: Optional[sqlite3.Connection] = None
+        self._conn: sqlite3.Connection | None = None
         self._init_db()
 
     def _init_db(self) -> None:
@@ -95,7 +93,7 @@ class FeedbackCollector:
     def record_shown(
         self,
         query: str,
-        candidates: List[Dict[str, Any]],
+        candidates: list[dict[str, Any]],
     ) -> None:
         """记录 recall/prefetch 返回的候选列表。
 
@@ -121,7 +119,7 @@ class FeedbackCollector:
         except Exception as e:
             logger.debug("Feedback shown record failed: %s", e)
 
-    def get_source_weights(self, window: int = 100) -> Dict[str, float]:
+    def get_source_weights(self, window: int = 100) -> dict[str, float]:
         """基于最近反馈计算各来源的权重。
 
         逻辑：
@@ -166,7 +164,7 @@ class FeedbackCollector:
             clicks = {r[0]: r[1] for r in click_rows}
             shown = {r[0]: r[1] for r in shown_rows}
 
-            weights: Dict[str, float] = {}
+            weights: dict[str, float] = {}
             for src, s_count in shown.items():
                 c_count = clicks.get(src, 0)
                 ctr = c_count / s_count if s_count > 0 else 0
@@ -180,7 +178,7 @@ class FeedbackCollector:
     def get_training_triplets(
         self,
         limit: int = 100,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """获取用于 Cross-Encoder 微调的三元组样本。
 
         Returns:
@@ -204,17 +202,19 @@ class FeedbackCollector:
                     (query, mid),
                 ).fetchone()
                 if neg:
-                    triplets.append({
-                        "query": query,
-                        "positive": mid,
-                        "negative": neg[0],
-                    })
+                    triplets.append(
+                        {
+                            "query": query,
+                            "positive": mid,
+                            "negative": neg[0],
+                        }
+                    )
             return triplets
         except Exception as e:
             logger.debug("Training triplets fetch failed: %s", e)
             return []
 
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> dict[str, Any]:
         """返回反馈统计。"""
         stats = {"total_clicks": 0, "total_shown": 0, "sources": {}}
         if not self._conn:

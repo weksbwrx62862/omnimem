@@ -18,50 +18,48 @@ from __future__ import annotations
 
 import json
 import logging
-import os
-import threading
-from datetime import datetime, timezone
-from pathlib import Path
-from typing import Any, Dict, List, Optional
 import re
+import threading
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+from typing import Any
 
 from agent.memory_provider import MemoryProvider
 
-from omnimem.core.block import CoreBlock
+from omnimem.config import OmniMemConfig
+from omnimem.context.manager import ContextBudget, ContextManager
 from omnimem.core.attachment import CompactAttachment, build_attachments
-from omnimem.core.soul import SoulSystem
-from omnimem.core.budget import BudgetManager
-from omnimem.core.store_service import MemoryStoreService
 from omnimem.core.background import BackgroundTaskExecutor
-from omnimem.core.saga import SagaCoordinator, SagaStep
-from omnimem.memory.wing_room import WingRoomManager
-from omnimem.memory.drawer_closet import DrawerClosetStore
-from omnimem.memory.index import ThreeLevelIndex
-from omnimem.memory.markdown_store import MarkdownStore
-from omnimem.retrieval.engine import HybridRetriever
+from omnimem.core.block import CoreBlock
+from omnimem.core.budget import BudgetManager
+from omnimem.core.saga import SagaCoordinator
+from omnimem.core.soul import SoulSystem
+from omnimem.core.store_service import MemoryStoreService
+from omnimem.governance.auditor import GovernanceAuditor
 from omnimem.governance.conflict import ConflictResolver
 from omnimem.governance.decay import TemporalDecay
+from omnimem.governance.feedback import FeedbackCollector
 from omnimem.governance.forgetting import ForgettingCurve
 from omnimem.governance.privacy import PrivacyManager
 from omnimem.governance.provenance import ProvenanceTracker
-from omnimem.governance.sync import SyncEngine, SyncConfig
-from omnimem.governance.auditor import GovernanceAuditor
-from omnimem.governance.feedback import FeedbackCollector
+from omnimem.governance.sync import SyncConfig, SyncEngine
 from omnimem.governance.vector_clock import VectorClock
-from omnimem.perception.engine import PerceptionEngine
-from omnimem.config import OmniMemConfig
-from omnimem.context.manager import ContextManager, ContextBudget
-from concurrent.futures import ThreadPoolExecutor
-from omnimem.utils.llm_client import AsyncLLMClient
-from omnimem.utils.security import SecurityValidator
+from omnimem.handlers._compat import compat_scan_memory_content as _compat_scan_memory_content
+from omnimem.handlers.govern import _scan_memory_conflicts as _scan_memory_conflicts_impl
+from omnimem.handlers.govern import handle_govern as _handle_govern_impl
+from omnimem.handlers.memorize import handle_memorize as _handle_memorize_impl
+from omnimem.handlers.recall import handle_recall as _handle_recall_impl
 
 # ★ 委托调用：从 handlers 子模块导入拆分后的处理器
 from omnimem.handlers.schemas import get_tool_schemas as _get_tool_schemas
-from omnimem.handlers.memorize import handle_memorize as _handle_memorize_impl
-from omnimem.handlers.recall import handle_recall as _handle_recall_impl
-from omnimem.handlers.govern import handle_govern as _handle_govern_impl
-from omnimem.handlers.govern import _scan_memory_conflicts as _scan_memory_conflicts_impl
-from omnimem.handlers._compat import compat_scan_memory_content as _compat_scan_memory_content
+from omnimem.memory.drawer_closet import DrawerClosetStore
+from omnimem.memory.index import ThreeLevelIndex
+from omnimem.memory.markdown_store import MarkdownStore
+from omnimem.memory.wing_room import WingRoomManager
+from omnimem.perception.engine import PerceptionEngine
+from omnimem.retrieval.engine import HybridRetriever
+from omnimem.utils.llm_client import AsyncLLMClient
+from omnimem.utils.security import SecurityValidator
 
 logger = logging.getLogger(__name__)
 
@@ -100,11 +98,10 @@ class OmniMemProvider(MemoryProvider):
         try:
             import chromadb  # noqa: F401
             import rank_bm25  # noqa: F401
+
             return True
         except ImportError:
-            logger.warning(
-                "OmniMem: 缺少依赖。运行: pip install chromadb rank-bm25"
-            )
+            logger.warning("OmniMem: 缺少依赖。运行: pip install chromadb rank-bm25")
             return False
 
     def initialize(self, session_id: str, **kwargs) -> None:
@@ -144,7 +141,9 @@ class OmniMemProvider(MemoryProvider):
 
         logger.info(
             "OmniMem initialized: session=%s, platform=%s, data_dir=%s, L3=enabled, L4=enabled",
-            session_id, platform, self._data_dir,
+            session_id,
+            platform,
+            self._data_dir,
         )
 
         # ★ 启动预热 + BM25 重建：合并为一次查询，减少 SQLite IO
@@ -156,8 +155,11 @@ class OmniMemProvider(MemoryProvider):
                 self._store.warm_up(indexed_entries[:500])
                 rebuilt = self._retriever.rebuild_bm25_from_entries(indexed_entries)
                 if rebuilt > 0:
-                    logger.debug("OmniMem: warmed up %d entries, rebuilt BM25 with %d entries",
-                                 min(len(indexed_entries), 500), rebuilt)
+                    logger.debug(
+                        "OmniMem: warmed up %d entries, rebuilt BM25 with %d entries",
+                        min(len(indexed_entries), 500),
+                        rebuilt,
+                    )
         except Exception as e:
             logger.debug("OmniMem warm-up/BM25 rebuild failed (non-fatal): %s", e)
 
@@ -170,10 +172,8 @@ class OmniMemProvider(MemoryProvider):
             context_block="",
             plan_block="",
         )
-        self._budget = BudgetManager(
-            max_tokens=self._config.get("budget_tokens", 4000)
-        )
-        self._attachments: List[CompactAttachment] = []
+        self._budget = BudgetManager(max_tokens=self._config.get("budget_tokens", 4000))
+        self._attachments: list[CompactAttachment] = []
 
         # L2 结构化记忆
         self._wing_room = WingRoomManager(self._data_dir / "palace")
@@ -252,7 +252,7 @@ class OmniMemProvider(MemoryProvider):
         self._prefetch_cache: str = ""
         self._prefetch_lock = threading.Lock()
         # ★ R26优化：在初始化阶段创建缓存，而非运行时 hasattr 延迟初始化
-        self._reflect_cache: Dict[str, tuple] = {}
+        self._reflect_cache: dict[str, tuple] = {}
         # ★ 后台预取线程池（复用线程，避免频繁创建/销毁）
         self._prefetch_executor = ThreadPoolExecutor(
             max_workers=1, thread_name_prefix="omnimem_prefetch"
@@ -325,6 +325,7 @@ class OmniMemProvider(MemoryProvider):
         """获取异步包装器（延迟初始化）。"""
         if not hasattr(self, "_async_provider"):
             from omnimem.core.async_provider import AsyncOmniMemProvider
+
             self._async_provider = AsyncOmniMemProvider(self)
         return self._async_provider
 
@@ -381,8 +382,12 @@ class OmniMemProvider(MemoryProvider):
         total_chars = 0
         base_budget = self._config.get("system_prompt_char_limit", 500)
         # ★ P1方案三：自适应预算 — 根据查询复杂度动态调整
-        last_query = getattr(self, '_last_query', '')
-        query_kw_count = len(re.findall(r'[\u4e00-\u9fff]{2,}|[a-zA-Z]{3,}', last_query.lower())) if last_query else 0
+        last_query = getattr(self, "_last_query", "")
+        query_kw_count = (
+            len(re.findall(r"[\u4e00-\u9fff]{2,}|[a-zA-Z]{3,}", last_query.lower()))
+            if last_query
+            else 0
+        )
         char_budget = base_budget + min(query_kw_count * 40, 300)
         max_summary = self._context_manager.max_summary_chars  # 60
         seen_fps = set(self._context_manager.get_injected_fingerprints())  # 与已有注入去重
@@ -475,7 +480,7 @@ class OmniMemProvider(MemoryProvider):
         if cached and cached.startswith("___RAW_RESULTS___"):
             # 新格式: 存的是 JSON 化的原始结果
             try:
-                async_results = json.loads(cached[len("___RAW_RESULTS___"):])
+                async_results = json.loads(cached[len("___RAW_RESULTS___") :])
             except Exception:
                 async_results = []
 
@@ -491,7 +496,9 @@ class OmniMemProvider(MemoryProvider):
                     graph_results = self._knowledge_graph.graph_search(query, max_depth=2, limit=10)
                     if graph_results:
                         for gr in graph_results[:5]:
-                            gr["content"] = f"{gr.get('subject','')} {gr.get('predicate','')} {gr.get('object','')}"
+                            gr["content"] = (
+                                f"{gr.get('subject', '')} {gr.get('predicate', '')} {gr.get('object', '')}"
+                            )
                             gr["type"] = "graph_triple"
                             gr["confidence"] = gr.get("confidence", 0.5)
                         live_results.extend(graph_results[:5])
@@ -526,6 +533,7 @@ class OmniMemProvider(MemoryProvider):
 
     def queue_prefetch(self, query: str, *, session_id: str = "") -> None:
         """后台异步预检索下一轮 — 存原始结果，由 prefetch() 经 ContextManager 精炼。"""
+
         def _bg_prefetch():
             try:
                 max_tokens = self._config.get("max_prefetch_tokens", 300)
@@ -556,8 +564,7 @@ class OmniMemProvider(MemoryProvider):
         """
         return SecurityValidator.strip_system_injections(text)
 
-    def sync_turn(self, user_content: str, assistant_content: str,
-                  *, session_id: str = "") -> None:
+    def sync_turn(self, user_content: str, assistant_content: str, *, session_id: str = "") -> None:
         """每轮对话后：感知 → 写入 → 治理。"""
         if not self._should_write:
             return
@@ -588,17 +595,17 @@ class OmniMemProvider(MemoryProvider):
         # ★ P0方案二：统一后台任务执行器替代每轮新建 threading.Thread
         self._bg_executor.submit(
             self._retriever.index_update,
-            user_content, assistant_content,
+            user_content,
+            assistant_content,
         )
 
     # ─── 工具暴露 ─────────────────────────────────────────────
 
-    def get_tool_schemas(self) -> List[Dict[str, Any]]:
+    def get_tool_schemas(self) -> list[dict[str, Any]]:
         """OmniMem 暴露 7 个工具给 Agent — 委托到 handlers/schemas.py。"""
         return _get_tool_schemas()
 
-    def handle_tool_call(self, tool_name: str, args: Dict[str, Any],
-                         **kwargs) -> str:
+    def handle_tool_call(self, tool_name: str, args: dict[str, Any], **kwargs) -> str:
         """路由工具调用到对应功能。
 
         路由逻辑:
@@ -674,7 +681,7 @@ class OmniMemProvider(MemoryProvider):
         if predicted:
             self.queue_prefetch(predicted)
 
-    def on_session_end(self, messages: List[Dict[str, Any]]) -> None:
+    def on_session_end(self, messages: list[dict[str, Any]]) -> None:
         """会话结束：Consolidation + 治理归档。"""
         if not self._should_write:
             return
@@ -706,7 +713,9 @@ class OmniMemProvider(MemoryProvider):
                 models = self._consolidation.get_mental_models(limit=20)
                 if models:
                     self._lora_trainer.submit_training_data(models, shade="default")
-                    logger.info("OmniMem L4: submitted %d mental models for LoRA training", len(models))
+                    logger.info(
+                        "OmniMem L4: submitted %d mental models for LoRA training", len(models)
+                    )
             except Exception as e:
                 logger.debug("OmniMem L4 submit failed: %s", e)
 
@@ -724,18 +733,21 @@ class OmniMemProvider(MemoryProvider):
                         fixed = self._auditor.repair(audit)
                         logger.info(
                             "OmniMem governance audit: %d issues found, %d fixed",
-                            audit["total_issues"], fixed,
+                            audit["total_issues"],
+                            fixed,
                         )
             except Exception as e:
                 logger.debug("Governance audit failed: %s", e)
 
         # ★ P0方案二：Saga pending 重试（会话结束前补偿未完成的索引写入）
         if self._saga.get_pending():
-            fixed = self._saga.retry_pending({
-                "three_level_index": lambda mid: self._retry_index_add(mid),
-                "retriever": lambda mid: self._retry_retriever_add(mid),
-                "knowledge_graph": lambda mid: self._retry_kg_extract(mid),
-            })
+            fixed = self._saga.retry_pending(
+                {
+                    "three_level_index": lambda mid: self._retry_index_add(mid),
+                    "retriever": lambda mid: self._retry_retriever_add(mid),
+                    "knowledge_graph": lambda mid: self._retry_kg_extract(mid),
+                }
+            )
             if fixed > 0:
                 logger.info("OmniMem saga retry: fixed %d pending records", fixed)
 
@@ -745,7 +757,7 @@ class OmniMemProvider(MemoryProvider):
 
         logger.info("OmniMem session end: processed %d messages", len(messages))
 
-    def on_pre_compress(self, messages: List[Dict[str, Any]]) -> str:
+    def on_pre_compress(self, messages: list[dict[str, Any]]) -> str:
         """压缩前：构建 Attachment + 紧急保存。"""
         # 0. 确保存储缓冲落盘（压缩前数据必须持久化）
         self._store.flush()
@@ -760,9 +772,7 @@ class OmniMemProvider(MemoryProvider):
         if saved_context:
             parts.append(saved_context)
         if attachments:
-            att_text = "\n".join(
-                f"[{a.kind}] {a.title}: {a.body[:200]}" for a in attachments
-            )
+            att_text = "\n".join(f"[{a.kind}] {a.title}: {a.body[:200]}" for a in attachments)
             parts.append(f"### Pre-Compression Attachments\n{att_text}")
 
         return "\n\n".join(parts)
@@ -777,8 +787,9 @@ class OmniMemProvider(MemoryProvider):
                     conflict.existing_memory,
                 )
 
-    def on_delegation(self, task: str, result: str, *,
-                      child_session_id: str = "", **kwargs) -> None:
+    def on_delegation(
+        self, task: str, result: str, *, child_session_id: str = "", **kwargs
+    ) -> None:
         """子 Agent 完成时：记录过程记忆。"""
         if not self._should_write:
             return
@@ -786,7 +797,7 @@ class OmniMemProvider(MemoryProvider):
 
     # ─── 配置 ─────────────────────────────────────────────────
 
-    def get_config_schema(self) -> List[Dict[str, Any]]:
+    def get_config_schema(self) -> list[dict[str, Any]]:
         return [
             {
                 "key": "save_interval",
@@ -860,11 +871,12 @@ class OmniMemProvider(MemoryProvider):
             },
         ]
 
-    def save_config(self, values: Dict[str, Any], hermes_home: str) -> None:
+    def save_config(self, values: dict[str, Any], hermes_home: str) -> None:
         config_path = Path(hermes_home) / "omnimem" / "config.yaml"
         config_path.parent.mkdir(parents=True, exist_ok=True)
         try:
             import yaml
+
             with open(config_path, "w", encoding="utf-8") as f:
                 yaml.dump(values, f, allow_unicode=True, default_flow_style=False)
         except ImportError:
@@ -907,7 +919,7 @@ class OmniMemProvider(MemoryProvider):
         self._vector_clock.increment(self._instance_id)
         return self._vector_clock
 
-    def _apply_sync_change(self, change: Dict[str, Any]) -> bool:
+    def _apply_sync_change(self, change: dict[str, Any]) -> bool:
         """应用来自其他实例的同步变更。
 
         由 sync_from_others 调用，将远程变更写入本地存储。
@@ -941,7 +953,10 @@ class OmniMemProvider(MemoryProvider):
                 hall=data.get("type", "fact"),
                 room=data.get("room", "sync"),
                 content=data.get("content", ""),
-                summary=data.get("content", "")[:200].replace('\n', ' ').replace('\r', ' ').replace('\t', ' '),
+                summary=data.get("content", "")[:200]
+                .replace("\n", " ")
+                .replace("\r", " ")
+                .replace("\t", " "),
                 type=data.get("type", "fact"),
                 confidence=data.get("confidence", 3),
                 privacy=data.get("privacy", "personal"),
@@ -968,7 +983,7 @@ class OmniMemProvider(MemoryProvider):
             logger.debug("OmniMem apply_sync_change failed for %s: %s", memory_id, e)
             return False
 
-    def _handle_memorize(self, args: Dict[str, Any]) -> str:
+    def _handle_memorize(self, args: dict[str, Any]) -> str:
         """委托到 handlers/memorize.py。"""
         return _handle_memorize_impl(self, args)
 
@@ -985,7 +1000,10 @@ class OmniMemProvider(MemoryProvider):
             hall=entry.get("hall", entry.get("type", "fact")),
             room=entry.get("room", ""),
             content=entry.get("content", ""),
-            summary=entry.get("content", "")[:200].replace('\n', ' ').replace('\r', ' ').replace('\t', ' '),
+            summary=entry.get("content", "")[:200]
+            .replace("\n", " ")
+            .replace("\r", " ")
+            .replace("\t", " "),
             type=entry.get("type", "fact"),
             confidence=entry.get("confidence", 3),
             privacy=entry.get("privacy", "personal"),
@@ -1026,7 +1044,7 @@ class OmniMemProvider(MemoryProvider):
                 confidence=entry.get("confidence", 3) / 5.0,
             )
 
-    def _handle_recall(self, args: Dict[str, Any]) -> str:
+    def _handle_recall(self, args: dict[str, Any]) -> str:
         """委托到 handlers/recall.py。"""
         result = _handle_recall_impl(self, args)
         # ★ 记录反馈：recall 返回的候选列表
@@ -1042,26 +1060,28 @@ class OmniMemProvider(MemoryProvider):
                 pass
         return result
 
-    def _handle_govern(self, args: Dict[str, Any]) -> str:
+    def _handle_govern(self, args: dict[str, Any]) -> str:
         """委托到 handlers/govern.py。"""
         return _handle_govern_impl(self, args)
 
-    def _scan_memory_conflicts(self) -> List[Dict[str, Any]]:
+    def _scan_memory_conflicts(self) -> list[dict[str, Any]]:
         """委托到 handlers/govern.py。"""
         return _scan_memory_conflicts_impl(self)
 
-    def _handle_compact(self, args: Dict[str, Any]) -> str:
+    def _handle_compact(self, args: dict[str, Any]) -> str:
         budget = args.get("budget", 4000)
-        return json.dumps({
-            "status": "ready",
-            "budget": budget,
-            "message": (
-                "OmniMem will save context before compaction via on_pre_compress. "
-                "Trigger compaction normally — OmniMem hooks handle the rest."
-            ),
-        })
+        return json.dumps(
+            {
+                "status": "ready",
+                "budget": budget,
+                "message": (
+                    "OmniMem will save context before compaction via on_pre_compress. "
+                    "Trigger compaction normally — OmniMem hooks handle the rest."
+                ),
+            }
+        )
 
-    def _handle_reflect(self, args: Dict[str, Any]) -> str:
+    def _handle_reflect(self, args: dict[str, Any]) -> str:
         query = args["query"]
         disposition = args.get("disposition")
 
@@ -1075,19 +1095,22 @@ class OmniMemProvider(MemoryProvider):
             query=query,
             disposition=disposition,
         )
-        return json.dumps({
-            "status": "reflected",
-            "query": query,
-            "observation": result.observation,
-            "mental_model": result.mental_model,
-            "confidence": result.confidence,
-            "reflection_depth": result.reflection_depth,
-            "disposition_used": result.disposition_used,
-        }, ensure_ascii=False)
+        return json.dumps(
+            {
+                "status": "reflected",
+                "query": query,
+                "observation": result.observation,
+                "mental_model": result.mental_model,
+                "confidence": result.confidence,
+                "reflection_depth": result.reflection_depth,
+                "disposition_used": result.disposition_used,
+            },
+            ensure_ascii=False,
+        )
 
     # ─── omni_detail：按需拉取记忆细节 ─────────────────────────
 
-    def _handle_detail(self, args: Dict[str, Any]) -> str:
+    def _handle_detail(self, args: dict[str, Any]) -> str:
         """按需拉取记忆细节 — lazy provisioning 模式。
 
         受 Anthropic managed-agents 的 getEvents() 启发:
@@ -1107,26 +1130,36 @@ class OmniMemProvider(MemoryProvider):
             items = self._context_manager.get_injected_items()
             # ★ 主存储验证：过滤掉主存储已不存在的幽灵条目（如被归档的 sync- 条目）
             if items:
-                items = [item for item in items
-                         if item.get("memory_id") and self._store.get(item["memory_id"])]
+                items = [
+                    item
+                    for item in items
+                    if item.get("memory_id") and self._store.get(item["memory_id"])
+                ]
             if not items:
-                return json.dumps({
-                    "status": "empty",
-                    "message": "No memories injected this turn.",
-                })
-            return json.dumps({
-                "status": "ok",
-                "count": len(items),
-                "memories": items,
-            }, ensure_ascii=False)
+                return json.dumps(
+                    {
+                        "status": "empty",
+                        "message": "No memories injected this turn.",
+                    }
+                )
+            return json.dumps(
+                {
+                    "status": "ok",
+                    "count": len(items),
+                    "memories": items,
+                },
+                ensure_ascii=False,
+            )
 
         elif action == "get":
             memory_id = args.get("memory_id", "")
             if not memory_id:
-                return json.dumps({
-                    "status": "error",
-                    "message": "memory_id is required for action='get'",
-                })
+                return json.dumps(
+                    {
+                        "status": "error",
+                        "message": "memory_id is required for action='get'",
+                    }
+                )
             result = self._context_manager.get_detail_for(memory_id, self._store)
             # ★ R24修复EXT-3b/3d：补充 archived 字段（forgetting stage）
             if result.get("status") == "found" and self._forgetting:
@@ -1158,39 +1191,46 @@ class OmniMemProvider(MemoryProvider):
                         continue
                     # 解析 turn 编号
                     turn_match = re.search(
-                        r'\[Turn (\d+)\]|\[Checkpoint at turn (\d+)\]|\[Emergency save\].*?turn[_ ](\d+)',
+                        r"\[Turn (\d+)\]|\[Checkpoint at turn (\d+)\]|\[Emergency save\].*?turn[_ ](\d+)",
                         evt_content,
                     )
                     if turn_match:
-                        turn_num = int(turn_match.group(1) or turn_match.group(2) or turn_match.group(3))
+                        turn_num = int(
+                            turn_match.group(1) or turn_match.group(2) or turn_match.group(3)
+                        )
                     else:
                         # 无 turn 标记的事件，用时间排序
                         turn_num = 0
                     if from_turn <= turn_num <= to_turn:
-                        events.append({
-                            "turn": turn_num,
-                            "memory_id": evt.get("memory_id", ""),
-                            "content": evt_content,
-                            "type": evt.get("type", "event"),
-                            "stored_at": evt.get("stored_at", ""),
-                        })
+                        events.append(
+                            {
+                                "turn": turn_num,
+                                "memory_id": evt.get("memory_id", ""),
+                                "content": evt_content,
+                                "type": evt.get("type", "event"),
+                                "stored_at": evt.get("stored_at", ""),
+                            }
+                        )
             except Exception as e:
                 logger.debug("OmniMem events query failed: %s", e)
 
             # 按 turn 排序
             events.sort(key=lambda x: x.get("turn", 0))
 
-            return json.dumps({
-                "status": "ok",
-                "from_turn": from_turn,
-                "to_turn": to_turn,
-                "count": len(events),
-                "events": events[:20],
-            }, ensure_ascii=False)
+            return json.dumps(
+                {
+                    "status": "ok",
+                    "from_turn": from_turn,
+                    "to_turn": to_turn,
+                    "count": len(events),
+                    "events": events[:20],
+                },
+                ensure_ascii=False,
+            )
 
         return json.dumps({"error": f"Unknown action: {action}"})
 
-    def _handle_builtin_memory_compat(self, args: Dict[str, Any]) -> str:
+    def _handle_builtin_memory_compat(self, args: dict[str, Any]) -> str:
         """处理兼容内置 memory 工具的调用，映射到 OmniMem 存储。"""
         action = args.get("action", "")
         target = args.get("target", "memory")
@@ -1231,13 +1271,15 @@ class OmniMemProvider(MemoryProvider):
 
     def _compat_set(self, content: str, mem_type: str) -> str:
         """兼容层：add 操作 → 映射到 OmniMem memorize。"""
-        result = self._handle_memorize({
-            "content": content,
-            "memory_type": mem_type,
-            "confidence": 4,
-            "scope": "personal",
-            "privacy": "personal",
-        })
+        result = self._handle_memorize(
+            {
+                "content": content,
+                "memory_type": mem_type,
+                "confidence": 4,
+                "scope": "personal",
+                "privacy": "personal",
+            }
+        )
         parsed = json.loads(result)
         parsed["compat_note"] = "Routed from builtin 'memory' tool to OmniMem"
         return json.dumps(parsed)
@@ -1248,29 +1290,35 @@ class OmniMemProvider(MemoryProvider):
         filtered = [m for m in matches if m.get("type") == mem_type]
 
         if not filtered:
-            return json.dumps({
-                "success": False,
-                "error": f"No matching {target} entry found for '{old_text[:50]}'."
-            })
+            return json.dumps(
+                {
+                    "success": False,
+                    "error": f"No matching {target} entry found for '{old_text[:50]}'.",
+                }
+            )
 
         if len(filtered) > 1:
             previews = [m.get("content", "")[:60] for m in filtered[:5]]
-            return json.dumps({
-                "success": False,
-                "error": f"Multiple entries matched. Be more specific.",
-                "matches": previews,
-            })
+            return json.dumps(
+                {
+                    "success": False,
+                    "error": "Multiple entries matched. Be more specific.",
+                    "matches": previews,
+                }
+            )
 
         old_id = filtered[0]["memory_id"]
         self._forgetting.archive(old_id)
 
-        result = self._handle_memorize({
-            "content": content,
-            "memory_type": mem_type,
-            "confidence": 4,
-            "scope": "personal",
-            "privacy": "personal",
-        })
+        result = self._handle_memorize(
+            {
+                "content": content,
+                "memory_type": mem_type,
+                "confidence": 4,
+                "scope": "personal",
+                "privacy": "personal",
+            }
+        )
         parsed = json.loads(result)
         parsed["replaced_id"] = old_id
         parsed["compat_note"] = "Replaced via builtin compat layer"
@@ -1282,29 +1330,30 @@ class OmniMemProvider(MemoryProvider):
         filtered = [m for m in matches if m.get("type") == mem_type]
 
         if not filtered:
-            return json.dumps({
-                "success": False,
-                "error": f"No matching {target} entry found."
-            })
+            return json.dumps({"success": False, "error": f"No matching {target} entry found."})
 
         if len(filtered) > 1:
             previews = [m.get("content", "")[:60] for m in filtered[:5]]
-            return json.dumps({
-                "success": False,
-                "error": "Multiple entries matched. Be more specific.",
-                "matches": previews,
-            })
+            return json.dumps(
+                {
+                    "success": False,
+                    "error": "Multiple entries matched. Be more specific.",
+                    "matches": previews,
+                }
+            )
 
         old_id = filtered[0]["memory_id"]
         self._forgetting.archive(old_id)
 
-        return json.dumps({
-            "success": True,
-            "action": "archived",
-            "memory_id": old_id,
-            "message": f"{target} entry archived (soft delete).",
-            "compat_note": "Removed via builtin compat layer (uses forgetting curve)",
-        })
+        return json.dumps(
+            {
+                "success": True,
+                "action": "archived",
+                "memory_id": old_id,
+                "message": f"{target} entry archived (soft delete).",
+                "compat_note": "Removed via builtin compat layer (uses forgetting curve)",
+            }
+        )
 
     # ─── 反递归防护 ─────────────────────────────────────────────
 
@@ -1337,8 +1386,9 @@ class OmniMemProvider(MemoryProvider):
         fp_b = ContextManager._content_fingerprint(text_b)
         return ContextManager._fingerprint_similarity(fp_a, fp_b)
 
-    def _semantic_dedup(self, content: str, memory_type: str,
-                        candidates: list = None) -> Dict[str, Any]:
+    def _semantic_dedup(
+        self, content: str, memory_type: str, candidates: list | None = None
+    ) -> dict[str, Any]:
         """写入前语义去重检查。
 
         Args:
@@ -1354,12 +1404,15 @@ class OmniMemProvider(MemoryProvider):
             exact = candidates or self._store.search_by_content(content, limit=5)
             for m in exact:
                 if m.get("content", "").strip() == content.strip():
-                    return {"action": "skip", "existing_id": m.get("memory_id", ""),
-                            "reason": "Exact duplicate"}
+                    return {
+                        "action": "skip",
+                        "existing_id": m.get("memory_id", ""),
+                        "reason": "Exact duplicate",
+                    }
             return {"action": "create"}
 
         # ★ EDGE修复：短内容(≤50字)提高 skip 阈值至 0.92，避免模板化编号内容被误判
-        _SHORT_SKIP_THRESHOLD = 0.92 if len(content) <= 50 else 0.8
+        short_skip_threshold = 0.92 if len(content) <= 50 else 0.8
 
         # 长内容用语义相似度
         similar = candidates
@@ -1371,19 +1424,25 @@ class OmniMemProvider(MemoryProvider):
             sim = self._compute_text_similarity(content, existing_content)
 
             # ★ EDGE修复：数值差异化检测——仅数字不同的模板内容不判为重复
-            if sim > _SHORT_SKIP_THRESHOLD:
-                nums_a = set(re.findall(r'\d+', content))
-                nums_b = set(re.findall(r'\d+', existing_content))
+            if sim > short_skip_threshold:
+                nums_a = set(re.findall(r"\d+", content))
+                nums_b = set(re.findall(r"\d+", existing_content))
                 has_numeric_diff = bool(nums_a ^ nums_b) or (len(nums_a) >= 2 and len(nums_b) >= 2)
                 if has_numeric_diff:
                     sim = max(sim - 0.18, 0.5)  # 降低相似度，避免误判
 
             if sim > 0.85:
-                return {"action": "skip", "existing_id": m.get("memory_id", ""),
-                        "reason": f"Near-duplicate (sim={sim:.2f})"}
+                return {
+                    "action": "skip",
+                    "existing_id": m.get("memory_id", ""),
+                    "reason": f"Near-duplicate (sim={sim:.2f})",
+                }
             if sim > 0.6:
-                return {"action": "update", "existing_id": m.get("memory_id", ""),
-                        "reason": f"Similar (sim={sim:.2f}), archiving old"}
+                return {
+                    "action": "update",
+                    "existing_id": m.get("memory_id", ""),
+                    "reason": f"Similar (sim={sim:.2f}), archiving old",
+                }
 
         return {"action": "create"}
 
@@ -1402,7 +1461,7 @@ class OmniMemProvider(MemoryProvider):
         similar = []
         # 先尝试向量检索（更准）
         try:
-            if self._retriever and hasattr(self._retriever, '_vector') and self._retriever._vector:
+            if self._retriever and hasattr(self._retriever, "_vector") and self._retriever._vector:
                 vector_results = self._retriever._vector.search(content, top_k=10)
                 if vector_results:
                     similar = vector_results
@@ -1422,7 +1481,7 @@ class OmniMemProvider(MemoryProvider):
 
     # ─── 内部辅助方法 ─────────────────────────────────────────
 
-    def _l3_recall(self, query: str, limit: int = 20) -> List[Dict[str, Any]]:
+    def _l3_recall(self, query: str, limit: int = 20) -> list[dict[str, Any]]:
         """L3 检索辅助函数，供 ReflectEngine 回调使用。
 
         与 handle_recall 保持一致：retriever 搜索无结果时，
@@ -1437,7 +1496,8 @@ class OmniMemProvider(MemoryProvider):
             return results[:limit]
 
         import re as _re
-        query_keywords = set(_re.findall(r'[\u4e00-\u9fff]{2,}|[a-zA-Z]{3,}', query.lower()))
+
+        query_keywords = set(_re.findall(r"[\u4e00-\u9fff]{2,}|[a-zA-Z]{3,}", query.lower()))
         if query_keywords:
             # ★ 优化：按关键词搜索替代全量扫描，避免 O(n)
             seen_ids: set[str] = set()
@@ -1482,9 +1542,7 @@ class OmniMemProvider(MemoryProvider):
         )
         logger.debug("AsyncLLMClient initialized: model=%s", model)
 
-    def _call_llm_for_reflect(
-        self, prompt: str, system: str, max_tokens: int = 800
-    ) -> str:
+    def _call_llm_for_reflect(self, prompt: str, system: str, max_tokens: int = 800) -> str:
         """供 ReflectEngine 调用 LLM 的包装函数。
 
         OPT-2 改进:
@@ -1504,13 +1562,14 @@ class OmniMemProvider(MemoryProvider):
 
         # ★ reflect 结果缓存：相同 query 60s 内复用
         # ★ R26优化：限制缓存大小，避免长期运行内存泄漏
-        _MAX_REFLECT_CACHE = 64
+        max_reflect_cache = 64
         cache_key = prompt[:200]
         now = time.time()
         # 清理过期缓存
-        if len(self._reflect_cache) > _MAX_REFLECT_CACHE:
+        if len(self._reflect_cache) > max_reflect_cache:
             self._reflect_cache = {
-                k: (v, t) for k, (v, t) in self._reflect_cache.items()
+                k: (v, t)
+                for k, (v, t) in self._reflect_cache.items()
                 if now - t < self._REFLECT_CACHE_TTL
             }
         if cache_key in self._reflect_cache:
@@ -1537,6 +1596,7 @@ class OmniMemProvider(MemoryProvider):
         # fallback: auxiliary_client.call_llm
         try:
             from agent.auxiliary_client import call_llm
+
             response = call_llm(
                 task="reflect",
                 messages=[

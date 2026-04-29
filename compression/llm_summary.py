@@ -10,8 +10,7 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
 
@@ -19,12 +18,13 @@ logger = logging.getLogger(__name__)
 @dataclass
 class StructuredSummary:
     """6字段结构化摘要（参考 ReMe 设计）。"""
-    goal: str = ""            # 当前目标
-    progress: str = ""        # 进度状态
-    decisions: str = ""       # 关键决策
-    key_info: str = ""        # 关键信息
-    open_issues: str = ""     # 开放问题
-    next_steps: str = ""      # 下一步
+
+    goal: str = ""  # 当前目标
+    progress: str = ""  # 进度状态
+    decisions: str = ""  # 关键决策
+    key_info: str = ""  # 关键信息
+    open_issues: str = ""  # 开放问题
+    next_steps: str = ""  # 下一步
 
     def to_text(self) -> str:
         """渲染为文本。"""
@@ -43,7 +43,7 @@ class StructuredSummary:
             parts.append(f"Next Steps: {self.next_steps}")
         return "\n".join(parts)
 
-    def to_dict(self) -> Dict[str, str]:
+    def to_dict(self) -> dict[str, str]:
         return {
             "goal": self.goal,
             "progress": self.progress,
@@ -117,6 +117,7 @@ def _extract_without_llm(messages: str) -> StructuredSummary:
 def _parse_llm_response(response: str) -> StructuredSummary:
     """解析 LLM 响应为结构化摘要。"""
     import json
+
     try:
         # 尝试直接解析 JSON
         data = json.loads(response)
@@ -131,7 +132,8 @@ def _parse_llm_response(response: str) -> StructuredSummary:
     except json.JSONDecodeError:
         # 尝试从 markdown 代码块中提取 JSON
         import re
-        json_match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', response, re.DOTALL)
+
+        json_match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", response, re.DOTALL)
         if json_match:
             try:
                 data = json.loads(json_match.group(1))

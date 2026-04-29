@@ -16,10 +16,11 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +28,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class SagaStep:
     """Saga 单步定义。"""
+
     name: str
     action: Callable[[], Any]
 
@@ -34,12 +36,13 @@ class SagaStep:
 @dataclass
 class SagaResult:
     """Saga 执行结果。"""
+
     success: bool
     memory_id: str
-    completed_steps: List[str] = field(default_factory=list)
+    completed_steps: list[str] = field(default_factory=list)
     failed_step: str = ""
     error: str = ""
-    step_results: Dict[str, Any] = field(default_factory=dict)
+    step_results: dict[str, Any] = field(default_factory=dict)
 
 
 class SagaCoordinator:
@@ -51,19 +54,19 @@ class SagaCoordinator:
       3. 提供 retry_pending() 供后台任务批量补偿
     """
 
-    def __init__(self, pending_path: Optional[Path] = None):
+    def __init__(self, pending_path: Path | None = None):
         """初始化 Saga 协调器。
 
         Args:
             pending_path: pending 队列持久化文件路径。
                           若提供，进程重启后可恢复未完成的任务。
         """
-        self._pending: List[Dict[str, Any]] = []
+        self._pending: list[dict[str, Any]] = []
         self._pending_path = pending_path
         if pending_path and pending_path.exists():
             self._load_pending()
 
-    def execute(self, memory_id: str, steps: List[SagaStep]) -> SagaResult:
+    def execute(self, memory_id: str, steps: list[SagaStep]) -> SagaResult:
         """执行 Saga 事务。
 
         按顺序执行 steps，任一失败即停止，记录已完成的步骤和失败步骤。
@@ -76,8 +79,8 @@ class SagaCoordinator:
         Returns:
             SagaResult，包含成功/失败状态、步骤详情和各步骤返回值
         """
-        completed: List[str] = []
-        step_results: Dict[str, Any] = {}
+        completed: list[str] = []
+        step_results: dict[str, Any] = {}
         for step in steps:
             try:
                 result = step.action()
@@ -87,7 +90,9 @@ class SagaCoordinator:
             except Exception as e:
                 logger.warning(
                     "Saga step '%s' failed for %s: %s",
-                    step.name, memory_id, e,
+                    step.name,
+                    memory_id,
+                    e,
                 )
                 record = {
                     "memory_id": memory_id,
@@ -113,13 +118,13 @@ class SagaCoordinator:
             step_results=step_results,
         )
 
-    def get_pending(self) -> List[Dict[str, Any]]:
+    def get_pending(self) -> list[dict[str, Any]]:
         """获取所有待重试的 pending 记录。"""
         return list(self._pending)
 
     def retry_pending(
         self,
-        step_actions: Dict[str, Callable[[str], Any]],
+        step_actions: dict[str, Callable[[str], Any]],
     ) -> int:
         """批量重试 pending 任务。
 
@@ -134,7 +139,7 @@ class SagaCoordinator:
             return 0
 
         fixed = 0
-        still_pending: List[Dict[str, Any]] = []
+        still_pending: list[dict[str, Any]] = []
 
         for record in self._pending:
             memory_id = record.get("memory_id", "")
@@ -183,7 +188,7 @@ class SagaCoordinator:
         if not self._pending_path or not self._pending_path.exists():
             return
         try:
-            with open(self._pending_path, "r", encoding="utf-8") as f:
+            with open(self._pending_path, encoding="utf-8") as f:
                 data = json.load(f)
             if isinstance(data, list):
                 self._pending = data

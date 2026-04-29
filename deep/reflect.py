@@ -23,15 +23,17 @@ import logging
 import re
 import sqlite3
 import threading
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
 
 # ─── 数据模型 ────────────────────────────────────────────────
+
 
 @dataclass
 class Disposition:
@@ -42,11 +44,12 @@ class Disposition:
       literalness (1-5): 字面度，越高越精确，强调可验证性
       empathy (1-5): 共情度，越高越关注人的感受和影响
     """
-    skepticism: int = 3   # 怀疑度 1-5
-    literalness: int = 2  # 字面度 1-5
-    empathy: int = 4      # 共情度 1-5
 
-    def clamp(self) -> "Disposition":
+    skepticism: int = 3  # 怀疑度 1-5
+    literalness: int = 2  # 字面度 1-5
+    empathy: int = 4  # 共情度 1-5
+
+    def clamp(self) -> Disposition:
         """确保参数在合法范围内。"""
         return Disposition(
             skepticism=max(1, min(5, self.skepticism)),
@@ -54,7 +57,7 @@ class Disposition:
             empathy=max(1, min(5, self.empathy)),
         )
 
-    def to_dict(self) -> Dict[str, int]:
+    def to_dict(self) -> dict[str, int]:
         """将性格参数序列化为字典。"""
         return {
             "skepticism": self.skepticism,
@@ -66,11 +69,12 @@ class Disposition:
 @dataclass
 class ReflectResult:
     """Reflect 结果。"""
+
     observation: str = ""
     mental_model: str = ""
     confidence: float = 0.0
-    sources: List[str] = field(default_factory=list)
-    disposition_used: Optional[Dict[str, int]] = None
+    sources: list[str] = field(default_factory=list)
+    disposition_used: dict[str, int] | None = None
     reflection_depth: int = 0  # 反思循环深度
     query: str = ""  # 反思查询关键词
 
@@ -78,17 +82,18 @@ class ReflectResult:
 @dataclass
 class ReflectionContext:
     """反思循环中累积的上下文。"""
+
     query: str = ""
-    mental_models: List[Dict[str, Any]] = field(default_factory=list)
-    facts: List[Dict[str, Any]] = field(default_factory=list)
-    observations: List[Dict[str, Any]] = field(default_factory=list)
-    expanded: List[Dict[str, Any]] = field(default_factory=list)
+    mental_models: list[dict[str, Any]] = field(default_factory=list)
+    facts: list[dict[str, Any]] = field(default_factory=list)
+    observations: list[dict[str, Any]] = field(default_factory=list)
+    expanded: list[dict[str, Any]] = field(default_factory=list)
 
 
 # ─── Disposition 影响的反思风格模板 ────────────────────────────
 
-def _apply_disposition(observation: str, model: str,
-                       disposition: Disposition) -> tuple:
+
+def _apply_disposition(observation: str, model: str, disposition: Disposition) -> tuple:
     """根据 Disposition 参数调整反思输出的语气和侧重。
 
     Returns:
@@ -108,8 +113,22 @@ def _apply_disposition(observation: str, model: str,
 
     # ─── 共情度修饰 ───
     # ★ 仅在内容涉及人/感受时添加共情后缀，技术/事实类内容不加
-    _person_keywords = {"用户", "人", "感受", "情感", "心情", "体验", "偏好", "性格",
-                        "user", "people", "feeling", "emotion", "experience", "person"}
+    _person_keywords = {
+        "用户",
+        "人",
+        "感受",
+        "情感",
+        "心情",
+        "体验",
+        "偏好",
+        "性格",
+        "user",
+        "people",
+        "feeling",
+        "emotion",
+        "experience",
+        "person",
+    }
     has_person_context = any(kw in observation or kw in model for kw in _person_keywords)
     empathy_suffixes = {
         1: "",
@@ -138,6 +157,7 @@ def _apply_disposition(observation: str, model: str,
 
 # ─── ReflectEngine ────────────────────────────────────────────
 
+
 class ReflectEngine:
     """Reflect 工具循环引擎 — L3 深层记忆反思。
 
@@ -162,11 +182,14 @@ class ReflectEngine:
       反思结果存入 SQLite (reflect.db)，支持历史查询和统计。
     """
 
-    def __init__(self, data_dir: Optional[Path] = None,
-                 consolidation_engine=None,
-                 default_disposition: Optional[Disposition] = None,
-                 recall_fn: Optional[Callable] = None,
-                 llm_fn: Optional[Callable] = None):
+    def __init__(
+        self,
+        data_dir: Path | None = None,
+        consolidation_engine=None,
+        default_disposition: Disposition | None = None,
+        recall_fn: Callable | None = None,
+        llm_fn: Callable | None = None,
+    ):
         """初始化 ReflectEngine。
 
         Args:
@@ -183,7 +206,7 @@ class ReflectEngine:
         self._default_disposition = default_disposition or Disposition()
         self._recall_fn = recall_fn
         self._llm_fn = llm_fn
-        self._conn: Optional[sqlite3.Connection] = None
+        self._conn: sqlite3.Connection | None = None
         self._reflection_count = 0
         self._lock = threading.RLock()
 
@@ -219,8 +242,8 @@ class ReflectEngine:
     def reflect(
         self,
         query: str,
-        memories: Optional[List[Dict[str, Any]]] = None,
-        disposition: Optional[Dict[str, int]] = None,
+        memories: list[dict[str, Any]] | None = None,
+        disposition: dict[str, int] | None = None,
     ) -> ReflectResult:
         """执行完整的 Reflect 循环。
 
@@ -259,8 +282,7 @@ class ReflectEngine:
         self._reflection_count += 1
         return result
 
-    def get_reflection_history(self, query: str = "",
-                               limit: int = 10) -> List[Dict[str, Any]]:
+    def get_reflection_history(self, query: str = "", limit: int = 10) -> list[dict[str, Any]]:
         """获取反思历史记录。
 
         Args:
@@ -283,23 +305,30 @@ class ReflectEngine:
                     "SELECT * FROM reflections ORDER BY created_at DESC LIMIT ?",
                     (limit,),
                 ).fetchall()
-            keys = ["reflection_id", "query", "observation", "mental_model",
-                    "confidence", "disposition", "source_ids", "created_at", "metadata"]
-            return [dict(zip(keys, row)) for row in rows]
+            keys = [
+                "reflection_id",
+                "query",
+                "observation",
+                "mental_model",
+                "confidence",
+                "disposition",
+                "source_ids",
+                "created_at",
+                "metadata",
+            ]
+            return [dict(zip(keys, row, strict=False)) for row in rows]
         except Exception as e:
             logger.debug("Reflect history query failed: %s", e)
             return []
 
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> dict[str, Any]:
         """获取反思统计信息，包含总反思次数和持久化数量。"""
         stats = {
             "total_reflections": self._reflection_count,
         }
         if self._conn:
             try:
-                row = self._conn.execute(
-                    "SELECT COUNT(*) FROM reflections"
-                ).fetchone()
+                row = self._conn.execute("SELECT COUNT(*) FROM reflections").fetchone()
                 stats["persisted"] = row[0] if row else 0
             except Exception:
                 stats["persisted"] = 0
@@ -313,14 +342,15 @@ class ReflectEngine:
 
     # ─── Reflect 循环四步 ─────────────────────────────────────
 
-    def _search_mental_models(self, query: str) -> List[Dict[str, Any]]:
+    def _search_mental_models(self, query: str) -> list[dict[str, Any]]:
         """Step 1: 查找已有的心智模型。"""
         if self._consolidation:
             return self._consolidation.get_mental_models(topic=query, limit=5)
         return []
 
-    def _recall_facts(self, query: str,
-                      memories: Optional[List[Dict[str, Any]]] = None) -> List[Dict[str, Any]]:
+    def _recall_facts(
+        self, query: str, memories: list[dict[str, Any]] | None = None
+    ) -> list[dict[str, Any]]:
         """Step 2: 检索相关事实。"""
         # 优先使用外部传入的记忆
         if memories:
@@ -340,8 +370,7 @@ class ReflectEngine:
             return self._consolidation.get_observations(topic=query, limit=20)
         return []
 
-    def _expand_context(self, query: str,
-                        facts: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def _expand_context(self, query: str, facts: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Step 3: 从已有事实中扩展关联上下文。
 
         从事实内容中提取关键词，查找更广泛的观察。
@@ -365,7 +394,7 @@ class ReflectEngine:
                     expanded.append(o)
         return expanded[:15]
 
-    def _search_observations(self, query: str) -> List[Dict[str, Any]]:
+    def _search_observations(self, query: str) -> list[dict[str, Any]]:
         """Step 4: 搜索观察洞察。"""
         if self._consolidation:
             return self._consolidation.get_observations(topic=query, limit=10)
@@ -373,23 +402,25 @@ class ReflectEngine:
 
     # ─── 综合生成 ─────────────────────────────────────────────
 
-    def _synthesize(self, query: str, ctx: ReflectionContext,
-                    disposition: Disposition) -> ReflectResult:
+    def _synthesize(
+        self, query: str, ctx: ReflectionContext, disposition: Disposition
+    ) -> ReflectResult:
         """综合 Reflect 循环四步的结果，生成最终反思输出。"""
-        source_ids: List[str] = []
+        source_ids: list[str] = []
         mental_model = ""
         confidence = 0.0
         depth = 0
 
         # ─── 收集所有可用内容 ───
-        all_contents: List[str] = []
+        all_contents: list[str] = []
 
         if ctx.mental_models:
             best_model = ctx.mental_models[0]
             mental_model = best_model.get("content", "")
             confidence = best_model.get("confidence", 0.7)
             source_ids.extend(
-                best_model.get("source_ids", []) if isinstance(best_model.get("source_ids"), list)
+                best_model.get("source_ids", [])
+                if isinstance(best_model.get("source_ids"), list)
                 else []
             )
             depth = 3
@@ -404,10 +435,7 @@ class ReflectEngine:
 
         # 事实内容
         if ctx.facts:
-            source_ids.extend(
-                f.get("memory_id", f.get("item_id", ""))
-                for f in ctx.facts[:8]
-            )
+            source_ids.extend(f.get("memory_id", f.get("item_id", "")) for f in ctx.facts[:8])
             for f in ctx.facts[:8]:
                 all_contents.append(f"[事实] {f.get('content', '')[:200]}")
             depth = max(depth, 1)
@@ -435,10 +463,7 @@ class ReflectEngine:
         if llm_result is not None:
             llm_obs, llm_model, llm_conf = llm_result
             # LLM 成功 → 使用 LLM 输出
-            if llm_obs:
-                observation = llm_obs
-            else:
-                observation = self._rule_based_observation(query, ctx)
+            observation = llm_obs or self._rule_based_observation(query, ctx)
             if llm_model:
                 mental_model = llm_model
             # ★ confidence 合并：LLM 置信度与事实支撑度取较大值
@@ -475,10 +500,10 @@ class ReflectEngine:
     def _generate_with_llm(
         self,
         query: str,
-        contents: List[str],
+        contents: list[str],
         disposition: Disposition,
         max_tokens: int = 800,
-    ) -> Optional[tuple]:
+    ) -> tuple | None:
         """使用 LLM 对记忆内容进行推理归纳。
 
         Returns:
@@ -498,9 +523,7 @@ class ReflectEngine:
             5: "明确标注不确定性，避免过度推断",
         }.get(d.skepticism, "基于现有信息推理")
 
-        evidence_block = "\n".join(
-            f"{i+1}. {c}" for i, c in enumerate(contents[:15])
-        )
+        evidence_block = "\n".join(f"{i + 1}. {c}" for i, c in enumerate(contents[:15]))
 
         prompt = (
             f"请对以下关于「{query}」的记忆内容进行深度反思和归纳推理。\n\n"
@@ -533,43 +556,64 @@ class ReflectEngine:
                 raw = self._llm_fn(prompt=prompt, system=system, max_tokens=max_tokens)
                 if not raw or not raw.strip():
                     if attempt < max_retries - 1:
-                        logger.warning("ReflectEngine LLM returned empty (attempt %d/%d), retrying...", attempt + 1, max_retries)
+                        logger.warning(
+                            "ReflectEngine LLM returned empty (attempt %d/%d), retrying...",
+                            attempt + 1,
+                            max_retries,
+                        )
                         continue
                     return None
 
                 # ★ R17修复：检测截断 — 如果输出没有结束标记（【置信度】），可能被截断
-                has_complete_structure = bool(re.search(r'【置信度】|置信度[：:]', raw))
+                has_complete_structure = bool(re.search(r"【置信度】|置信度[：:]", raw))
                 if not has_complete_structure and attempt < max_retries - 1:
-                    logger.warning("ReflectEngine LLM output appears truncated (attempt %d/%d), retrying...", attempt + 1, max_retries)
+                    logger.warning(
+                        "ReflectEngine LLM output appears truncated (attempt %d/%d), retrying...",
+                        attempt + 1,
+                        max_retries,
+                    )
                     # 截断重试时增加max_tokens
                     max_tokens = min(max_tokens + 200, 1200)
                     continue
 
                 # 解析 LLM 输出
                 obs, model, conf = self._parse_llm_output(raw.strip())
-                
+
                 # ★ R17修复：对截断的observation进行修补
                 if obs and len(obs) < 15 and attempt < max_retries - 1:
-                    logger.warning("ReflectEngine LLM observation too short (%d chars), likely truncated (attempt %d/%d)", len(obs), attempt + 1, max_retries)
+                    logger.warning(
+                        "ReflectEngine LLM observation too short (%d chars), likely truncated (attempt %d/%d)",
+                        len(obs),
+                        attempt + 1,
+                        max_retries,
+                    )
                     continue
-                
+
                 # 验证mental_model质量
                 if model and self._is_keyword_stuffing(model):
                     if attempt < max_retries - 1:
-                        logger.warning("ReflectEngine LLM returned keyword stuffing (attempt %d/%d), retrying...", attempt + 1, max_retries)
+                        logger.warning(
+                            "ReflectEngine LLM returned keyword stuffing (attempt %d/%d), retrying...",
+                            attempt + 1,
+                            max_retries,
+                        )
                         # 关键词堆砌重试时，在prompt中增加更明确的反堆砌指令
                         if attempt == max_retries - 2:
-                            prompt += ("\n\n★ 重要提醒：你的【心智模型】输出必须是完整的自然语言句子，"
-                                       "描述因果关系或模式规律，严禁输出关键词列表！")
+                            prompt += (
+                                "\n\n★ 重要提醒：你的【心智模型】输出必须是完整的自然语言句子，"
+                                "描述因果关系或模式规律，严禁输出关键词列表！"
+                            )
                         continue
-                
+
                 return (obs, model, conf)
 
             except Exception as e:
-                logger.warning("ReflectEngine LLM call failed (attempt %d/%d): %s", attempt + 1, max_retries, e)
+                logger.warning(
+                    "ReflectEngine LLM call failed (attempt %d/%d): %s", attempt + 1, max_retries, e
+                )
                 if attempt < max_retries - 1:
                     continue
-        
+
         return None
 
     @staticmethod
@@ -585,17 +629,14 @@ class ReflectEngine:
 
         # 尝试中文标记解析
         obs_match = re.search(
-            r'(?:【观察】|观察[：:]\s*)\s*\n?(.*?)(?=【心智模型】|心智模型[：:]|\Z)',
-            raw, re.DOTALL
+            r"(?:【观察】|观察[：:]\s*)\s*\n?(.*?)(?=【心智模型】|心智模型[：:]|\Z)", raw, re.DOTALL
         )
         model_match = re.search(
-            r'(?:【心智模型】|心智模型[：:]\s*)\s*\n?(.*?)(?=【置信度】|置信度[：:]|\Z)',
-            raw, re.DOTALL
+            r"(?:【心智模型】|心智模型[：:]\s*)\s*\n?(.*?)(?=【置信度】|置信度[：:]|\Z)",
+            raw,
+            re.DOTALL,
         )
-        conf_match = re.search(
-            r'(?:【置信度】|置信度[：:]\s*)\s*\n?([\d.]+)',
-            raw
-        )
+        conf_match = re.search(r"(?:【置信度】|置信度[：:]\s*)\s*\n?([\d.]+)", raw)
 
         if obs_match:
             observation = obs_match.group(1).strip()
@@ -620,7 +661,7 @@ class ReflectEngine:
 
     # ─── 规则归纳回退 ──────────────────────────────────────────
 
-    def _smart_extract_keywords(self, text: str, max_keywords: int = 6) -> List[str]:
+    def _smart_extract_keywords(self, text: str, max_keywords: int = 6) -> list[str]:
         """智能关键词提取：按标点和语义边界切分，避免破碎分词。
 
         替代 re.findall(r'[\\u4e00-\\u9fff]{2,4}', text) 这种滑动窗口切词，
@@ -636,24 +677,76 @@ class ReflectEngine:
             return []
 
         # 按标点和空白分割
-        segments = re.split(r'[，,、；;：:。\.\s！？!?()\（\）\[\]【】「」\n\r\t]+', text)
+        segments = re.split(r"[，,、；;：:。\.\s！？!?()\（\）\[\]【】「」\n\r\t]+", text)
 
         # 停用词和低质量前缀
         zh_stopwords = {
-            "关于", "问题", "情况", "使用", "进行", "需要", "可以", "已经",
-            "其中", "以上", "以下", "这个", "那个", "就是", "还是", "而且",
-            "因为", "所以", "如果", "虽然", "但是", "不过", "然后", "接着",
-            "之前", "之后", "通过", "包括", "以及", "对于", "基于", "据现有",
-            "信息", "据现", "现有", "有信", "据现有信息",
+            "关于",
+            "问题",
+            "情况",
+            "使用",
+            "进行",
+            "需要",
+            "可以",
+            "已经",
+            "其中",
+            "以上",
+            "以下",
+            "这个",
+            "那个",
+            "就是",
+            "还是",
+            "而且",
+            "因为",
+            "所以",
+            "如果",
+            "虽然",
+            "但是",
+            "不过",
+            "然后",
+            "接着",
+            "之前",
+            "之后",
+            "通过",
+            "包括",
+            "以及",
+            "对于",
+            "基于",
+            "据现有",
+            "信息",
+            "据现",
+            "现有",
+            "有信",
+            "据现有信息",
             # R17新增：测试轮次标记（R12/R14/R15等）和测试通用词
-            "对记忆系统进行", "系统进行", "进行记忆", "记忆系统回归",
-            "系统回归", "回归测试", "测试范围包括",
+            "对记忆系统进行",
+            "系统进行",
+            "进行记忆",
+            "记忆系统回归",
+            "系统回归",
+            "回归测试",
+            "测试范围包括",
         }
         # 丢弃以"对记忆"/"系统回"等低质量模式开头的片段
         low_quality_prefixes = ("对记忆", "系统回", "进行记", "记忆系", "统进行")
         en_stopwords = {
-            "the", "and", "for", "are", "but", "not", "you", "all", "can",
-            "that", "this", "with", "from", "have", "been", "was", "were",
+            "the",
+            "and",
+            "for",
+            "are",
+            "but",
+            "not",
+            "you",
+            "all",
+            "can",
+            "that",
+            "this",
+            "with",
+            "from",
+            "have",
+            "been",
+            "was",
+            "were",
         }
 
         keywords = []
@@ -664,24 +757,32 @@ class ReflectEngine:
                 continue
 
             # 中文片段：2-15字，非停用词，非低质量前缀，非低质量结尾
-            if re.match(r'^[\u4e00-\u9fff]{2,15}$', seg):
+            if re.match(r"^[\u4e00-\u9fff]{2,15}$", seg):
                 # 跳过以停用词结尾的片段
                 zh_bad_endings = ("使用", "进行", "需要", "可以", "关于", "包括", "通过", "基于")
-                if seg not in zh_stopwords and seg not in seen and not any(seg.startswith(p) for p in low_quality_prefixes) and not any(seg.endswith(s) for s in zh_bad_endings):
+                if (
+                    seg not in zh_stopwords
+                    and seg not in seen
+                    and not any(seg.startswith(p) for p in low_quality_prefixes)
+                    and not any(seg.endswith(s) for s in zh_bad_endings)
+                ):
                     keywords.append(seg)
                     seen.add(seg)
             # 中英混合片段：提取中文部分（3字以上）
-            elif re.search(r'[\u4e00-\u9fff]{3,}', seg):
+            elif re.search(r"[\u4e00-\u9fff]{3,}", seg):
                 zh_bad_endings = ("使用", "进行", "需要", "可以", "关于", "包括", "通过", "基于")
-                for m in re.finditer(r'[\u4e00-\u9fff]{3,}', seg):
+                for m in re.finditer(r"[\u4e00-\u9fff]{3,}", seg):
                     chunk = m.group()
-                    if (chunk not in zh_stopwords and chunk not in seen
-                            and not any(chunk.startswith(p) for p in low_quality_prefixes)
-                            and not any(chunk.endswith(s) for s in zh_bad_endings)):
+                    if (
+                        chunk not in zh_stopwords
+                        and chunk not in seen
+                        and not any(chunk.startswith(p) for p in low_quality_prefixes)
+                        and not any(chunk.endswith(s) for s in zh_bad_endings)
+                    ):
                         keywords.append(chunk)
                         seen.add(chunk)
             # 纯英文单词
-            elif re.match(r'^[a-zA-Z]{3,}$', seg.lower()):
+            elif re.match(r"^[a-zA-Z]{3,}$", seg.lower()):
                 if seg.lower() not in en_stopwords and seg.lower() not in seen:
                     keywords.append(seg.lower())
                     seen.add(seg.lower())
@@ -691,7 +792,7 @@ class ReflectEngine:
 
         return keywords
 
-    def _extract_content_phrases(self, texts: List[str], max_phrases: int = 5) -> List[str]:
+    def _extract_content_phrases(self, texts: list[str], max_phrases: int = 5) -> list[str]:
         """从文本列表中提取有意义的短句/短语，用于组织连贯的输出。
 
         区别于关键词提取，这里保留更完整的语义片段。
@@ -700,15 +801,15 @@ class ReflectEngine:
         seen = set()
         for text in texts[:10]:
             # 按标点分割，保留有实质内容的片段
-            parts = re.split(r'[，,、；;。\.\n]+', text)
+            parts = re.split(r"[，,、；;。\.\n]+", text)
             for part in parts:
                 part = part.strip()
                 # 过滤：太短、纯标记、停用词开头
                 if len(part) < 4:
                     continue
-                if part.startswith(('R1', 'R1', '[', '—', '※', '★')):
+                if part.startswith(("R1", "R1", "[", "—", "※", "★")):
                     continue
-                if any(part.startswith(sw) for sw in ('关于', '据现', '基于', '核心')):
+                if any(part.startswith(sw) for sw in ("关于", "据现", "基于", "核心")):
                     continue
                 # 保留6-60字的有意义片段
                 if 4 <= len(part) <= 80 and part not in seen:
@@ -720,10 +821,10 @@ class ReflectEngine:
 
     def _rule_based_observation(self, query: str, ctx: ReflectionContext) -> str:
         """规则归纳：生成观察文本（LLM 不可用时的回退）。"""
-        observation_parts: List[str] = []
+        observation_parts: list[str] = []
 
         if ctx.mental_models:
-            best_model = ctx.mental_models[0]
+            ctx.mental_models[0]
             observation_parts.append("已有心智模型支撑：")
             for o in ctx.observations[:3]:
                 observation_parts.append(f"  - {o.get('content', '')[:150]}")
@@ -800,8 +901,7 @@ class ReflectEngine:
 
     # ─── 辅助生成 ─────────────────────────────────────────────
 
-    def _generate_model_from_observations(self, observations: List[str],
-                                          query: str) -> str:
+    def _generate_model_from_observations(self, observations: list[str], query: str) -> str:
         """从观察生成心智模型（语义句子，非关键词堆砌）。"""
         if not observations:
             return ""
@@ -813,26 +913,31 @@ class ReflectEngine:
         if phrases:
             main_point = phrases[0]
             if len(phrases) >= 2:
-                return (f"在「{query}」方面，{main_point}；"
-                        f"同时{phrases[1]}。"
-                        f"基于{len(observations)}条观察，这些方面呈现出关联趋势。")
+                return (
+                    f"在「{query}」方面，{main_point}；"
+                    f"同时{phrases[1]}。"
+                    f"基于{len(observations)}条观察，这些方面呈现出关联趋势。"
+                )
             else:
-                return (f"在「{query}」方面，{main_point}。"
-                        f"基于{len(observations)}条观察，该领域有待进一步验证。")
+                return (
+                    f"在「{query}」方面，{main_point}。"
+                    f"基于{len(observations)}条观察，该领域有待进一步验证。"
+                )
         elif keywords:
-            return (f"围绕「{'、'.join(keywords[:3])}」等主题，"
-                    f"已有{len(observations)}条观察记录，但这些信息尚不足以形成完整的因果推断。")
+            return (
+                f"围绕「{'、'.join(keywords[:3])}」等主题，"
+                f"已有{len(observations)}条观察记录，但这些信息尚不足以形成完整的因果推断。"
+            )
         else:
             return f"关于「{query}」的观察信息有限，需更多数据支撑。"
 
-    def _generate_observation_from_facts(self, facts: List[str],
-                                         query: str) -> str:
+    def _generate_observation_from_facts(self, facts: list[str], query: str) -> str:
         """从事实列表生成初步观察。"""
         if len(facts) < 2:
             return ""
 
         # 按语义关键词聚类
-        keyword_map: Dict[str, List[str]] = {}
+        keyword_map: dict[str, list[str]] = {}
         for fact in facts:
             kws = self._smart_extract_keywords(fact, max_keywords=2)
             key = kws[0] if kws else "general"
@@ -843,7 +948,9 @@ class ReflectEngine:
             if len(group) >= 2:
                 phrases = self._extract_content_phrases(group, max_phrases=1)
                 if phrases:
-                    parts.append(f"在「{kw}」方面，{len(group)}条记忆显示一致趋势（如{phrases[0]}）")
+                    parts.append(
+                        f"在「{kw}」方面，{len(group)}条记忆显示一致趋势（如{phrases[0]}）"
+                    )
                 else:
                     parts.append(f"在「{kw}」方面，{len(group)}条记忆显示一致趋势")
             else:
@@ -853,8 +960,7 @@ class ReflectEngine:
 
         return "；".join(parts) if parts else ""
 
-    def _generate_model_from_facts(self, facts: List[str],
-                                    query: str) -> str:
+    def _generate_model_from_facts(self, facts: list[str], query: str) -> str:
         """从事实列表直接生成初步心智模型（语义句子，非关键词堆砌）。
 
         当 Consolidation 管线尚未产出 observation/mental_model 时，
@@ -871,15 +977,20 @@ class ReflectEngine:
             main_point = phrases[0]
             supporting = phrases[1] if len(phrases) >= 2 else None
             if supporting:
-                return (f"关于「{query}」，{main_point}，"
-                        f"此外{supporting}。"
-                        f"基于{len(facts)}条记忆，上述信息存在关联但因果性待验证。")
+                return (
+                    f"关于「{query}」，{main_point}，"
+                    f"此外{supporting}。"
+                    f"基于{len(facts)}条记忆，上述信息存在关联但因果性待验证。"
+                )
             else:
-                return (f"关于「{query}」，{main_point}。"
-                        f"基于{len(facts)}条记忆，该认知尚需更多验证。")
+                return (
+                    f"关于「{query}」，{main_point}。基于{len(facts)}条记忆，该认知尚需更多验证。"
+                )
         elif keywords:
-            return (f"关于「{query}」的现有记忆涉及{'、'.join(keywords[:3])}等方面，"
-                    f"但这些信息尚属碎片化，需进一步整理才能形成完整认知。")
+            return (
+                f"关于「{query}」的现有记忆涉及{'、'.join(keywords[:3])}等方面，"
+                f"但这些信息尚属碎片化，需进一步整理才能形成完整认知。"
+            )
         else:
             return f"关于「{query}」的信息不足，无法形成有效推断。"
 
@@ -904,7 +1015,9 @@ class ReflectEngine:
                         result.observation,
                         result.mental_model,
                         result.confidence,
-                        json.dumps(result.disposition_used, ensure_ascii=False) if result.disposition_used else "",
+                        json.dumps(result.disposition_used, ensure_ascii=False)
+                        if result.disposition_used
+                        else "",
                         json.dumps(result.sources, ensure_ascii=False),
                         now,
                     ),
@@ -915,7 +1028,7 @@ class ReflectEngine:
 
     # ─── 内部辅助 ─────────────────────────────────────────────
 
-    def _resolve_disposition(self, disposition: Optional[Dict[str, int]]) -> Disposition:
+    def _resolve_disposition(self, disposition: dict[str, int] | None) -> Disposition:
         """解析 Disposition 参数。"""
         if disposition:
             return Disposition(
@@ -943,7 +1056,7 @@ class ReflectEngine:
         cleaned = text.strip()
 
         # 特征1: 逗号/顿号分隔的短词列表
-        separators = r'[，,、；;]+'
+        separators = r"[，,、；;]+"
         parts = re.split(separators, cleaned)
 
         if len(parts) < 2:
@@ -955,7 +1068,7 @@ class ReflectEngine:
         # 如果超过60%的部分是短词 → 关键词堆砌
         if len(short_parts) >= 2 and len(short_parts) / len(parts) > 0.6:
             # 额外检查：排除正常的列举格式（如"1. xxx 2. xxx"）
-            has_numbering = bool(re.match(r'^\s*\d+[\.\、]', cleaned))
+            has_numbering = bool(re.match(r"^\s*\d+[\.\、]", cleaned))
             if not has_numbering:
                 return True
 
@@ -965,19 +1078,33 @@ class ReflectEngine:
             return True
 
         # 特征3: 缺少句子结构（没有句号，且没有常见的谓语动词）
-        has_sentence_end = any(cleaned.endswith(p) for p in ['。', '！', '？', '.', '!', '?'])
+        has_sentence_end = any(cleaned.endswith(p) for p in ["。", "！", "？", ".", "!", "?"])
         if not has_sentence_end and len(parts) >= 3:
             # 检查是否缺少动词
-            verbs = {'是', '有', '在', '为', '呈', '显示', '表明', '呈现', '涉及', '包含',
-                     'be', 'has', 'is', 'shows', 'indicates'}
+            verbs = {
+                "是",
+                "有",
+                "在",
+                "为",
+                "呈",
+                "显示",
+                "表明",
+                "呈现",
+                "涉及",
+                "包含",
+                "be",
+                "has",
+                "is",
+                "shows",
+                "indicates",
+            }
             has_verb = any(v in cleaned for v in verbs)
             if not has_verb:
                 return True
 
         return False
 
-    def _post_process_mental_model(self, mental_model: str,
-                                    confidence: float) -> str:
+    def _post_process_mental_model(self, mental_model: str, confidence: float) -> str:
         """后处理：检测并修复关键词堆砌的心智模型。
 
         当检测到关键词堆砌时：
@@ -999,15 +1126,21 @@ class ReflectEngine:
 
         logger.warning(
             "ReflectEngine detected keyword stuffing in mental_model (confidence=%.2f): %s",
-            confidence, mental_model[:100]
+            confidence,
+            mental_model[:100],
         )
 
         # 规则归纳生成的低质量输出 → 提取有意义的片段并重组
         if confidence < 0.5:
             # 尝试从mental_model中提取中文短语
-            phrases = re.findall(r'[\u4e00-\u9fff]{3,}(?:的|了|在|与|和|是|有|为|到|从|对|向)?[\u4e00-\u9fff]*', mental_model)
-            meaningful = [p for p in phrases if len(p) >= 3 and p not in {"关于", "初步认知", "核心要素"}]
-            
+            phrases = re.findall(
+                r"[\u4e00-\u9fff]{3,}(?:的|了|在|与|和|是|有|为|到|从|对|向)?[\u4e00-\u9fff]*",
+                mental_model,
+            )
+            meaningful = [
+                p for p in phrases if len(p) >= 3 and p not in {"关于", "初步认知", "核心要素"}
+            ]
+
             if len(meaningful) >= 2:
                 unique = list(dict.fromkeys(meaningful))[:4]
                 return (

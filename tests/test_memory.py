@@ -6,9 +6,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from omnimem.memory.wing_room import WingRoomManager
 from omnimem.memory.drawer_closet import DrawerClosetStore
 from omnimem.memory.index import ThreeLevelIndex
+from omnimem.memory.wing_room import WingRoomManager
 
 
 class TestWingRoomManager(unittest.TestCase):
@@ -67,8 +67,7 @@ class TestDrawerClosetStore(unittest.TestCase):
 
     def test_add_and_get(self):
         mid = self.store.add(
-            wing="personal", room="test", content="测试内容",
-            memory_type="fact", confidence=3
+            wing="personal", room="test", content="测试内容", memory_type="fact", confidence=3
         )
         self.assertTrue(mid)
         result = self.store.get(mid)
@@ -77,9 +76,7 @@ class TestDrawerClosetStore(unittest.TestCase):
         self.assertEqual(result["type"], "fact")
 
     def test_add_creates_disk_files(self):
-        mid = self.store.add(
-            wing="personal", room="test", content="磁盘测试"
-        )
+        mid = self.store.add(wing="personal", room="test", content="磁盘测试")
         self.store.flush()
         palace = Path(self.tmpdir)
         drawer_files = list(palace.rglob(f"drawer/{mid}.md"))
@@ -111,13 +108,15 @@ class TestDrawerClosetStore(unittest.TestCase):
 
     def test_warm_up(self):
         mid = "warm-test-001"
-        entries = [{
-            "memory_id": mid,
-            "content": "预热内容",
-            "summary": "预热摘要",
-            "type": "fact",
-            "wing": "personal",
-        }]
+        entries = [
+            {
+                "memory_id": mid,
+                "content": "预热内容",
+                "summary": "预热摘要",
+                "type": "fact",
+                "wing": "personal",
+            }
+        ]
         self.store.warm_up(entries)
         result = self.store.get(mid)
         self.assertIsNotNone(result)
@@ -160,8 +159,7 @@ class TestThreeLevelIndex(unittest.TestCase):
 
     def test_add_and_get(self):
         self.index.add(
-            memory_id="idx-001", wing="personal", hall="facts",
-            room="test", content="索引测试"
+            memory_id="idx-001", wing="personal", hall="facts", room="test", content="索引测试"
         )
         self.index.flush()
         result = self.index.get("idx-001")
@@ -177,13 +175,17 @@ class TestThreeLevelIndex(unittest.TestCase):
         self.assertIn("room-b", rooms)
 
     def test_search_l1(self):
-        self.index.add(memory_id="l1-1", wing="personal", hall="facts", room="r", content="c", type="fact")
+        self.index.add(
+            memory_id="l1-1", wing="personal", hall="facts", room="r", content="c", type="fact"
+        )
         self.index.flush()
         results = self.index.search_l1(wing="personal")
         self.assertTrue(len(results) > 0)
 
     def test_search_l2_keyword(self):
-        self.index.add(memory_id="l2-1", wing="personal", hall="facts", room="r", content="量子计算")
+        self.index.add(
+            memory_id="l2-1", wing="personal", hall="facts", room="r", content="量子计算"
+        )
         self.index.flush()
         results = self.index.search_l2(keyword="量子")
         self.assertTrue(len(results) > 0)
@@ -198,7 +200,14 @@ class TestThreeLevelIndex(unittest.TestCase):
         self.assertIsNone(result)
 
     def test_update_privacy(self):
-        self.index.add(memory_id="up-1", wing="personal", hall="facts", room="r", content="c", privacy="personal")
+        self.index.add(
+            memory_id="up-1",
+            wing="personal",
+            hall="facts",
+            room="r",
+            content="c",
+            privacy="personal",
+        )
         self.index.flush()
         ok = self.index.update_privacy("up-1", "secret")
         self.assertTrue(ok)
@@ -208,7 +217,9 @@ class TestThreeLevelIndex(unittest.TestCase):
 
     def test_batch_commit(self):
         for i in range(10):
-            self.index.add(memory_id=f"batch-{i}", wing="personal", hall="facts", room="r", content=f"c{i}")
+            self.index.add(
+                memory_id=f"batch-{i}", wing="personal", hall="facts", room="r", content=f"c{i}"
+            )
         self.index.flush()
         for i in range(10):
             result = self.index.get(f"batch-{i}")

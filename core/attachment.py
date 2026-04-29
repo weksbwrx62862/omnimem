@@ -14,17 +14,17 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, List
+from typing import Any
 
 
 @dataclass
 class CompactAttachment:
     """压缩后携带的结构化状态。"""
 
-    kind: str          # task_focus / verified_work / key_decisions / ...
-    title: str         # 简短标题
-    body: str          # 内容正文
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    kind: str  # task_focus / verified_work / key_decisions / ...
+    title: str  # 简短标题
+    body: str  # 内容正文
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     def to_text(self, max_body_len: int = 500) -> str:
         """渲染为文本片段。"""
@@ -32,13 +32,13 @@ class CompactAttachment:
         return f"[{self.kind}] {self.title}: {body}"
 
 
-def build_attachments(messages: List[Dict[str, Any]]) -> List[CompactAttachment]:
+def build_attachments(messages: list[dict[str, Any]]) -> list[CompactAttachment]:
     """从消息列表构建 CompactAttachment。
 
     在 on_pre_compress 中被调用，将即将被压缩的消息转化为
     结构化附件，确保关键信息不会因压缩而丢失。
     """
-    attachments: List[CompactAttachment] = []
+    attachments: list[CompactAttachment] = []
 
     if not messages:
         return attachments
@@ -56,11 +56,13 @@ def build_attachments(messages: List[Dict[str, Any]]) -> List[CompactAttachment]
             decisions.append(f"[{role}] {content[:200]}")
 
     if decisions:
-        attachments.append(CompactAttachment(
-            kind="key_decisions",
-            title="Decisions before compression",
-            body="\n".join(decisions[:5]),
-        ))
+        attachments.append(
+            CompactAttachment(
+                kind="key_decisions",
+                title="Decisions before compression",
+                body="\n".join(decisions[:5]),
+            )
+        )
 
     # 提取用户偏好
     preferences = []
@@ -75,11 +77,13 @@ def build_attachments(messages: List[Dict[str, Any]]) -> List[CompactAttachment]
             preferences.append(content[:200])
 
     if preferences:
-        attachments.append(CompactAttachment(
-            kind="user_preferences",
-            title="User preferences noted",
-            body="\n".join(preferences[:5]),
-        ))
+        attachments.append(
+            CompactAttachment(
+                kind="user_preferences",
+                title="User preferences noted",
+                body="\n".join(preferences[:5]),
+            )
+        )
 
     # 提取错误模式
     errors = []
@@ -92,11 +96,13 @@ def build_attachments(messages: List[Dict[str, Any]]) -> List[CompactAttachment]
             errors.append(content[:200])
 
     if errors:
-        attachments.append(CompactAttachment(
-            kind="error_patterns",
-            title="Errors encountered",
-            body="\n".join(errors[:3]),
-        ))
+        attachments.append(
+            CompactAttachment(
+                kind="error_patterns",
+                title="Errors encountered",
+                body="\n".join(errors[:3]),
+            )
+        )
 
     # 进度状态：最后几条消息的摘要
     last_msgs = messages[-3:]
@@ -108,16 +114,18 @@ def build_attachments(messages: List[Dict[str, Any]]) -> List[CompactAttachment]
             progress_parts.append(f"[{role}] {content[:150]}")
 
     if progress_parts:
-        attachments.append(CompactAttachment(
-            kind="progress_state",
-            title="Latest progress",
-            body="\n".join(progress_parts),
-        ))
+        attachments.append(
+            CompactAttachment(
+                kind="progress_state",
+                title="Latest progress",
+                body="\n".join(progress_parts),
+            )
+        )
 
     return attachments
 
 
-def _extract_text(msg: Dict[str, Any]) -> str:
+def _extract_text(msg: dict[str, Any]) -> str:
     """从消息中提取纯文本。"""
     content = msg.get("content", "")
     if isinstance(content, str):
@@ -125,9 +133,7 @@ def _extract_text(msg: Dict[str, Any]) -> str:
     if isinstance(content, list):
         parts = []
         for c in content:
-            if isinstance(c, dict) and c.get("type") == "text":
-                parts.append(c.get("text", ""))
-            elif isinstance(c, dict):
+            if isinstance(c, dict) and c.get("type") == "text" or isinstance(c, dict):
                 parts.append(c.get("text", ""))
         return " ".join(parts)
     return str(content) if content else ""

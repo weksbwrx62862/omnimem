@@ -11,14 +11,12 @@
 
 from __future__ import annotations
 
-import hashlib
-import json
 import logging
 import uuid
 from collections import OrderedDict
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from omnimem.memory.meta_store import MetaStore
 
@@ -48,17 +46,17 @@ class DrawerClosetStore:
         self._palace_dir = palace_dir
         self._palace_dir.mkdir(parents=True, exist_ok=True)
         # 内存索引（Closet 加速），带容量限制
-        self._closet_index: OrderedDict[str, Dict[str, Any]] = OrderedDict()
+        self._closet_index: OrderedDict[str, dict[str, Any]] = OrderedDict()
         self._max_index = max_index_size or self._MAX_CLOSET_INDEX
         # 路径索引：memory_id → drawer_path，加速磁盘查找
-        self._id_to_path: Dict[str, Path] = {}
+        self._id_to_path: dict[str, Path] = {}
         # ★ 二级倒排索引：type/wing → set(memory_id)，加速分类搜索
-        self._type_index: Dict[str, set] = {}
-        self._wing_index: Dict[str, set] = {}
+        self._type_index: dict[str, set] = {}
+        self._wing_index: dict[str, set] = {}
         # OPT-1: 延迟绑定的 PrivacyManager（用于加密/解密）
         self._privacy_manager = None
         # ★ 磁盘写入缓冲：批量 flush 减少高频 add 时的 IO 压力
-        self._write_buffer: List[Any] = []
+        self._write_buffer: list[Any] = []
         self._pending_disk_writes = 0
         self._WRITE_BUFFER_THRESHOLD = 5
 
@@ -78,7 +76,7 @@ class DrawerClosetStore:
         memory_type: str = "fact",
         confidence: int = 3,
         privacy: str = "personal",
-        provenance: Optional[Dict[str, Any]] = None,
+        provenance: dict[str, Any] | None = None,
         vc: str = "",
         memory_id: str = "",
         **kwargs,
@@ -108,7 +106,11 @@ class DrawerClosetStore:
         drawer_dir.mkdir(parents=True, exist_ok=True)
         drawer_path = drawer_dir / f"{memory_id}.md"
         # ★ 批量缓冲写入，降低高频 add 的磁盘 IO
-        self._write_buffer.append(lambda: self._write_drawer(drawer_path, stored_content, memory_type, confidence, privacy, provenance, now, vc))
+        self._write_buffer.append(
+            lambda: self._write_drawer(
+                drawer_path, stored_content, memory_type, confidence, privacy, provenance, now, vc
+            )
+        )
         self._pending_disk_writes += 1
 
         # 2. Closet: 摘要指针（secret 级不存摘要，存标记）
@@ -119,8 +121,12 @@ class DrawerClosetStore:
         if privacy == "secret":
             closet_summary = "[加密记忆]"
         else:
-            closet_summary = content[:200].replace('\n', ' ').replace('\r', ' ').replace('\t', ' ')
-        self._write_buffer.append(lambda: self._write_closet(closet_path, closet_summary, memory_type, confidence, privacy, now))
+            closet_summary = content[:200].replace("\n", " ").replace("\r", " ").replace("\t", " ")
+        self._write_buffer.append(
+            lambda: self._write_closet(
+                closet_path, closet_summary, memory_type, confidence, privacy, now
+            )
+        )
         self._pending_disk_writes += 1
 
         if self._pending_disk_writes >= self._WRITE_BUFFER_THRESHOLD * 2:
@@ -170,11 +176,17 @@ class DrawerClosetStore:
 
         logger.debug(
             "Stored memory %s in %s/%s/%s (type=%s, confidence=%d, privacy=%s)",
-            memory_id, wing, memory_type, room, memory_type, confidence, privacy,
+            memory_id,
+            wing,
+            memory_type,
+            room,
+            memory_type,
+            confidence,
+            privacy,
         )
         return memory_id
 
-    def get(self, memory_id: str) -> Optional[Dict[str, Any]]:
+    def get(self, memory_id: str) -> dict[str, Any] | None:
         """根据 ID 获取记忆。先查内存索引，再查 Drawer。"""
         # 内存索引
         if memory_id in self._closet_index:
@@ -192,7 +204,7 @@ class DrawerClosetStore:
             self._evict_if_needed()
         return result
 
-    def _find_on_disk(self, memory_id: str) -> Optional[Dict[str, Any]]:
+    def _find_on_disk(self, memory_id: str) -> dict[str, Any] | None:
         """在磁盘上查找记忆，优先用路径索引，回退到 rglob。"""
         # 策略1：用已知的路径索引
         known_path = self._id_to_path.get(memory_id)
@@ -215,7 +227,7 @@ class DrawerClosetStore:
         room: str = "",
         memory_type: str = "",
         limit: int = 50,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """按条件搜索记忆。
 
         ★ P0方案一：优先使用 MetaStore SQLite 查询（O(log n)），
@@ -287,7 +299,7 @@ class DrawerClosetStore:
                 break
         return results
 
-    def search_by_content(self, query: str, limit: int = 20) -> List[Dict[str, Any]]:
+    def search_by_content(self, query: str, limit: int = 20) -> list[dict[str, Any]]:
         """按内容关键词搜索。
 
         ★ P0方案一：优先使用 MetaStore FTS5/LIKE 查询，回退到内存子串匹配。
@@ -318,11 +330,11 @@ class DrawerClosetStore:
                 break
         return results
 
-    def get_all_for_indexing(self) -> List[Dict[str, Any]]:
+    def get_all_for_indexing(self) -> list[dict[str, Any]]:
         """获取所有记忆（用于检索引擎索引）。"""
         return [dict(entry) for entry in self._closet_index.values()]
 
-    def warm_up(self, entries: List[Dict[str, Any]]) -> None:
+    def warm_up(self, entries: list[dict[str, Any]]) -> None:
         """从外部数据源（如 ThreeLevelIndex）预热内存索引和 MetaStore。
 
         避免首次查询需要 rglob 扫描磁盘。
@@ -380,16 +392,17 @@ class DrawerClosetStore:
             text = drawer_path.read_text(encoding="utf-8")
             if text.startswith("---"):
                 import re
+
                 text = re.sub(
-                    r'privacy:\s*\S+',
-                    f'privacy: {privacy}',
+                    r"privacy:\s*\S+",
+                    f"privacy: {privacy}",
                     text,
                     count=1,
                 )
                 if new_wing:
                     text = re.sub(
-                        r'wing:\s*\S+',
-                        f'wing: {new_wing}',
+                        r"wing:\s*\S+",
+                        f"wing: {new_wing}",
                         text,
                         count=1,
                     )
@@ -419,7 +432,7 @@ class DrawerClosetStore:
         memory_type: str,
         confidence: int,
         privacy: str,
-        provenance: Optional[Dict[str, Any]],
+        provenance: dict[str, Any] | None,
         stored_at: datetime,
         vc: str = "",
     ) -> None:
@@ -438,6 +451,7 @@ class DrawerClosetStore:
 
         try:
             import yaml
+
             fm_str = yaml.dump(front_matter, allow_unicode=True, default_flow_style=False)
         except ImportError:
             fm_str = "\n".join(f"{k}: {v}" for k, v in front_matter.items())
@@ -465,6 +479,7 @@ class DrawerClosetStore:
 
         try:
             import yaml
+
             fm_str = yaml.dump(front_matter, allow_unicode=True, default_flow_style=False)
         except ImportError:
             fm_str = "\n".join(f"{k}: {v}" for k, v in front_matter.items())
@@ -472,7 +487,7 @@ class DrawerClosetStore:
         text = f"---\n{fm_str}---\n\n{summary}\n"
         path.write_text(text, encoding="utf-8")
 
-    def _read_drawer(self, path: Path) -> Optional[Dict[str, Any]]:
+    def _read_drawer(self, path: Path) -> dict[str, Any] | None:
         """从 Drawer 文件读取记忆。OPT-1: secret 级内容自动解密。"""
         try:
             text = path.read_text(encoding="utf-8")
@@ -482,6 +497,7 @@ class DrawerClosetStore:
                 if len(parts) >= 3:
                     try:
                         import yaml
+
                         fm = yaml.safe_load(parts[1]) or {}
                     except ImportError:
                         fm = {}

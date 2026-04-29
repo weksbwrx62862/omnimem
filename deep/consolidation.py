@@ -18,6 +18,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import re
@@ -26,16 +27,18 @@ import threading
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
 
 # ─── 数据模型 ────────────────────────────────────────────────
 
+
 @dataclass
 class ConsolidationResult:
     """Consolidation 结果。"""
+
     observation: str = ""
     mental_model: str = ""
     facts_consolidated: int = 0
@@ -46,14 +49,15 @@ class ConsolidationResult:
 @dataclass
 class ConsolidatedItem:
     """一条 Consolidation 产出。"""
+
     item_id: str = ""
-    stage: str = ""           # world_facts / experience_facts / observations / mental_models
+    stage: str = ""  # world_facts / experience_facts / observations / mental_models
     content: str = ""
-    source_ids: List[str] = field(default_factory=list)
+    source_ids: list[str] = field(default_factory=list)
     confidence: float = 0.0
     created_at: str = ""
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "item_id": self.item_id,
             "stage": self.stage,
@@ -66,32 +70,67 @@ class ConsolidatedItem:
 
 # ─── 关键词提取 ──────────────────────────────────────────────
 
-def _extract_keywords(texts: List[str], top_k: int = 10) -> List[str]:
+
+def _extract_keywords(texts: list[str], top_k: int = 10) -> list[str]:
     """从文本列表中提取高频关键词。"""
     from collections import Counter
+
     # 中文停用词
-    zh_stopwords = {"然后", "因为", "所以", "但是", "不过", "而且", "或者",
-                    "虽然", "如果", "那么", "这个", "那个", "什么", "怎么",
-                    "已经", "正在", "可以", "应该", "需要", "没有", "不是"}
+    zh_stopwords = {
+        "然后",
+        "因为",
+        "所以",
+        "但是",
+        "不过",
+        "而且",
+        "或者",
+        "虽然",
+        "如果",
+        "那么",
+        "这个",
+        "那个",
+        "什么",
+        "怎么",
+        "已经",
+        "正在",
+        "可以",
+        "应该",
+        "需要",
+        "没有",
+        "不是",
+    }
     word_count: Counter = Counter()
     for text in texts:
         # 中文分词：2-4字组合，排除停用词
-        zh = [w for w in re.findall(r'[\u4e00-\u9fff]{2,4}', text)
-              if w not in zh_stopwords]
+        zh = [w for w in re.findall(r"[\u4e00-\u9fff]{2,4}", text) if w not in zh_stopwords]
         word_count.update(zh)
         # 英文分词
-        en = re.findall(r'\b[a-zA-Z]{3,}\b', text.lower())
+        en = re.findall(r"\b[a-zA-Z]{3,}\b", text.lower())
         # 排除停用词
-        stopwords = {"the", "and", "for", "are", "but", "not", "you",
-                     "all", "can", "had", "her", "was", "one", "our"}
+        stopwords = {
+            "the",
+            "and",
+            "for",
+            "are",
+            "but",
+            "not",
+            "you",
+            "all",
+            "can",
+            "had",
+            "her",
+            "was",
+            "one",
+            "our",
+        }
         en = [w for w in en if w not in stopwords]
         word_count.update(en)
     return [w for w, _ in word_count.most_common(top_k)]
 
 
-def _cluster_by_topic(facts: List[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]]]:
+def _cluster_by_topic(facts: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
     """按主题对事实进行简单聚类（基于关键词重叠）。"""
-    clusters: Dict[str, List[Dict[str, Any]]] = {}
+    clusters: dict[str, list[dict[str, Any]]] = {}
     for fact in facts:
         content = fact.get("content", "")
         # 提取主题关键词
@@ -103,7 +142,7 @@ def _cluster_by_topic(facts: List[Dict[str, Any]]) -> Dict[str, List[Dict[str, A
     return clusters
 
 
-def _generate_observation(facts: List[Dict[str, Any]]) -> str:
+def _generate_observation(facts: list[dict[str, Any]]) -> str:
     """从一组相关事实生成观察。"""
     if not facts:
         return ""
@@ -117,7 +156,7 @@ def _generate_observation(facts: List[Dict[str, Any]]) -> str:
     return "\n".join(parts)
 
 
-def _generate_mental_model(observations: List[str]) -> str:
+def _generate_mental_model(observations: list[str]) -> str:
     """从观察生成心智模型（抽象规律）。"""
     if not observations:
         return ""
@@ -135,15 +174,15 @@ def _generate_mental_model(observations: List[str]) -> str:
 
 # ─── ConsolidationEngine ────────────────────────────────────
 
+
 class ConsolidationEngine:
     """Consolidation 管线：事实 → 经验 → 观察 → 心智模型。"""
 
-    def __init__(self, data_dir: Optional[Path] = None,
-                 fact_threshold: int = 10):
+    def __init__(self, data_dir: Path | None = None, fact_threshold: int = 10):
         self._data_dir = data_dir
         self._fact_threshold = fact_threshold
-        self._pending: List[Dict[str, Any]] = []
-        self._conn: Optional[sqlite3.Connection] = None
+        self._pending: list[dict[str, Any]] = []
+        self._conn: sqlite3.Connection | None = None
         self._consolidation_count = 0
         self._lock = threading.RLock()
 
@@ -174,12 +213,14 @@ class ConsolidationEngine:
 
     def submit(self, memory_id: str, content: str, memory_type: str = "fact") -> None:
         """提交一条记忆到 Consolidation 队列。"""
-        self._pending.append({
-            "memory_id": memory_id,
-            "content": content,
-            "type": memory_type,
-            "submitted_at": datetime.now(timezone.utc).isoformat(),
-        })
+        self._pending.append(
+            {
+                "memory_id": memory_id,
+                "content": content,
+                "type": memory_type,
+                "submitted_at": datetime.now(timezone.utc).isoformat(),
+            }
+        )
 
     def should_process(self) -> bool:
         """检查是否达到处理阈值。"""
@@ -215,7 +256,10 @@ class ConsolidationEngine:
         self._consolidation_count += count
         logger.info(
             "Consolidation: processed %d facts → %d experience → %d observations → %d models",
-            count, len(experience_facts), len(observations), len(mental_models),
+            count,
+            len(experience_facts),
+            len(observations),
+            len(mental_models),
         )
         return count
 
@@ -257,15 +301,15 @@ class ConsolidationEngine:
             facts_consolidated=0,
         )
 
-    def get_observations(self, topic: str = "", limit: int = 20) -> List[Dict[str, Any]]:
+    def get_observations(self, topic: str = "", limit: int = 20) -> list[dict[str, Any]]:
         """获取观察列表。"""
         return self._query_items("observations", topic, limit)
 
-    def get_mental_models(self, topic: str = "", limit: int = 10) -> List[Dict[str, Any]]:
+    def get_mental_models(self, topic: str = "", limit: int = 10) -> list[dict[str, Any]]:
         """获取心智模型列表。"""
         return self._query_items("mental_models", topic, limit)
 
-    def get_stats(self) -> Dict[str, int]:
+    def get_stats(self) -> dict[str, int]:
         """获取 Consolidation 统计。"""
         stats = {
             "total_consolidated": self._consolidation_count,
@@ -289,7 +333,7 @@ class ConsolidationEngine:
 
     # ─── 内部方法 ─────────────────────────────────────────────
 
-    def _annotate_experience(self, facts: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def _annotate_experience(self, facts: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Stage 1: 为事实添加上下文标注（经验化）。"""
         experience = []
         for fact in facts:
@@ -306,21 +350,25 @@ class ConsolidationEngine:
             else:
                 context_tag = "[事实经验] "
 
-            experience.append({
-                "item_id": f"exp-{fact.get('memory_id', '')}",
-                "content": context_tag + content,
-                "source_ids": [fact.get("memory_id", "")],
-                "confidence": 0.8 if memory_type in ("correction", "preference") else 0.6,
-                "type": "experience_fact",
-            })
+            experience.append(
+                {
+                    "item_id": f"exp-{fact.get('memory_id', '')}",
+                    "content": context_tag + content,
+                    "source_ids": [fact.get("memory_id", "")],
+                    "confidence": 0.8 if memory_type in ("correction", "preference") else 0.6,
+                    "type": "experience_fact",
+                }
+            )
         return experience
 
-    def _consolidate_observations(self, experience_facts: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def _consolidate_observations(
+        self, experience_facts: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
         """Stage 2: 从经验事实中生成观察（跨记忆关联）。"""
         if len(experience_facts) < 2:
             return []
 
-        observations = []
+        observations: list[dict[str, Any]] = []
         # 按主题聚类
         clusters = _cluster_by_topic(experience_facts)
 
@@ -331,17 +379,19 @@ class ConsolidationEngine:
             obs_content = _generate_observation(cluster_facts)
             if obs_content:
                 source_ids = [f.get("item_id", "") for f in cluster_facts]
-                observations.append({
-                    "item_id": f"obs-{topic}-{len(observations):03d}",
-                    "content": obs_content,
-                    "source_ids": source_ids,
-                    "confidence": min(0.9, 0.5 + 0.1 * len(cluster_facts)),
-                    "type": "observation",
-                })
+                observations.append(
+                    {
+                        "item_id": f"obs-{topic}-{len(observations):03d}",
+                        "content": obs_content,
+                        "source_ids": source_ids,
+                        "confidence": min(0.9, 0.5 + 0.1 * len(cluster_facts)),
+                        "type": "observation",
+                    }
+                )
 
         return observations
 
-    def _abstract_models(self, observations: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def _abstract_models(self, observations: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Stage 3: 从观察中抽象心智模型。"""
         if len(observations) < 2:
             return []
@@ -353,17 +403,19 @@ class ConsolidationEngine:
 
         if model_content:
             source_ids = [o.get("item_id", "") for o in observations]
-            models.append({
-                "item_id": f"model-{self._consolidation_count:04d}",
-                "content": model_content,
-                "source_ids": source_ids,
-                "confidence": 0.7,
-                "type": "mental_model",
-            })
+            models.append(
+                {
+                    "item_id": f"model-{self._consolidation_count:04d}",
+                    "content": model_content,
+                    "source_ids": source_ids,
+                    "confidence": 0.7,
+                    "type": "mental_model",
+                }
+            )
 
         return models
 
-    def _persist_items(self, items: List[Dict[str, Any]], stage: str) -> None:
+    def _persist_items(self, items: list[dict[str, Any]], stage: str) -> None:
         """持久化 Consolidation 产出到 SQLite。"""
         if not self._conn:
             return
@@ -388,7 +440,7 @@ class ConsolidationEngine:
                     logger.debug("Consolidation persist failed for %s: %s", item.get("item_id"), e)
             self._conn.commit()
 
-    def _query_items(self, stage: str, keyword: str = "", limit: int = 20) -> List[Dict[str, Any]]:
+    def _query_items(self, stage: str, keyword: str = "", limit: int = 20) -> list[dict[str, Any]]:
         """从数据库查询指定阶段的 Consolidation 产出。"""
         if not self._conn:
             return []
@@ -403,16 +455,22 @@ class ConsolidationEngine:
                     "SELECT * FROM consolidation_items WHERE stage = ? ORDER BY created_at DESC LIMIT ?",
                     (stage, limit),
                 ).fetchall()
-            keys = ["item_id", "stage", "content", "source_ids", "confidence", "created_at", "metadata"]
+            keys = [
+                "item_id",
+                "stage",
+                "content",
+                "source_ids",
+                "confidence",
+                "created_at",
+                "metadata",
+            ]
             results = []
             for row in rows:
-                d = dict(zip(keys, row))
+                d = dict(zip(keys, row, strict=False))
                 # 解析 source_ids JSON
                 if d.get("source_ids"):
-                    try:
+                    with contextlib.suppress(json.JSONDecodeError, TypeError):
                         d["source_ids"] = json.loads(d["source_ids"])
-                    except (json.JSONDecodeError, TypeError):
-                        pass
                 results.append(d)
             return results
         except Exception as e:
@@ -422,7 +480,9 @@ class ConsolidationEngine:
     def close(self) -> None:
         """关闭数据库连接，处理剩余待升华数据。"""
         if self._pending:
-            logger.info("Consolidation: processing %d remaining pending items on close", len(self._pending))
+            logger.info(
+                "Consolidation: processing %d remaining pending items on close", len(self._pending)
+            )
             self.process_pending()
         if self._conn:
             self._conn.close()

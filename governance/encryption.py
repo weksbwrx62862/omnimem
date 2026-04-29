@@ -10,7 +10,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import logging
-from typing import Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -38,8 +38,8 @@ class MemoryEncryption:
                           but still encrypts at rest).
         """
         self._key = self._derive_key(session_seed)
-        self._fernet: Optional[Any] = None
-        self._available: Optional[bool] = None
+        self._fernet: Any | None = None
+        self._available: bool | None = None
 
     @staticmethod
     def _derive_key(seed: str) -> bytes:
@@ -58,6 +58,7 @@ class MemoryEncryption:
             return self._available
         try:
             from cryptography.fernet import Fernet  # noqa: F401
+
             self._available = True
         except ImportError:
             self._available = False
@@ -69,6 +70,7 @@ class MemoryEncryption:
             return self._fernet
         try:
             from cryptography.fernet import Fernet
+
             self._fernet = Fernet(self._key)
         except ImportError:
             logger.warning("cryptography not installed — secret encryption unavailable")
@@ -98,7 +100,7 @@ class MemoryEncryption:
         if not ciphertext:
             return ciphertext
         if ciphertext.startswith(_UNENCRYPTED_PREFIX):
-            return ciphertext[len(_UNENCRYPTED_PREFIX):]
+            return ciphertext[len(_UNENCRYPTED_PREFIX) :]
         f = self._get_fernet()
         if f is None:
             logger.error("Cannot decrypt: cryptography not available")
@@ -116,6 +118,4 @@ class MemoryEncryption:
         if text.startswith(_UNENCRYPTED_PREFIX):
             return True
         # Fernet tokens start with "gAAAA" (base64 of version byte 0x80)
-        if text.startswith("gAAAA"):
-            return True
-        return False
+        return bool(text.startswith("gAAAA"))

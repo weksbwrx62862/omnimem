@@ -10,19 +10,28 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import List
 
 logger = logging.getLogger(__name__)
 
 # 关键标记（这些行永远不会被压缩删除）
 _KEY_MARKERS = [
-    "CORRECTION:", "REINFORCED:", "DECISION:", "PREFERENCE:",
-    "IMPORTANT:", "NOTE:", "WARNING:", "TODO:",
-    "纠正:", "决定:", "偏好:", "重要:", "注意:",
+    "CORRECTION:",
+    "REINFORCED:",
+    "DECISION:",
+    "PREFERENCE:",
+    "IMPORTANT:",
+    "NOTE:",
+    "WARNING:",
+    "TODO:",
+    "纠正:",
+    "决定:",
+    "偏好:",
+    "重要:",
+    "注意:",
 ]
 
 
-def microcompact(lines: List[str]) -> List[str]:
+def microcompact(lines: list[str]) -> list[str]:
     """微压缩：去噪 + 感知标记。
 
     Args:
@@ -31,7 +40,7 @@ def microcompact(lines: List[str]) -> List[str]:
     Returns:
         压缩后的行列表
     """
-    result = []
+    result: list[str] = []
     seen = set()
 
     for line in lines:
@@ -67,10 +76,8 @@ def microcompact(lines: List[str]) -> List[str]:
 def _is_noise(line: str) -> bool:
     """判断一行是否是噪声。"""
     # 纯符号行
-    if re.match(r'^[\s\-\*\=\#\|]+$', line):
+    if re.match(r"^[\s\-\*\=\#\|]+$", line):
         return True
     # 太短的行（少于3个有效字符）
-    clean = re.sub(r'[\s\-\*\#\|]', '', line)
-    if len(clean) < 3:
-        return True
-    return False
+    clean = re.sub(r"[\s\-\*\#\|]", "", line)
+    return len(clean) < 3

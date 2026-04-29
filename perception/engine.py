@@ -16,8 +16,7 @@ from __future__ import annotations
 
 import logging
 import re
-from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +24,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class PerceptionSignals:
     """感知信号集合。"""
+
     has_correction: bool = False
     has_reinforcement: bool = False
     should_memorize: bool = False
@@ -40,46 +40,107 @@ class PerceptionEngine:
 
     # 纠正标记 — 移除"不是"（会误匹配问句"不是...吗"），改用更明确的模式
     _CORRECTION_MARKERS = [
-        "不对", "错了", "不是这样", "纠正", "更正", "不是这样",
-        "我说的不是", "应该是", "我说的是",
-        "wrong", "incorrect", "no,", "not like that", "actually",
-        "that's wrong", "I meant",
+        "不对",
+        "错了",
+        "不是这样",
+        "纠正",
+        "更正",
+        "不是这样",
+        "我说的不是",
+        "应该是",
+        "我说的是",
+        "wrong",
+        "incorrect",
+        "no,",
+        "not like that",
+        "actually",
+        "that's wrong",
+        "I meant",
     ]
 
     # 正反馈标记
     _REINFORCEMENT_MARKERS = [
-        "对", "很好", "没错", "就是这样", "正确",
-        "yes", "correct", "right", "exactly", "good",
-        "perfect", "great",
+        "对",
+        "很好",
+        "没错",
+        "就是这样",
+        "正确",
+        "yes",
+        "correct",
+        "right",
+        "exactly",
+        "good",
+        "perfect",
+        "great",
     ]
 
     # 偏好标记
     _PREFERENCE_MARKERS = [
-        "我喜欢", "我不喜欢", "偏好", "更希望",
-        "I prefer", "I like", "I don't like", "I'd rather",
+        "我喜欢",
+        "我不喜欢",
+        "偏好",
+        "更希望",
+        "I prefer",
+        "I like",
+        "I don't like",
+        "I'd rather",
         "my preference",
     ]
 
     # 值得记忆的标记
     _MEMORABLE_MARKERS = [
-        "记住", "记下", "记住这个", "别忘了",
-        "remember", "note that", "keep in mind", "don't forget",
-        "important", "重要",
+        "记住",
+        "记下",
+        "记住这个",
+        "别忘了",
+        "remember",
+        "note that",
+        "keep in mind",
+        "don't forget",
+        "important",
+        "重要",
     ]
 
     # ★ 事实提炼规则：从原文中提取精简事实而非存整段原文
     # 预编译正则以避免运行时重复编译/缓存查找开销
     _EXTRACTION_PATTERNS = [
         # 偏好提取: "我喜欢X" → "偏好: X"
-        (re.compile(r'(?:我喜欢|偏好|更希望|习惯|总是)(.{2,30}?)(?:[，。！？,.!?\n]|$)', re.IGNORECASE), "偏好"),
+        (
+            re.compile(
+                r"(?:我喜欢|偏好|更希望|习惯|总是)(.{2,30}?)(?:[，。！？,.!?\n]|$)", re.IGNORECASE
+            ),
+            "偏好",
+        ),
         # 纠正提取: "不对，应该是X" → "纠正: X"
-        (re.compile(r'(?:不对|错了|不是|纠正|更正)[，,]?\s*(?:应该是|应该是|改用|改为)?(.{2,40}?)(?:[，。！？,.!?\n]|$)', re.IGNORECASE), "纠正"),
+        (
+            re.compile(
+                r"(?:不对|错了|不是|纠正|更正)[，,]?\s*(?:应该是|应该是|改用|改为)?(.{2,40}?)(?:[，。！？,.!?\n]|$)",
+                re.IGNORECASE,
+            ),
+            "纠正",
+        ),
         # 称呼偏好: "叫我X" / "称呼X" → "称呼偏好: X"（放在姓名前，优先匹配更具体的）
-        (re.compile(r'(?:叫我|称呼|称我为?)\s*(.+?)(?:就行|就好|可以了|吧|了|着|过|呢|啊|呀|嘛|[，。！？,.!?\n]|$)', re.IGNORECASE), "称呼偏好"),
+        (
+            re.compile(
+                r"(?:叫我|称呼|称我为?)\s*(.+?)(?:就行|就好|可以了|吧|了|着|过|呢|啊|呀|嘛|[，。！？,.!?\n]|$)",
+                re.IGNORECASE,
+            ),
+            "称呼偏好",
+        ),
         # 姓名提取: "我姓X" / "我叫X" → "姓名: X"
-        (re.compile(r'(?:我姓|我叫|名字是|姓名是?)\s*(.{1,20}?)(?:[，。！？,.!?\n]|$)', re.IGNORECASE), "姓名"),
+        (
+            re.compile(
+                r"(?:我姓|我叫|名字是|姓名是?)\s*(.{1,20}?)(?:[，。！？,.!?\n]|$)", re.IGNORECASE
+            ),
+            "姓名",
+        ),
         # 显式记忆: "记住X" → "X"
-        (re.compile(r'(?:记住|记下|别忘了|remember)\s*(.{2,50}?)(?:[，。！？,.!?\n]|$)', re.IGNORECASE), ""),
+        (
+            re.compile(
+                r"(?:记住|记下|别忘了|remember)\s*(.{2,50}?)(?:[，。！？,.!?\n]|$)", re.IGNORECASE
+            ),
+            "",
+        ),
     ]
 
     def detect_signals(self, user_content: str, assistant_content: str = "") -> PerceptionSignals:
@@ -127,18 +188,25 @@ class PerceptionEngine:
 
         is_echo = False
         if assistant_content:
-            echo_markers = ["### Relevant Memories", "- [fact]", "- [preference]",
-                           "- [correction]", "- [cached]"]
+            echo_markers = [
+                "### Relevant Memories",
+                "- [fact]",
+                "- [preference]",
+                "- [correction]",
+                "- [cached]",
+            ]
             is_echo = any(m in assistant_content for m in echo_markers)
 
         return is_injection, is_echo
 
-    def _check_volume(self, user_content: str, assistant_content: str, signals: PerceptionSignals) -> None:
+    def _check_volume(
+        self, user_content: str, assistant_content: str, signals: PerceptionSignals
+    ) -> None:
         """纠正类信号检测（纠正 + 模糊纠正）。
 
         直接修改 signals 对象。
         """
-        is_question = user_content.rstrip().endswith(('吗', '？', '?', '么'))
+        is_question = user_content.rstrip().endswith(("吗", "？", "?", "么"))
         if not is_question:
             for marker in self._CORRECTION_MARKERS:
                 if marker.lower() in user_content.lower():
@@ -166,7 +234,12 @@ class PerceptionEngine:
         # 正反馈检测 — 单字词需词边界检查
         for marker in self._REINFORCEMENT_MARKERS:
             if len(marker) <= 1:
-                if re.search(r'(?:^|[，,\n\s])' + re.escape(marker) + r'(?:[，,。.！!？?了着过的呢吧啊呀嘛\s]|$)', user_content):
+                if re.search(
+                    r"(?:^|[，,\n\s])"
+                    + re.escape(marker)
+                    + r"(?:[，,。.！!？?了着过的呢吧啊呀嘛\s]|$)",
+                    user_content,
+                ):
                     signals.has_reinforcement = True
                     signals.reinforcement_target = self._extract_core_fact(user_content)
                     break
@@ -185,11 +258,10 @@ class PerceptionEngine:
 
         # 姓名/称呼检测
         for pattern, label in self._EXTRACTION_PATTERNS:
-            if pattern.search(user_content):
-                if label in ("姓名", "称呼偏好"):
-                    signals.has_preference = True
-                    signals.should_memorize = True
-                    break
+            if pattern.search(user_content) and label in ("姓名", "称呼偏好"):
+                signals.has_preference = True
+                signals.should_memorize = True
+                break
 
         # 值得记忆的检测
         for marker in self._MEMORABLE_MARKERS:
@@ -216,14 +288,18 @@ class PerceptionEngine:
                     return f"{label}: {extracted}" if label else extracted
 
         # 策略2: 提取含信号词的句子
-        sentences = re.split(r'[。！？.!?;\n]', text)
+        sentences = re.split(r"[。！？.!?;\n]", text)
         for s in sentences:
             s = s.strip()
             if len(s) < 5 or len(s) > 100:
                 continue
             # 包含任何信号关键词的句子
-            all_markers = (self._PREFERENCE_MARKERS + self._MEMORABLE_MARKERS
-                          + self._CORRECTION_MARKERS[:6] + self._REINFORCEMENT_MARKERS[:6])
+            all_markers = (
+                self._PREFERENCE_MARKERS
+                + self._MEMORABLE_MARKERS
+                + self._CORRECTION_MARKERS[:6]
+                + self._REINFORCEMENT_MARKERS[:6]
+            )
             if any(m.lower() in s.lower() for m in all_markers):
                 return s[:100]
 
@@ -236,11 +312,11 @@ class PerceptionEngine:
         简单实现：提取消息中的关键词/实体作为预检索查询。
         """
         # 提取问号前的内容（问号在末尾时也能正确提取）
-        question_match = re.search(r'(.+?)[？?]$', message.strip())
+        question_match = re.search(r"(.+?)[？?]$", message.strip())
         if question_match:
             return question_match.group(1).strip()
         # 非末尾问号：提取问号后的子问题
-        questions = re.findall(r'[？?](.+)$', message, re.MULTILINE)
+        questions = re.findall(r"[？?](.+)$", message, re.MULTILINE)
         if questions:
             return questions[0].strip()
 
@@ -252,13 +328,13 @@ class PerceptionEngine:
         # 回退：使用消息前100字符
         return message[:100].strip()
 
-    def extract_implicit_memories(self, content: str) -> List[str]:
+    def extract_implicit_memories(self, content: str) -> list[str]:
         """从内容中提取隐含的记忆点。
 
         用于 on_session_end 时从完整对话中提取遗漏的记忆。
         """
         memories = []
-        sentences = re.split(r'[。！？.!?\n]', content)
+        sentences = re.split(r"[。！？.!?\n]", content)
 
         for s in sentences:
             s = s.strip()
@@ -270,13 +346,13 @@ class PerceptionEngine:
 
         return memories
 
-    def _extract_entities(self, text: str) -> List[str]:
+    def _extract_entities(self, text: str) -> list[str]:
         """提取文本中的关键实体。"""
         entities = []
         # 中文实体
-        zh = re.findall(r'[\u4e00-\u9fff]{2,6}', text)
+        zh = re.findall(r"[\u4e00-\u9fff]{2,6}", text)
         entities.extend(zh[:3])
         # 英文实体
-        en = re.findall(r'\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\b', text)
+        en = re.findall(r"\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\b", text)
         entities.extend(en[:3])
         return entities

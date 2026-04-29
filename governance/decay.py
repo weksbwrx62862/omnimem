@@ -13,7 +13,7 @@ from __future__ import annotations
 import logging
 import math
 from datetime import datetime, timezone
-from typing import Any, Dict, List
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -31,15 +31,15 @@ HALF_LIVES = {
 class TemporalDecay:
     """时间衰减引擎。"""
 
-    def __init__(self, custom_half_lives: Dict[str, float] = None):
+    def __init__(self, custom_half_lives: dict[str, float] = None):
         self._half_lives = {**HALF_LIVES}
         if custom_half_lives:
             self._half_lives.update(custom_half_lives)
         # ★ 时间字符串解析缓存：避免重复解析相同的 stored_at
-        self._parse_cache: Dict[str, datetime] = {}
+        self._parse_cache: dict[str, datetime] = {}
         self._parse_cache_max = 512
 
-    def apply(self, results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def apply(self, results: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """对检索结果应用时间衰减。
 
         Args:

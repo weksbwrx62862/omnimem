@@ -9,12 +9,12 @@ from __future__ import annotations
 import json
 import logging
 import re
-from typing import Any, Dict, List
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
 # ★ R27优化：模块级常量，避免每次调用重建
-_PRIVACY_TO_SCOPE: Dict[str, str] = {
+_PRIVACY_TO_SCOPE: dict[str, str] = {
     "public": "public",
     "team": "team",
     "personal": "personal",
@@ -22,16 +22,30 @@ _PRIVACY_TO_SCOPE: Dict[str, str] = {
 }
 
 _NEGATION_INDICATORS: tuple[str, ...] = (
-    "不是", "不对", "并非", "不再", "改为", "而不是",
-    "不用", "改用", "不要", "无法", "没能", "错误", "纠正",
-    "not", "no longer", "instead of", "rather than",
+    "不是",
+    "不对",
+    "并非",
+    "不再",
+    "改为",
+    "而不是",
+    "不用",
+    "改用",
+    "不要",
+    "无法",
+    "没能",
+    "错误",
+    "纠正",
+    "not",
+    "no longer",
+    "instead of",
+    "rather than",
 )
 
 # ★ R27优化：预编译正则，避免 _scan_memory_conflicts 中每条记忆重复编译
-_CONFLICT_KEYWORD_RE = re.compile(r'[\u4e00-\u9fff]{2,4}|[a-zA-Z]{3,}')
+_CONFLICT_KEYWORD_RE = re.compile(r"[\u4e00-\u9fff]{2,4}|[a-zA-Z]{3,}")
 
 
-def _scan_memory_conflicts(provider) -> List[Dict[str, Any]]:
+def _scan_memory_conflicts(provider) -> list[dict[str, Any]]:
     """主动扫描所有记忆，检测同主题的矛盾对。
 
     策略：对所有 fact/preference/correction 类型的记忆，
@@ -39,24 +53,22 @@ def _scan_memory_conflicts(provider) -> List[Dict[str, Any]]:
     """
     all_memories = provider._store.search(limit=500)
     # 只检查可矛盾的类型
-    checkable = [m for m in all_memories
-                 if m.get("type", "") in ("fact", "preference", "correction")]
+    checkable = [
+        m for m in all_memories if m.get("type", "") in ("fact", "preference", "correction")
+    ]
     if len(checkable) < 2:
         return []
 
     # 按关键词分组
     # ★ R17修复BUG-3：数据量少时全部同组，避免矛盾对被错误分组
-    groups: Dict[str, List[Dict[str, Any]]] = {}
+    groups: dict[str, list[dict[str, Any]]] = {}
     if len(checkable) <= 4:
         groups["_all"] = list(checkable)
     else:
         for m in checkable:
             content = m.get("content", "")
             keywords = _CONFLICT_KEYWORD_RE.findall(content)
-            if keywords:
-                key = "|".join(keywords[:2])
-            else:
-                key = "_other"
+            key = "|".join(keywords[:2]) if keywords else "_other"
             groups.setdefault(key, []).append(m)
 
     # 在同组内检测矛盾对
@@ -71,28 +83,31 @@ def _scan_memory_conflicts(provider) -> List[Dict[str, Any]]:
                 cb = b.get("content", "").lower()
                 # 检查：两条记忆是否有否定词且内容有重叠
                 from omnimem.governance.conflict import ConflictResolver
+
                 overlap = ConflictResolver._compute_overlap(ca, cb)
                 a_has_neg = any(ni in ca for ni in _NEGATION_INDICATORS)
                 b_has_neg = any(ni in cb for ni in _NEGATION_INDICATORS)
                 if overlap > 0.3 and (a_has_neg or b_has_neg):
-                    conflicts.append({
-                        "memory_a": {
-                            "id": a.get("memory_id", ""),
-                            "content": a.get("content", "")[:100],
-                            "type": a.get("type", ""),
-                        },
-                        "memory_b": {
-                            "id": b.get("memory_id", ""),
-                            "content": b.get("content", "")[:100],
-                            "type": b.get("type", ""),
-                        },
-                        "overlap": round(overlap, 2),
-                        "negation_in": "a" if a_has_neg else "b",
-                    })
+                    conflicts.append(
+                        {
+                            "memory_a": {
+                                "id": a.get("memory_id", ""),
+                                "content": a.get("content", "")[:100],
+                                "type": a.get("type", ""),
+                            },
+                            "memory_b": {
+                                "id": b.get("memory_id", ""),
+                                "content": b.get("content", "")[:100],
+                                "type": b.get("type", ""),
+                            },
+                            "overlap": round(overlap, 2),
+                            "negation_in": "a" if a_has_neg else "b",
+                        }
+                    )
     return conflicts
 
 
-def handle_govern(provider, args: Dict[str, Any]) -> str:
+def handle_govern(provider, args: dict[str, Any]) -> str:
     """处理 omni_govern 工具调用。
 
     治理操作（通过 action 参数路由）:
@@ -130,21 +145,27 @@ def handle_govern(provider, args: Dict[str, Any]) -> str:
                 # ★ R24修复BUG-3：全局扫描时归档每对冲突中较旧的条目
                 archived_ids = []
                 for pair in scan_results[:5]:
-                    old_id = pair.get("memory_b", {}).get("id") or pair.get("memory_a", {}).get("id")
+                    old_id = pair.get("memory_b", {}).get("id") or pair.get("memory_a", {}).get(
+                        "id"
+                    )
                     if old_id:
                         provider._forgetting.archive(old_id)
                         archived_ids.append(old_id)
-                return json.dumps({
-                    "status": "conflicts_found",
-                    "action_taken": "archived_old_entries",
-                    "reason": f"Found {len(scan_results)} conflicting pairs, archived {len(archived_ids)} old entries",
-                    "conflicts": scan_results[:5],
-                    "archived": archived_ids,
-                })
-            return json.dumps({
-                "status": "no_conflict",
-                "reason": "No conflicting memories found (global scan)",
-            })
+                return json.dumps(
+                    {
+                        "status": "conflicts_found",
+                        "action_taken": "archived_old_entries",
+                        "reason": f"Found {len(scan_results)} conflicting pairs, archived {len(archived_ids)} old entries",
+                        "conflicts": scan_results[:5],
+                        "archived": archived_ids,
+                    }
+                )
+            return json.dumps(
+                {
+                    "status": "no_conflict",
+                    "reason": "No conflicting memories found (global scan)",
+                }
+            )
 
         target_entry = provider._store.get(target)
         if not target_entry:
@@ -159,7 +180,7 @@ def handle_govern(provider, args: Dict[str, Any]) -> str:
                 {"content": m.get("content", ""), "memory_id": m.get("memory_id", "")}
                 for m in all_memories
                 if m.get("memory_id", "") != target
-                   and m.get("type", "") in ("fact", "preference", "correction")
+                and m.get("type", "") in ("fact", "preference", "correction")
             ]
 
             conflict = provider._conflict_resolver.check(
@@ -174,48 +195,61 @@ def handle_govern(provider, args: Dict[str, Any]) -> str:
                 if old_id and old_id != target:
                     provider._forgetting.archive(old_id)
                     logger.debug("OmniMem resolve_conflict: archived old entry %s", old_id)
-                return json.dumps({
-                    "status": "resolved",
-                    "action_taken": resolution.action,
-                    "reason": resolution.reason,
-                    "conflicting_with": old_id,
-                    "conflict_type": conflict.conflict_type,
-                    "archived_old": old_id if old_id and old_id != target else None,
-                })
+                return json.dumps(
+                    {
+                        "status": "resolved",
+                        "action_taken": resolution.action,
+                        "reason": resolution.reason,
+                        "conflicting_with": old_id,
+                        "conflict_type": conflict.conflict_type,
+                        "archived_old": old_id if old_id and old_id != target else None,
+                    }
+                )
         except (ValueError, KeyError) as e:
             logger.debug("OmniMem conflict detection failed: %s", e)
 
         # fallback: 全局否定词扫描（即使语义不矛盾，也检查否定词重叠）
         scan_results = _scan_memory_conflicts(provider)
-        target_conflicts = [c for c in scan_results
-                           if c.get("memory_a", {}).get("id") == target
-                           or c.get("memory_b", {}).get("id") == target]
+        target_conflicts = [
+            c
+            for c in scan_results
+            if c.get("memory_a", {}).get("id") == target
+            or c.get("memory_b", {}).get("id") == target
+        ]
         if target_conflicts:
-            return json.dumps({
-                "status": "conflicts_found",
-                "action_taken": "pending",
-                "reason": f"Found {len(target_conflicts)} conflicting pairs",
-                "conflicts": target_conflicts[:3],
-            })
+            return json.dumps(
+                {
+                    "status": "conflicts_found",
+                    "action_taken": "pending",
+                    "reason": f"Found {len(target_conflicts)} conflicting pairs",
+                    "conflicts": target_conflicts[:3],
+                }
+            )
 
-        return json.dumps({
-            "status": "no_conflict",
-            "reason": "No conflicting memories found for this target",
-            "memory_id": target,
-        })
+        return json.dumps(
+            {
+                "status": "no_conflict",
+                "reason": "No conflicting memories found for this target",
+                "memory_id": target,
+            }
+        )
     elif action == "scan_conflicts":
         # ★ 主动扫描矛盾记忆：对所有记忆做同主题+矛盾检测
         conflicts = _scan_memory_conflicts(provider)
-        return json.dumps({
-            "status": "scanned",
-            "conflict_count": len(conflicts),
-            "conflicts": conflicts[:10],  # 最多返回10对
-        }, ensure_ascii=False)
+        return json.dumps(
+            {
+                "status": "scanned",
+                "conflict_count": len(conflicts),
+                "conflicts": conflicts[:10],  # 最多返回10对
+            },
+            ensure_ascii=False,
+        )
     elif action == "set_privacy":
         # ★ 从多个位置读取 level：params.level / params.privacy / args.privacy / args.level
         # LLM 可能把隐私级别放在 params 内，也可能放在 args 顶层
-        level = params.get("level", params.get("privacy",
-                    args.get("privacy", args.get("level", "personal"))))
+        level = params.get(
+            "level", params.get("privacy", args.get("privacy", args.get("level", "personal")))
+        )
         provider._privacy.set(target, level)
         # 同步更新索引
         provider._index.update_privacy(target, level)
@@ -235,7 +269,14 @@ def handle_govern(provider, args: Dict[str, Any]) -> str:
         verify = provider._store.get(target)
         actual_privacy = verify.get("privacy", "personal") if verify else "unknown"
         actual_wing = verify.get("wing", "personal") if verify else "unknown"
-        return json.dumps({"status": "updated", "memory_id": target, "privacy": actual_privacy, "wing": actual_wing})
+        return json.dumps(
+            {
+                "status": "updated",
+                "memory_id": target,
+                "privacy": actual_privacy,
+                "wing": actual_wing,
+            }
+        )
     elif action == "archive":
         provider._forgetting.archive(target)
         return json.dumps({"status": "archived", "memory_id": target})
