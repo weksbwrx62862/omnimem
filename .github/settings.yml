@@ -28,7 +28,8 @@ repository:
   enable_automated_security_fixes: true
   enable_vulnerability_alerts: true
 
-# 分支保护规则
+# 分支保护规则 - 由 Probot Settings 应用管理
+# 修改此文件后推送到 main 分支即可自动同步到 GitHub
 branches:
   - name: main
     protection:
