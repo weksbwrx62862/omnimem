@@ -17,7 +17,7 @@ import sqlite3
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +26,7 @@ class ProvenanceTracker:
     """溯源追踪引擎，SQLite 持久化。"""
 
     def __init__(self, data_dir: Optional[Path] = None):
-        self._provenance: Dict[str, Dict[str, Any]] = {}
+        self._provenance: dict[str, dict[str, Any]] = {}
         self._conn: Optional[sqlite3.Connection] = None
         self._lock = threading.RLock()
 
@@ -39,7 +39,8 @@ class ProvenanceTracker:
         db_path = data_dir / "provenance.db"
         self._conn = sqlite3.connect(str(db_path), check_same_thread=False)
         self._conn.execute("PRAGMA journal_mode=WAL")
-        self._conn.execute("""
+        self._conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS provenance (
                 memory_id TEXT PRIMARY KEY,
                 source TEXT,
@@ -49,7 +50,8 @@ class ProvenanceTracker:
                 parent_id TEXT,
                 metadata TEXT
             )
-        """)
+        """
+        )
         self._conn.commit()
         # 从数据库恢复内存索引
         self._restore()
@@ -87,7 +89,7 @@ class ProvenanceTracker:
         content: str,
         source: str = "",
         method: str = "auto_detect",
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """记录记忆的溯源信息。
 
         Args:
@@ -107,19 +109,22 @@ class ProvenanceTracker:
         }
         return provenance
 
-    def lookup(self, memory_id: str) -> Dict[str, Any]:
+    def lookup(self, memory_id: str) -> dict[str, Any]:
         """查询记忆的溯源信息。"""
-        return self._provenance.get(memory_id, {
-            "status": "not_found",
-            "memory_id": memory_id,
-        })
+        return self._provenance.get(
+            memory_id,
+            {
+                "status": "not_found",
+                "memory_id": memory_id,
+            },
+        )
 
-    def record(self, memory_id: str, provenance: Dict[str, Any]) -> None:
+    def record(self, memory_id: str, provenance: dict[str, Any]) -> None:
         """记录溯源信息到索引，并持久化。"""
         self._provenance[memory_id] = provenance
         self._persist(memory_id, provenance)
 
-    def get_chain(self, memory_id: str) -> List[Dict[str, Any]]:
+    def get_chain(self, memory_id: str) -> list[dict[str, Any]]:
         """获取记忆的演化链。"""
         chain = []
         current_id = memory_id
@@ -144,7 +149,7 @@ class ProvenanceTracker:
 
     # ─── 持久化 ───────────────────────────────────────────────
 
-    def _persist(self, memory_id: str, provenance: Dict[str, Any]) -> None:
+    def _persist(self, memory_id: str, provenance: dict[str, Any]) -> None:
         """持久化溯源记录到 SQLite。"""
         if not self._conn:
             return
@@ -174,4 +179,5 @@ class ProvenanceTracker:
     def _hash(content: str) -> str:
         """计算内容哈希。"""
         import hashlib
+
         return hashlib.sha256(content.encode()).hexdigest()[:16]

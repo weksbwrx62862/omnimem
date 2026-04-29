@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import tempfile
 import unittest
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from omnimem.context.manager import ContextManager
@@ -30,8 +30,12 @@ class TestIntegration(unittest.TestCase):
 
     def test_write_perceive_refine(self):
         mid = self.store.add(
-            wing="personal", room="python", content="用户喜欢Python编程语言",
-            memory_type="preference", confidence=5, privacy="personal",
+            wing="personal",
+            room="python",
+            content="用户喜欢Python编程语言",
+            memory_type="preference",
+            confidence=5,
+            privacy="personal",
         )
         self.assertTrue(mid)
 
@@ -58,8 +62,12 @@ class TestIntegration(unittest.TestCase):
         self.assertTrue(any(c["type"] == "correction" for c in corrections))
 
     def test_privacy_filter_integration(self):
-        self.store.add(wing="personal", room="r1", content="公开", memory_type="fact", privacy="public")
-        self.store.add(wing="personal", room="r2", content="秘密", memory_type="fact", privacy="secret")
+        self.store.add(
+            wing="personal", room="r1", content="公开", memory_type="fact", privacy="public"
+        )
+        self.store.add(
+            wing="personal", room="r2", content="秘密", memory_type="fact", privacy="secret"
+        )
 
         all_items = self.store.search(limit=10)
         pm = PrivacyManager()
@@ -70,10 +78,22 @@ class TestIntegration(unittest.TestCase):
         self.assertTrue(secret_items[0]["content"].startswith("[加密记忆"))
 
     def test_temporal_decay_integration(self):
-        self.store.add(wing="personal", room="r1", content="新事件", memory_type="event",
-                       confidence=3, privacy="personal")
-        self.store.add(wing="personal", room="r2", content="旧事件", memory_type="event",
-                       confidence=3, privacy="personal")
+        self.store.add(
+            wing="personal",
+            room="r1",
+            content="新事件",
+            memory_type="event",
+            confidence=3,
+            privacy="personal",
+        )
+        self.store.add(
+            wing="personal",
+            room="r2",
+            content="旧事件",
+            memory_type="event",
+            confidence=3,
+            privacy="personal",
+        )
 
         results = self.store.search(memory_type="event")
         now = datetime.now(timezone.utc)

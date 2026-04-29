@@ -9,15 +9,15 @@ import json
 import logging
 import re
 from datetime import datetime, timezone
-from typing import Any, Dict
+from typing import Any
 
-from omnimem.handlers._compat import compat_scan_memory_content
 from omnimem.core.saga import SagaStep
+from omnimem.handlers._compat import compat_scan_memory_content
 
 logger = logging.getLogger(__name__)
 
 # ★ R27优化：模块级 privacy→scope 映射，避免每次调用重建字典
-_PRIVACY_TO_SCOPE: Dict[str, str] = {
+_PRIVACY_TO_SCOPE: dict[str, str] = {
     "public": "public",
     "team": "team",
     "personal": "personal",
@@ -25,7 +25,7 @@ _PRIVACY_TO_SCOPE: Dict[str, str] = {
 }
 
 
-def handle_memorize(provider, args: Dict[str, Any]) -> str:
+def handle_memorize(provider, args: dict[str, Any]) -> str:
     """处理 omni_memorize 工具调用。
 
     存储流程（安全扫描→去重→存储→索引）:
@@ -61,9 +61,9 @@ def handle_memorize(provider, args: Dict[str, Any]) -> str:
     # ★ R19修复Minor-1-v2：使用正则替换，避免破坏路径中的\normal、\test等
     #   判断依据：\n/\t 后面紧跟字母的是路径（如C:\new\test），不应还原
     #   \n/\t 后面是空格/标点/行尾/非字母的才是真正的转义字符，应还原
-    content = re.sub(r'\\n(?![a-zA-Z])', '\n', content)
-    content = re.sub(r'\\t(?![a-zA-Z])', '\t', content)
-    content = re.sub(r'\\r(?![a-zA-Z])', '\r', content)
+    content = re.sub(r"\\n(?![a-zA-Z])", "\n", content)
+    content = re.sub(r"\\t(?![a-zA-Z])", "\t", content)
+    content = re.sub(r"\\r(?![a-zA-Z])", "\r", content)
 
     # ★ 安全扫描（统一入口）
     scan_error = compat_scan_memory_content(content)
@@ -72,7 +72,12 @@ def handle_memorize(provider, args: Dict[str, Any]) -> str:
 
     # ★ 反递归防护：拒绝存储系统注入内容，防止 prefetch → store → prefetch 循环
     if not provider._should_store(content):
-        return json.dumps({"status": "rejected", "reason": "Content appears to be a system injection or recursive memory"})
+        return json.dumps(
+            {
+                "status": "rejected",
+                "reason": "Content appears to be a system injection or recursive memory",
+            }
+        )
 
     memory_type = args.get("memory_type", "fact")
     confidence = args.get("confidence", 3)
@@ -96,11 +101,13 @@ def handle_memorize(provider, args: Dict[str, Any]) -> str:
     exact_match = provider._store.search_by_content(content, limit=5)
     for m in exact_match:
         if m.get("content", "").strip() == content.strip():
-            return json.dumps({
-                "status": "duplicate_skipped",
-                "reason": "Exact content already exists",
-                "existing_id": m.get("memory_id", ""),
-            })
+            return json.dumps(
+                {
+                    "status": "duplicate_skipped",
+                    "reason": "Exact content already exists",
+                    "existing_id": m.get("memory_id", ""),
+                }
+            )
 
     # ★ 统一搜索：去重和冲突检测共享候选结果，避免重复搜索
     candidates = provider._unified_candidate_search(content)
@@ -114,13 +121,15 @@ def handle_memorize(provider, args: Dict[str, Any]) -> str:
     elif dedup_result["action"] == "skip":
         existing_id = dedup_result.get("existing_id", "")
         existing_entry = provider._store.get(existing_id) if existing_id else {}
-        return json.dumps({
-            "status": "duplicate_skipped",
-            "reason": dedup_result["reason"],
-            "existing_id": existing_id,
-            "wing": existing_entry.get("wing", ""),
-            "privacy": existing_entry.get("privacy", ""),
-        })
+        return json.dumps(
+            {
+                "status": "duplicate_skipped",
+                "reason": dedup_result["reason"],
+                "existing_id": existing_id,
+                "wing": existing_entry.get("wing", ""),
+                "privacy": existing_entry.get("privacy", ""),
+            }
+        )
 
     # 治理：冲突检测
     # ★ 合并候选：语义搜索结果 + 同 room 的记忆（捕捉主题矛盾但语义不相似的情况）
@@ -135,7 +144,7 @@ def handle_memorize(provider, args: Dict[str, Any]) -> str:
             for m in same_room:
                 if m.get("memory_id", "") not in existing_ids:
                     conflict_candidates.append(m)
-        except (KeyError, IOError) as e:
+        except (OSError, KeyError) as e:
             logger.debug("OmniMem same_room search failed: %s", e)
 
     conflict = provider._conflict_resolver.check(
@@ -149,11 +158,13 @@ def handle_memorize(provider, args: Dict[str, Any]) -> str:
     if conflict.has_conflict:
         resolution = provider._conflict_resolver.resolve(content, conflict)
         if resolution.action == "reject":
-            return json.dumps({
-                "status": "conflict_rejected",
-                "reason": resolution.reason,
-                "existing": conflict.existing_memory,
-            })
+            return json.dumps(
+                {
+                    "status": "conflict_rejected",
+                    "reason": resolution.reason,
+                    "existing": conflict.existing_memory,
+                }
+            )
         # ★ 冲突被接受时记录信息，写入后标记到记忆
         conflict_info = {
             "conflict_type": conflict.conflict_type,
@@ -187,46 +198,62 @@ def handle_memorize(provider, args: Dict[str, Any]) -> str:
     # 主存储（store.add）已在上方完成，作为唯一事实来源。
     # index / retriever / knowledge_graph 作为派生数据，通过 Saga 保证最终一致。
     now = datetime.now(timezone.utc).isoformat()
-    summary = content[:200].replace('\n', ' ').replace('\r', ' ').replace('\t', ' ')
+    summary = content[:200].replace("\n", " ").replace("\r", " ").replace("\t", " ")
 
-    saga_result = provider._saga.execute(memory_id, [
-        SagaStep("three_level_index", lambda: provider._index.add(
-            memory_id=memory_id,
-            wing=wing,
-            hall=hall,
-            room=room,
-            content=content,
-            summary=summary,
-            type=memory_type,
-            confidence=confidence,
-            privacy=privacy,
-            scope=scope,
-            stored_at=now,
-            provenance=json.dumps(provenance) if provenance else "",
-        )),
-        SagaStep("retriever", lambda: provider._retriever.add(
-            content,
-            memory_id=memory_id,
-            metadata={
-                "memory_id": memory_id,
-                "type": memory_type,
-                "confidence": confidence,
-                "scope": scope,
-                "privacy": privacy,
-                "wing": wing,
-                "room": room,
-                "stored_at": now,
-            },
-        )),
-        SagaStep("knowledge_graph", lambda: provider._knowledge_graph.extract_and_store(
-            content, memory_id=memory_id, confidence=confidence / 5.0
-        ) if provider._knowledge_graph else None),
-    ])
+    saga_result = provider._saga.execute(
+        memory_id,
+        [
+            SagaStep(
+                "three_level_index",
+                lambda: provider._index.add(
+                    memory_id=memory_id,
+                    wing=wing,
+                    hall=hall,
+                    room=room,
+                    content=content,
+                    summary=summary,
+                    type=memory_type,
+                    confidence=confidence,
+                    privacy=privacy,
+                    scope=scope,
+                    stored_at=now,
+                    provenance=json.dumps(provenance) if provenance else "",
+                ),
+            ),
+            SagaStep(
+                "retriever",
+                lambda: provider._retriever.add(
+                    content,
+                    memory_id=memory_id,
+                    metadata={
+                        "memory_id": memory_id,
+                        "type": memory_type,
+                        "confidence": confidence,
+                        "scope": scope,
+                        "privacy": privacy,
+                        "wing": wing,
+                        "room": room,
+                        "stored_at": now,
+                    },
+                ),
+            ),
+            SagaStep(
+                "knowledge_graph",
+                lambda: provider._knowledge_graph.extract_and_store(
+                    content, memory_id=memory_id, confidence=confidence / 5.0
+                )
+                if provider._knowledge_graph
+                else None,
+            ),
+        ],
+    )
 
     if not saga_result.success:
         logger.warning(
             "OmniMem memorize saga partial failure for %s at step '%s': %s",
-            memory_id, saga_result.failed_step, saga_result.error,
+            memory_id,
+            saga_result.failed_step,
+            saga_result.error,
         )
 
     # 记录溯源
@@ -246,7 +273,7 @@ def handle_memorize(provider, args: Dict[str, Any]) -> str:
             privacy="personal",
             provenance={"trigger": "memorize", "source_memory_id": memory_id},
         )
-    except (KeyError, IOError) as e:
+    except (OSError, KeyError) as e:
         logger.debug("OmniMem event log creation failed: %s", e)
 
     # L3: 从 Saga 结果中获取知识图谱统计（避免重复执行）
@@ -285,7 +312,7 @@ def handle_memorize(provider, args: Dict[str, Any]) -> str:
                 }
                 # 优先用 post_conflict_info（比写入前的更准确）
                 conflict_info = post_conflict_info
-    except (KeyError, IOError) as e:
+    except (OSError, KeyError) as e:
         logger.debug("OmniMem post-write conflict scan failed: %s", e)
 
     # L4: 检查 KV Cache 自动预填充触发
@@ -312,7 +339,9 @@ def handle_memorize(provider, args: Dict[str, Any]) -> str:
         result["conflict_warning"] = conflict_info
         logger.warning(
             "OmniMem: stored conflicting memory %s (conflicts with %s: %s)",
-            memory_id, conflict_info["conflicting_with"], conflict_info["reason"],
+            memory_id,
+            conflict_info["conflicting_with"],
+            conflict_info["reason"],
         )
 
     return json.dumps(result, ensure_ascii=False)

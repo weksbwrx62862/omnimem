@@ -22,7 +22,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +33,7 @@ class MarkdownStore:
     def __init__(self, palace_dir: Path):
         self._palace_dir = palace_dir
         self._palace_dir.mkdir(parents=True, exist_ok=True)
-        self._buffer: List[Dict[str, Any]] = []
+        self._buffer: list[dict[str, Any]] = []
         self._flush_interval = 10
 
     def write(
@@ -43,7 +43,7 @@ class MarkdownStore:
         room: str,
         memory_id: str,
         content: str,
-        metadata: Optional[Dict[str, Any]] = None,
+        metadata: Optional[dict[str, Any]] = None,
     ) -> Path:
         """写入一条记忆到 Markdown 文件。"""
         room_dir = self._palace_dir / wing / hall / room
@@ -59,6 +59,7 @@ class MarkdownStore:
 
         try:
             import yaml
+
             fm_str = yaml.dump(front_matter, allow_unicode=True, default_flow_style=False)
         except ImportError:
             fm_str = "\n".join(f"{k}: {v}" for k, v in front_matter.items())
@@ -67,7 +68,7 @@ class MarkdownStore:
         file_path.write_text(text, encoding="utf-8")
         return file_path
 
-    def read(self, file_path: Path) -> Optional[Dict[str, Any]]:
+    def read(self, file_path: Path) -> Optional[dict[str, Any]]:
         """从 Markdown 文件读取一条记忆。"""
         try:
             text = file_path.read_text(encoding="utf-8")
@@ -76,6 +77,7 @@ class MarkdownStore:
                 if len(parts) >= 3:
                     try:
                         import yaml
+
                         fm = yaml.safe_load(parts[1]) or {}
                     except ImportError:
                         fm = {}
@@ -86,7 +88,7 @@ class MarkdownStore:
             logger.debug("Failed to read %s: %s", file_path, e)
             return None
 
-    def list_memories(self, wing: str = "", hall: str = "", room: str = "") -> List[Path]:
+    def list_memories(self, wing: str = "", hall: str = "", room: str = "") -> list[Path]:
         """列出所有记忆文件。"""
         base = self._palace_dir
         if wing:
@@ -99,10 +101,7 @@ class MarkdownStore:
         if not base.exists():
             return []
 
-        return sorted(
-            p for p in base.rglob("*.md")
-            if not p.name.startswith("_")
-        )
+        return sorted(p for p in base.rglob("*.md") if not p.name.startswith("_"))
 
     def flush(self) -> None:
         """刷新缓冲到磁盘。"""

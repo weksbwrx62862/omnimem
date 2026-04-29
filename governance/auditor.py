@@ -15,7 +15,7 @@ P0方案六：长期运行的一致性保障机制。
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List, Optional, Set
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +43,7 @@ class GovernanceAuditor:
         self._retriever = retriever
         self._forgetting = forgetting
 
-    def run_full_audit(self, limit: int = 2000) -> Dict[str, Any]:
+    def run_full_audit(self, limit: int = 2000) -> dict[str, Any]:
         """执行全量一致性审计。
 
         Args:
@@ -52,23 +52,21 @@ class GovernanceAuditor:
         Returns:
             审计结果字典，包含各类不一致条目列表
         """
-        ghost_in_index: List[str] = []
-        missing_in_index: List[str] = []
-        ghost_in_retriever: List[str] = []
-        missing_in_retriever: List[str] = []
+        ghost_in_index: list[str] = []
+        missing_in_index: list[str] = []
+        ghost_in_retriever: list[str] = []
+        missing_in_retriever: list[str] = []
 
         # 1. 获取 store 中的有效记忆 ID（排除已归档）
         store_entries = self._store.search(limit=limit)
-        store_ids: Set[str] = {
-            e.get("memory_id", "") for e in store_entries
-            if e.get("memory_id", "")
+        store_ids: set[str] = {
+            e.get("memory_id", "") for e in store_entries if e.get("memory_id", "")
         }
 
         # 2. 获取 index 中的条目
         index_entries = self._index.search_all_for_retrieval(limit=limit)
-        index_ids: Set[str] = {
-            e.get("memory_id", "") for e in index_entries
-            if e.get("memory_id", "")
+        index_ids: set[str] = {
+            e.get("memory_id", "") for e in index_entries if e.get("memory_id", "")
         }
 
         # 3. 获取 retriever 中的条目（通过 BM25 文档计数 + 搜索验证）
@@ -119,7 +117,7 @@ class GovernanceAuditor:
             "scanned_index": len(index_ids),
         }
 
-    def repair(self, audit_result: Dict[str, Any]) -> int:
+    def repair(self, audit_result: dict[str, Any]) -> int:
         """根据审计结果自动修复不一致。
 
         修复策略：
@@ -185,7 +183,7 @@ class GovernanceAuditor:
 
         return fixed
 
-    def quick_health_check(self) -> Dict[str, Any]:
+    def quick_health_check(self) -> dict[str, Any]:
         """快速健康检查：仅对比计数，不扫描全量 ID。
 
         Returns:

@@ -14,9 +14,8 @@ from __future__ import annotations
 
 import logging
 import sqlite3
-from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +43,8 @@ class MetaStore:
         self._conn.execute("PRAGMA synchronous=NORMAL")
 
         # 核心元数据表
-        self._conn.execute("""
+        self._conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS memories (
                 memory_id TEXT PRIMARY KEY,
                 wing TEXT,
@@ -60,7 +60,8 @@ class MetaStore:
                 vc TEXT,
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP
             )
-        """)
+        """
+        )
 
         # 向后兼容：旧表无 vc 列时自动迁移
         try:
@@ -78,7 +79,8 @@ class MetaStore:
 
         # 尝试创建 FTS5 虚拟表（全文搜索）
         try:
-            self._conn.execute("""
+            self._conn.execute(
+                """
                 CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
                     memory_id UNINDEXED,
                     summary,
@@ -86,28 +88,35 @@ class MetaStore:
                     content='memories',
                     content_rowid='rowid'
                 )
-            """)
+            """
+            )
             # 创建触发器保持 FTS 表同步
-            self._conn.execute("""
+            self._conn.execute(
+                """
                 CREATE TRIGGER IF NOT EXISTS mem_ai AFTER INSERT ON memories BEGIN
                     INSERT INTO memories_fts(rowid, summary, content_preview)
                     VALUES (new.rowid, new.summary, new.content_preview);
                 END
-            """)
-            self._conn.execute("""
+            """
+            )
+            self._conn.execute(
+                """
                 CREATE TRIGGER IF NOT EXISTS mem_ad AFTER DELETE ON memories BEGIN
                     INSERT INTO memories_fts(memories_fts, rowid, summary, content_preview)
                     VALUES ('delete', old.rowid, old.summary, old.content_preview);
                 END
-            """)
-            self._conn.execute("""
+            """
+            )
+            self._conn.execute(
+                """
                 CREATE TRIGGER IF NOT EXISTS mem_au AFTER UPDATE ON memories BEGIN
                     INSERT INTO memories_fts(memories_fts, rowid, summary, content_preview)
                     VALUES ('delete', old.rowid, old.summary, old.content_preview);
                     INSERT INTO memories_fts(rowid, summary, content_preview)
                     VALUES (new.rowid, new.summary, new.content_preview);
                 END
-            """)
+            """
+            )
             self._fts_enabled = True
             logger.debug("MetaStore FTS5 enabled")
         except Exception:
@@ -134,7 +143,7 @@ class MetaStore:
         except Exception as e:
             logger.debug("MetaStore add failed for %s: %s", memory_id, e)
 
-    def get(self, memory_id: str) -> Optional[Dict[str, Any]]:
+    def get(self, memory_id: str) -> Optional[dict[str, Any]]:
         """根据 ID 获取元数据。"""
         if not self._conn:
             return None
@@ -174,9 +183,7 @@ class MetaStore:
         if not self._conn:
             return False
         try:
-            self._conn.execute(
-                "DELETE FROM memories WHERE memory_id = ?", (memory_id,)
-            )
+            self._conn.execute("DELETE FROM memories WHERE memory_id = ?", (memory_id,))
             self._conn.commit()
             return True
         except Exception as e:
@@ -191,12 +198,12 @@ class MetaStore:
         room: str = "",
         memory_type: str = "",
         limit: int = 50,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """按条件搜索元数据。利用 SQLite 索引加速。"""
         if not self._conn:
             return []
-        conditions: List[str] = []
-        params: List[Any] = []
+        conditions: list[str] = []
+        params: list[Any] = []
         if memory_type:
             conditions.append("type = ?")
             params.append(memory_type)
@@ -218,7 +225,7 @@ class MetaStore:
             logger.debug("MetaStore search failed: %s", e)
             return []
 
-    def search_by_content(self, query: str, limit: int = 20) -> List[Dict[str, Any]]:
+    def search_by_content(self, query: str, limit: int = 20) -> list[dict[str, Any]]:
         """按内容关键词搜索。
 
         优先使用 FTS5（若可用），否则回退到 LIKE。
@@ -252,7 +259,7 @@ class MetaStore:
             logger.debug("MetaStore search_by_content failed: %s", e)
             return []
 
-    def get_all(self, limit: int = 5000) -> List[Dict[str, Any]]:
+    def get_all(self, limit: int = 5000) -> list[dict[str, Any]]:
         """获取所有元数据记录。"""
         if not self._conn:
             return []
@@ -276,7 +283,7 @@ class MetaStore:
         except Exception:
             return 0
 
-    def warm_up(self, entries: List[Dict[str, Any]]) -> int:
+    def warm_up(self, entries: list[dict[str, Any]]) -> int:
         """批量预热：将现有条目导入 SQLite。"""
         if not self._conn:
             return 0
@@ -308,12 +315,22 @@ class MetaStore:
 
     # ─── 内部方法 ─────────────────────────────────────────────
 
-    def _row_to_dict(self, row: sqlite3.Row) -> Dict[str, Any]:
+    def _row_to_dict(self, row: sqlite3.Row) -> dict[str, Any]:
         """将 SQLite 行转为字典。"""
         keys = [
-            "memory_id", "wing", "hall", "room", "type", "confidence",
-            "privacy", "stored_at", "summary", "content_preview",
-            "drawer_path", "vc", "created_at",
+            "memory_id",
+            "wing",
+            "hall",
+            "room",
+            "type",
+            "confidence",
+            "privacy",
+            "stored_at",
+            "summary",
+            "content_preview",
+            "drawer_path",
+            "vc",
+            "created_at",
         ]
         return {k: row[i] for i, k in enumerate(keys) if i < len(row)}
 

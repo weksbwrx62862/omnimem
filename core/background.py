@@ -11,8 +11,9 @@
 from __future__ import annotations
 
 import logging
-from concurrent.futures import ThreadPoolExecutor, Future
-from typing import Any, Callable, Optional
+from collections.abc import Callable
+from concurrent.futures import Future, ThreadPoolExecutor
+from typing import Any
 
 logger = logging.getLogger(__name__)
 

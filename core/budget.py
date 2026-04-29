@@ -6,7 +6,6 @@
 from __future__ import annotations
 
 import logging
-from typing import List
 
 logger = logging.getLogger(__name__)
 
@@ -28,12 +27,13 @@ class BudgetManager:
         """估算文本的 Token 数。简单实现：字符数 / 4。"""
         try:
             import tiktoken
+
             enc = tiktoken.get_encoding("cl100k_base")
             return len(enc.encode(text))
         except (ImportError, Exception):
             return max(1, len(text) // _CHARS_PER_TOKEN)
 
-    def trim_to_budget(self, items: List[dict], max_tokens: int = 0) -> List[dict]:
+    def trim_to_budget(self, items: list[dict], max_tokens: int = 0) -> list[dict]:
         """裁剪检索结果到 Token 预算内。
 
         items 中每项需有 "content" 字段。

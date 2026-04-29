@@ -6,10 +6,10 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from omnimem.core.block import CoreBlock
 from omnimem.core.attachment import CompactAttachment, build_attachments
-from omnimem.core.soul import SoulSystem
+from omnimem.core.block import CoreBlock
 from omnimem.core.budget import BudgetManager
+from omnimem.core.soul import SoulSystem
 
 
 class TestCoreBlock(unittest.TestCase):

@@ -10,12 +10,11 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import List
 
 logger = logging.getLogger(__name__)
 
 
-def structured_line_compress(lines: List[str]) -> List[str]:
+def structured_line_compress(lines: list[str]) -> list[str]:
     """结构化行压缩。
 
     Args:
@@ -61,12 +60,12 @@ def _extract_topic(line: str) -> str:
     """提取行的主题关键词。"""
     # 提取第一个有意义的词/短语
     # 中文：前2-4字
-    zh_match = re.match(r'[\u4e00-\u9fff]{2,4}', line)
+    zh_match = re.match(r"[\u4e00-\u9fff]{2,4}", line)
     if zh_match:
         return zh_match.group()
 
     # 英文：第一个词
-    en_match = re.match(r'[a-zA-Z]+', line)
+    en_match = re.match(r"[a-zA-Z]+", line)
     if en_match:
         return en_match.group().lower()
 
@@ -76,12 +75,18 @@ def _extract_topic(line: str) -> str:
 def _compress_line(line: str) -> str:
     """压缩单行：去除冗余信息，保留关键内容。"""
     # 去除连续空白
-    compressed = re.sub(r'\s+', ' ', line)
+    compressed = re.sub(r"\s+", " ", line)
 
     # 去除常见冗余短语
     redundant = [
-        "I think ", "I believe ", "在我看来", "我觉得",
-        "basically ", "actually ", "实际上", "基本上",
+        "I think ",
+        "I believe ",
+        "在我看来",
+        "我觉得",
+        "basically ",
+        "actually ",
+        "实际上",
+        "基本上",
     ]
     for phrase in redundant:
         compressed = compressed.replace(phrase, "")

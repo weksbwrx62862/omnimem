@@ -18,18 +18,17 @@ from __future__ import annotations
 import json
 import logging
 import os
-import sqlite3
 import threading
 import time
 import uuid
-from dataclasses import dataclass, field
+from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Optional
 
 from omnimem.governance.vector_clock import (
     VectorClock,
-    detect_conflict,
     merge_records,
 )
 
@@ -38,6 +37,7 @@ logger = logging.getLogger(__name__)
 # ★ 平台兼容：fcntl 仅在 Unix 可用，Windows 上降级为进程内锁
 try:
     import fcntl
+
     _HAS_FCNTL = True
 except ImportError:
     fcntl = None  # type: ignore[assignment]
@@ -46,13 +46,15 @@ except ImportError:
 
 # ─── 数据模型 ────────────────────────────────────────────────
 
+
 @dataclass
 class SyncConfig:
     """同步配置。"""
-    mode: str = "none"           # none / file_lock / changelog
+
+    mode: str = "none"  # none / file_lock / changelog
     instance_id: str = ""
     instance_name: str = ""
-    sync_interval: int = 30      # 同步间隔(秒)
+    sync_interval: int = 30  # 同步间隔(秒)
     conflict_resolution: str = "latest_wins"  # latest_wins / manual
     changelog_path: str = ""
 
@@ -64,6 +66,7 @@ class SyncConfig:
 
 
 # ─── 文件锁管理器 ─────────────────────────────────────────────
+
 
 class FileLockManager:
     """基于 fcntl 的跨进程文件锁（Unix）；Windows 上降级为进程内线程锁。
@@ -83,7 +86,9 @@ class FileLockManager:
         self._fallback_lock = threading.Lock()
         self._has_fcntl = _HAS_FCNTL
         if not self._has_fcntl:
-            logger.warning("fcntl unavailable on this platform — FileLockManager falls back to threading.Lock (intra-process only)")
+            logger.warning(
+                "fcntl unavailable on this platform — FileLockManager falls back to threading.Lock (intra-process only)"
+            )
 
     def acquire(self, timeout: float = 5.0, exclusive: bool = True) -> bool:
         """获取文件锁。
@@ -111,7 +116,7 @@ class FileLockManager:
                 fcntl.flock(self._fd, lock_type | fcntl.LOCK_NB)  # type: ignore[union-attr]
                 self._lock_count += 1
                 return True
-            except (IOError, OSError):
+            except OSError:
                 elapsed = time.monotonic() - start_time
                 if elapsed >= timeout:
                     self._wait_time += elapsed
@@ -126,10 +131,10 @@ class FileLockManager:
         if self._fd is not None:
             try:
                 fcntl.flock(self._fd, fcntl.LOCK_UN)  # type: ignore[union-attr]
-            except (IOError, OSError):
+            except OSError:
                 pass
 
-    def stats(self) -> Dict[str, Any]:
+    def stats(self) -> dict[str, Any]:
         """获取锁统计。"""
         return {
             "acquisitions": self._lock_count,
@@ -146,6 +151,7 @@ class FileLockManager:
 
 # ─── 变更日志 ────────────────────────────────────────────────
 
+
 class ChangeLog:
     """变更日志，用于多主机分布式同步。
 
@@ -160,7 +166,7 @@ class ChangeLog:
         self._my_log.touch(exist_ok=True)
         self._lock = threading.Lock()
 
-    def append(self, operation: str, table: str, data: Dict[str, Any], vc: str = "") -> None:
+    def append(self, operation: str, table: str, data: dict[str, Any], vc: str = "") -> None:
         """追加一条变更记录。
 
         Args:
@@ -182,7 +188,7 @@ class ChangeLog:
             with open(self._my_log, "a", encoding="utf-8") as f:
                 f.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
-    def read_new(self, since_ts: str, exclude_instance: str = "") -> List[Dict[str, Any]]:
+    def read_new(self, since_ts: str, exclude_instance: str = "") -> list[dict[str, Any]]:
         """读取指定时间后的变更（排除指定实例）。
 
         Args:
@@ -197,7 +203,7 @@ class ChangeLog:
 
         for log_file in log_files:
             try:
-                with open(log_file, "r", encoding="utf-8") as f:
+                with open(log_file, encoding="utf-8") as f:
                     for line in f:
                         line = line.strip()
                         if not line:
@@ -218,7 +224,7 @@ class ChangeLog:
         """获取最后一条变更的时间戳。"""
         last_ts = ""
         try:
-            with open(self._my_log, "r", encoding="utf-8") as f:
+            with open(self._my_log, encoding="utf-8") as f:
                 for line in f:
                     line = line.strip()
                     if line:
@@ -233,7 +239,7 @@ class ChangeLog:
         with self._lock:
             try:
                 lines = []
-                with open(self._my_log, "r", encoding="utf-8") as f:
+                with open(self._my_log, encoding="utf-8") as f:
                     lines = f.readlines()
                 if len(lines) > keep_last_n:
                     with open(self._my_log, "w", encoding="utf-8") as f:
@@ -243,6 +249,7 @@ class ChangeLog:
 
 
 # ─── 同步引擎 ────────────────────────────────────────────────
+
 
 class SyncEngine:
     """分布式同步引擎。
@@ -273,7 +280,8 @@ class SyncEngine:
 
         logger.info(
             "SyncEngine initialized: mode=%s, instance=%s",
-            self._config.mode, self._config.instance_id,
+            self._config.mode,
+            self._config.instance_id,
         )
 
     def write_with_lock(self, write_fn: Callable, *args, **kwargs) -> Any:
@@ -318,7 +326,7 @@ class SyncEngine:
         self,
         apply_fn: Callable,
         since_ts: str = "",
-        get_local_fn: Optional[Callable[[str], Optional[Dict[str, Any]]]] = None,
+        get_local_fn: Optional[Callable[[str], Optional[dict[str, Any]]]] = None,
     ) -> int:
         """从其他实例同步变更并应用。
 
@@ -356,7 +364,9 @@ class SyncEngine:
                     local_record = get_local_fn(memory_id)
                     if local_record:
                         local_vc = VectorClock.from_dict(
-                            json.loads(local_record.get("vc", "{}")) if isinstance(local_record.get("vc"), str) else local_record.get("vc", {})
+                            json.loads(local_record.get("vc", "{}"))
+                            if isinstance(local_record.get("vc"), str)
+                            else local_record.get("vc", {})
                         )
                         cmp = local_vc.compare(remote_vc)
 
@@ -368,7 +378,9 @@ class SyncEngine:
                             # 并发冲突，需要合并
                             if self._config.conflict_resolution == "latest_wins":
                                 memory_type = data.get("type", "fact")
-                                merged_data = merge_records(local_record, data, memory_type=memory_type)
+                                merged_data = merge_records(
+                                    local_record, data, memory_type=memory_type
+                                )
                                 change["data"] = merged_data
                                 merged += 1
                             else:
@@ -388,7 +400,9 @@ class SyncEngine:
         if applied > 0 or merged > 0 or skipped > 0:
             logger.info(
                 "SyncEngine: applied=%d merged=%d skipped=%d changes from other instances",
-                applied, merged, skipped,
+                applied,
+                merged,
+                skipped,
             )
 
         # 定期清理旧日志
@@ -397,7 +411,7 @@ class SyncEngine:
 
         return applied
 
-    def get_instance_info(self) -> Dict[str, Any]:
+    def get_instance_info(self) -> dict[str, Any]:
         """获取当前实例信息。"""
         info = {
             "instance_id": self._config.instance_id,
@@ -408,7 +422,7 @@ class SyncEngine:
             info["file_lock_stats"] = self._file_lock.stats()
         return info
 
-    def get_active_instances(self) -> List[Dict[str, Any]]:
+    def get_active_instances(self) -> list[dict[str, Any]]:
         """获取活跃实例列表。
 
         通过扫描 changelog 目录中的日志文件来发现其他实例。
@@ -426,11 +440,13 @@ class SyncEngine:
             for log_file in changelog_dir.glob("*.jsonl"):
                 other_id = log_file.stem
                 if other_id != self._config.instance_id:
-                    instances.append({
-                        "instance_id": other_id,
-                        "instance_name": f"omnimem-{other_id}",
-                        "is_self": False,
-                    })
+                    instances.append(
+                        {
+                            "instance_id": other_id,
+                            "instance_name": f"omnimem-{other_id}",
+                            "is_self": False,
+                        }
+                    )
 
         return instances
 
@@ -466,18 +482,18 @@ class SyncEngine:
             self._write_registry(registry_path, registry)
 
     @staticmethod
-    def _read_registry(path: Path) -> Dict[str, Any]:
+    def _read_registry(path: Path) -> dict[str, Any]:
         """读取实例注册表。"""
         if path.exists():
             try:
-                with open(path, "r", encoding="utf-8") as f:
+                with open(path, encoding="utf-8") as f:
                     return json.load(f)
             except Exception:
                 pass
         return {}
 
     @staticmethod
-    def _write_registry(path: Path, registry: Dict[str, Any]) -> None:
+    def _write_registry(path: Path, registry: dict[str, Any]) -> None:
         """写入实例注册表。"""
         try:
             with open(path, "w", encoding="utf-8") as f:

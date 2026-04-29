@@ -13,7 +13,7 @@ Responsibilities:
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -89,9 +89,7 @@ class MemoryStoreService:
             memory_type="correction",
             confidence=4,
             privacy="personal",
-            provenance=self._provenance.track(
-                core, source=self._session_id, method="correction"
-            ),
+            provenance=self._provenance.track(core, source=self._session_id, method="correction"),
         )
 
     def store_reinforcement(self, signals, user_content: str) -> Optional[str]:
@@ -120,9 +118,7 @@ class MemoryStoreService:
             memory_type=mem_type,
             confidence=3,
             privacy="personal",
-            provenance=self._provenance.track(
-                content, source=self._session_id, method="fact"
-            ),
+            provenance=self._provenance.track(content, source=self._session_id, method="fact"),
         )
 
     # ─── Auto checkpoint ─────────────────────────────────────
@@ -159,7 +155,7 @@ class MemoryStoreService:
 
     # ─── Emergency save ──────────────────────────────────────
 
-    def emergency_save(self, messages: List[Dict[str, Any]]) -> str:
+    def emergency_save(self, messages: list[dict[str, Any]]) -> str:
         """压缩前紧急保存 — 精炼版：只存关键事实摘要，不存原文。
 
         Returns:
@@ -170,9 +166,7 @@ class MemoryStoreService:
             role = msg.get("role", "unknown")
             content = msg.get("content", "")
             if isinstance(content, list):
-                content = " ".join(
-                    c.get("text", "") for c in content if isinstance(c, dict)
-                )
+                content = " ".join(c.get("text", "") for c in content if isinstance(c, dict))
             if not content or role != "user":
                 continue
             core = self.extract_core_fact(content)
@@ -200,7 +194,7 @@ class MemoryStoreService:
 
     def extract_session_memories(
         self,
-        messages: List[Dict[str, Any]],
+        messages: list[dict[str, Any]],
         strip_system_injections,
         should_store,
         memorize_fn,
@@ -233,13 +227,15 @@ class MemoryStoreService:
                         mem = refined
                 if not should_store(mem):
                     continue
-                memorize_fn({
-                    "content": mem,
-                    "memory_type": "fact",
-                    "confidence": 2,
-                    "scope": "personal",
-                    "privacy": "personal",
-                })
+                memorize_fn(
+                    {
+                        "content": mem,
+                        "memory_type": "fact",
+                        "confidence": 2,
+                        "scope": "personal",
+                        "privacy": "personal",
+                    }
+                )
                 count += 1
         return count
 
@@ -254,7 +250,5 @@ class MemoryStoreService:
             memory_type="event",
             confidence=3,
             privacy="team",
-            provenance=self._provenance.track(
-                task, source=self._session_id, method="delegation"
-            ),
+            provenance=self._provenance.track(task, source=self._session_id, method="delegation"),
         )

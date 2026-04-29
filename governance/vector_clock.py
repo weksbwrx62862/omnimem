@@ -12,7 +12,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, Optional
+from typing import Any, Optional
 
 
 class VectorClock:
@@ -25,15 +25,15 @@ class VectorClock:
       → A 和 B 并发冲突（不可比较）
     """
 
-    def __init__(self, clock: Optional[Dict[str, int]] = None):
+    def __init__(self, clock: Optional[dict[str, int]] = None):
         """初始化向量时钟。
 
         Args:
             clock: 初始时钟字典，如 {"node-a": 1, "node-b": 3}
         """
-        self._clock: Dict[str, int] = dict(clock) if clock else {}
+        self._clock: dict[str, int] = dict(clock) if clock else {}
 
-    def increment(self, node_id: str) -> "VectorClock":
+    def increment(self, node_id: str) -> VectorClock:
         """递增指定节点的时钟。
 
         Returns:
@@ -42,7 +42,7 @@ class VectorClock:
         self._clock[node_id] = self._clock.get(node_id, 0) + 1
         return self
 
-    def compare(self, other: "VectorClock") -> int:
+    def compare(self, other: VectorClock) -> int:
         """与另一个向量时钟比较。
 
         Returns:
@@ -70,7 +70,7 @@ class VectorClock:
             return 1
         return 0  # 完全相等
 
-    def merge(self, other: "VectorClock") -> "VectorClock":
+    def merge(self, other: VectorClock) -> VectorClock:
         """合并两个向量时钟（取各节点最大值）。
 
         Returns:
@@ -81,17 +81,17 @@ class VectorClock:
             merged[node] = max(self._clock.get(node, 0), other._clock.get(node, 0))
         return VectorClock(merged)
 
-    def to_dict(self) -> Dict[str, int]:
+    def to_dict(self) -> dict[str, int]:
         """序列化为字典。"""
         return dict(self._clock)
 
     @classmethod
-    def from_dict(cls, d: Dict[str, Any]) -> "VectorClock":
+    def from_dict(cls, d: dict[str, Any]) -> VectorClock:
         """从字典反序列化。"""
         return cls({k: int(v) for k, v in d.items() if isinstance(v, (int, float))})
 
     @classmethod
-    def from_json(cls, s: str) -> "VectorClock":
+    def from_json(cls, s: str) -> VectorClock:
         """从 JSON 字符串反序列化。"""
         try:
             return cls.from_dict(json.loads(s))
@@ -127,10 +127,10 @@ def detect_conflict(
 
 
 def merge_records(
-    local: Dict[str, Any],
-    remote: Dict[str, Any],
+    local: dict[str, Any],
+    remote: dict[str, Any],
     memory_type: str = "fact",
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """基于记忆类型执行结构化合并。
 
     合并策略：
@@ -147,9 +147,11 @@ def merge_records(
         合并后的记录
     """
     merged = dict(local)
-    merged["vc"] = VectorClock.from_dict(local.get("vc", {})).merge(
-        VectorClock.from_dict(remote.get("vc", {}))
-    ).to_dict()
+    merged["vc"] = (
+        VectorClock.from_dict(local.get("vc", {}))
+        .merge(VectorClock.from_dict(remote.get("vc", {})))
+        .to_dict()
+    )
 
     if memory_type == "preference":
         # 偏好合并：保留两者内容，去重后拼接

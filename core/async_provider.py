@@ -15,7 +15,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -66,7 +66,7 @@ class AsyncOmniMemProvider:
     async def handle_tool_call(
         self,
         tool_name: str,
-        args: Dict[str, Any],
+        args: dict[str, Any],
         **kwargs,
     ) -> str:
         """异步处理工具调用。"""
@@ -112,7 +112,7 @@ class AsyncOmniMemProvider:
             **kwargs,
         )
 
-    async def on_session_end(self, messages: List[Dict[str, Any]]) -> None:
+    async def on_session_end(self, messages: list[dict[str, Any]]) -> None:
         """异步会话结束钩子。"""
         loop = asyncio.get_event_loop()
         await loop.run_in_executor(
@@ -121,7 +121,7 @@ class AsyncOmniMemProvider:
             messages,
         )
 
-    async def on_pre_compress(self, messages: List[Dict[str, Any]]) -> str:
+    async def on_pre_compress(self, messages: list[dict[str, Any]]) -> str:
         """异步压缩前钩子。"""
         loop = asyncio.get_event_loop()
         return await loop.run_in_executor(
@@ -132,7 +132,7 @@ class AsyncOmniMemProvider:
 
     # ─── 治理/诊断接口 ────────────────────────────────────────
 
-    async def run_governance_audit(self) -> Dict[str, Any]:
+    async def run_governance_audit(self) -> dict[str, Any]:
         """异步运行治理审计。"""
         loop = asyncio.get_event_loop()
         return await loop.run_in_executor(
@@ -142,7 +142,7 @@ class AsyncOmniMemProvider:
             else {"error": "auditor not available"},
         )
 
-    async def get_health_status(self) -> Dict[str, Any]:
+    async def get_health_status(self) -> dict[str, Any]:
         """异步获取健康状态。"""
         loop = asyncio.get_event_loop()
         return await loop.run_in_executor(

@@ -3,10 +3,10 @@
 从 provider.py 中提取的 get_tool_schemas() 纯数据函数。
 """
 
-from typing import Any, Dict, List
+from typing import Any
 
 
-def get_tool_schemas() -> List[Dict[str, Any]]:
+def get_tool_schemas() -> list[dict[str, Any]]:
     """OmniMem 暴露 7 个工具给 Agent。"""
     return [
         {
@@ -27,8 +27,12 @@ def get_tool_schemas() -> List[Dict[str, Any]]:
                     "memory_type": {
                         "type": "string",
                         "enum": [
-                            "fact", "preference", "correction",
-                            "skill", "procedural", "event",
+                            "fact",
+                            "preference",
+                            "correction",
+                            "skill",
+                            "procedural",
+                            "event",
                         ],
                         "default": "fact",
                         "description": "Type of memory",
@@ -182,7 +186,7 @@ def get_tool_schemas() -> List[Dict[str, Any]]:
                     },
                     "params": {
                         "type": "object",
-                        "description": "Additional parameters for the action. set_privacy: {\"level\": \"public|team|personal|secret\"}. resolve_conflict/scan_conflicts: no params needed.",
+                        "description": 'Additional parameters for the action. set_privacy: {"level": "public|team|personal|secret"}. resolve_conflict/scan_conflicts: no params needed.',
                         "properties": {
                             "level": {
                                 "type": "string",

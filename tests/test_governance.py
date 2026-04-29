@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import tempfile
 import unittest
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from omnimem.governance.conflict import ConflictResolver, ConflictResult
@@ -60,23 +60,27 @@ class TestTemporalDecay(unittest.TestCase):
 
     def test_fact_no_decay(self):
         td = TemporalDecay()
-        results = [{
-            "content": "事实",
-            "type": "fact",
-            "score": 1.0,
-            "stored_at": (datetime.now(timezone.utc) - timedelta(days=100)).isoformat(),
-        }]
+        results = [
+            {
+                "content": "事实",
+                "type": "fact",
+                "score": 1.0,
+                "stored_at": (datetime.now(timezone.utc) - timedelta(days=100)).isoformat(),
+            }
+        ]
         decayed = td.apply(results)
         self.assertEqual(decayed[0]["score"], 1.0)
 
     def test_event_decay(self):
         td = TemporalDecay()
-        results = [{
-            "content": "事件",
-            "type": "event",
-            "score": 1.0,
-            "stored_at": (datetime.now(timezone.utc) - timedelta(days=90)).isoformat(),
-        }]
+        results = [
+            {
+                "content": "事件",
+                "type": "event",
+                "score": 1.0,
+                "stored_at": (datetime.now(timezone.utc) - timedelta(days=90)).isoformat(),
+            }
+        ]
         decayed = td.apply(results)
         self.assertLess(decayed[0]["score"], 1.0)
         self.assertIn("decay_factor", decayed[0])
@@ -93,10 +97,18 @@ class TestTemporalDecay(unittest.TestCase):
     def test_sorted_by_score(self):
         td = TemporalDecay()
         results = [
-            {"content": "旧事件", "type": "event", "score": 1.0,
-             "stored_at": (datetime.now(timezone.utc) - timedelta(days=180)).isoformat()},
-            {"content": "新事件", "type": "event", "score": 1.0,
-             "stored_at": (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()},
+            {
+                "content": "旧事件",
+                "type": "event",
+                "score": 1.0,
+                "stored_at": (datetime.now(timezone.utc) - timedelta(days=180)).isoformat(),
+            },
+            {
+                "content": "新事件",
+                "type": "event",
+                "score": 1.0,
+                "stored_at": (datetime.now(timezone.utc) - timedelta(days=1)).isoformat(),
+            },
         ]
         decayed = td.apply(results)
         self.assertGreater(decayed[0]["score"], decayed[1]["score"])

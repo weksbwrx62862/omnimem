@@ -4,18 +4,20 @@ from __future__ import annotations
 
 import unittest
 
-from omnimem.context.manager import ContextManager, ContextBudget
+from omnimem.context.manager import ContextBudget, ContextManager
 
 
 class TestContextManager(unittest.TestCase):
     """ContextManager 测试。"""
 
     def setUp(self):
-        self.cm = ContextManager(budget=ContextBudget(
-            max_prefetch_tokens=300,
-            max_summary_chars=60,
-            max_prefetch_items=8,
-        ))
+        self.cm = ContextManager(
+            budget=ContextBudget(
+                max_prefetch_tokens=300,
+                max_summary_chars=60,
+                max_prefetch_items=8,
+            )
+        )
 
     def test_refine_content_short(self):
         result = ContextManager.refine_content("短内容", max_chars=60)
@@ -68,7 +70,12 @@ class TestContextManager(unittest.TestCase):
 
     def test_refine_prefetch_dedup(self):
         raw = [
-            {"content": "用户偏好暗色主题", "type": "preference", "memory_id": "m1", "confidence": 4},
+            {
+                "content": "用户偏好暗色主题",
+                "type": "preference",
+                "memory_id": "m1",
+                "confidence": 4,
+            },
             {"content": "我喜欢深色模式", "type": "fact", "memory_id": "m2", "confidence": 3},
         ]
         result = self.cm.refine_prefetch_results(raw)
@@ -101,8 +108,18 @@ class TestContextManager(unittest.TestCase):
 
     def test_refine_recall_results(self):
         raw = [
-            {"content": "关于量子计算的事实：量子比特可以叠加", "type": "fact", "memory_id": "m1", "confidence": 3},
-            {"content": "关于深度学习的发现：Transformer架构", "type": "skill", "memory_id": "m2", "confidence": 3},
+            {
+                "content": "关于量子计算的事实：量子比特可以叠加",
+                "type": "fact",
+                "memory_id": "m1",
+                "confidence": 3,
+            },
+            {
+                "content": "关于深度学习的发现：Transformer架构",
+                "type": "skill",
+                "memory_id": "m2",
+                "confidence": 3,
+            },
         ]
         result = self.cm.refine_recall_results(raw)
         self.assertGreaterEqual(len(result), 1)
