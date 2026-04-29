@@ -1,0 +1,14 @@
+# OmniMem 核心依赖
+# 安装: pip install -r requirements.txt
+
+# 向量数据库
+chromadb>=0.4.0,<0.7.0
+
+# BM25 关键词检索
+rank-bm25>=0.2.0,<0.3.0
+
+# Token 计数
+tiktoken>=0.7.0
+
+# YAML 配置解析
+pyyaml>=6.0
