@@ -4,7 +4,9 @@
 
 [![Python](https://img.shields.io/badge/Python-3.10%2B-blue)](https://www.python.org/)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-[![Code Style](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
+[![Code Style](https://img.shields.io/badge/code%20style-ruff-000000.svg)](https://github.com/astral-sh/ruff)
+[![CI](https://github.com/yourusername/omnimem/actions/workflows/ci.yml/badge.svg)](https://github.com/yourusername/omnimem/actions)
+[![PyPI](https://img.shields.io/pypi/v/omnimem)](https://pypi.org/project/omnimem/)
 
 OmniMem 是一个为 AI Agent 设计的多层混合记忆系统，采用**五层架构**模拟人类记忆机制，并配备完整的**治理引擎**，实现高效、可靠、可溯源的记忆管理。
 
@@ -73,27 +75,30 @@ memory:
   provider: omnimem
 ```
 
-### 方式二：独立使用
+### 方式二：使用 pip 安装
+
+```bash
+# 安装核心依赖
+pip install omnimem
+
+# 安装全部依赖（含可选）
+pip install omnimem[all]
+
+# 安装开发依赖
+pip install omnimem[dev]
+```
+
+### 方式三：从源码安装
 
 ```bash
 # 克隆仓库
-git clone <repository-url>
+git clone https://github.com/yourusername/omnimem.git
 cd omnimem
 
-# 安装核心依赖
-pip install chromadb>=0.4.0,<0.7.0
-pip install rank-bm25>=0.2.0,<0.3.0
-pip install tiktoken>=0.7.0
-pip install pyyaml>=6.0
+# 安装开发依赖
+pip install -r requirements-dev.txt
 
-# 可选依赖
-pip install sentence-transformers>=2.2.0  # 语义嵌入缓存
-pip install cryptography>=42.0.0          # 加密隐私数据
-```
-
-### 方式三：使用 requirements.txt
-
-```bash
+# 或安装核心依赖
 pip install -r requirements.txt
 ```
 
@@ -381,14 +386,15 @@ result = provider.handle_tool_call("omni_reflect", {
 ## 测试
 
 ```bash
-# 运行综合测试
-python test_omnimem_comprehensive.py
-
-# 运行质量修复测试
-python test_qual2_fix.py
+# 运行所有测试
+pytest tests/ -v
 
 # 运行特定模块测试
-python -m pytest tests/ -v
+pytest tests/test_core.py -v
+pytest tests/test_memory.py -v
+
+# 生成覆盖率报告
+pytest tests/ --cov=omnimem --cov-report=html
 ```
 
 ## 依赖说明
@@ -451,22 +457,60 @@ OmniMem 的设计灵感来源于人类记忆系统：
 
 ## 贡献
 
-欢迎提交 Issue 和 Pull Request！
+欢迎提交 Issue 和 Pull Request！详情请参阅 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
-### 开发流程
+### 快速开始
 
-1. Fork 本仓库
-2. 创建特性分支 (`git checkout -b feature/amazing-feature`)
-3. 提交更改 (`git commit -m 'Add amazing feature'`)
-4. 推送分支 (`git push origin feature/amazing-feature`)
-5. 创建 Pull Request
+```bash
+# 克隆仓库
+git clone https://github.com/yourusername/omnimem.git
+cd omnimem
+
+# 安装开发依赖
+pip install -r requirements-dev.txt
+
+# 安装 pre-commit 钩子
+pre-commit install
+
+# 运行测试
+pytest tests/ -v
+```
 
 ### 代码规范
 
-- 使用 Black 格式化代码
+- 使用 Ruff 格式化和检查代码
 - 遵循 PEP 8 规范
 - 新增功能需附带测试
-- 更新相关文档
+- 更新相关文档和 CHANGELOG
+
+## 安全
+
+如发现安全漏洞，请查阅 [SECURITY.md](SECURITY.md) 了解如何报告。
+
+## 致谢
+
+OmniMem 的设计与实现受益于众多优秀的开源项目、学术研究和技术社区：
+
+### 直接依赖
+- [ChromaDB](https://github.com/chroma-core/chroma) — 向量数据库存储
+- [rank-bm25](https://github.com/dorianbrown/rank_bm25) — BM25 关键词检索
+- [tiktoken](https://github.com/openai/tiktoken) — Token 计数
+- [sentence-transformers](https://github.com/UKPLab/sentence-transformers) — 语义嵌入
+- [cryptography](https://github.com/pyca/cryptography) — 隐私数据加密
+- [PEFT](https://github.com/huggingface/peft) / [Transformers](https://github.com/huggingface/transformers) / [PyTorch](https://github.com/pytorch/pytorch) — LoRA 微调与模型推理
+
+### 架构灵感
+- **Hindsight** — Reflect 工具循环、Consolidation 四阶段升华、Disposition 性格系统
+- **MemPalace** — Wing/Room/Hall 三级空间组织结构
+- **MemOS / ActMemory** — KV Cache 预填充机制、知识图谱时序三元组
+- **ReMe** — 6字段结构化摘要设计、会话监听
+- **memU** — 主动感知引擎、意图预测
+- **Anthropic managed-agents** — 存储层/上下文管理层/上下文窗口三层分离
+
+### 相关开源项目
+[MemGPT](https://github.com/cpacker/MemGPT) · [mem0](https://github.com/mem0ai/mem0) · [Letta](https://github.com/letta-ai/letta) · [LangChain](https://github.com/langchain-ai/langchain) · [Zep](https://github.com/getzep/zep) · [CoALA](https://github.com/lingo-mit/coala) · [Generative Agents](https://github.com/joonspk-research/generative_agents)
+
+完整的致谢列表见 [ACKNOWLEDGMENTS.md](ACKNOWLEDGMENTS.md)。
 
 ## 许可证
 
