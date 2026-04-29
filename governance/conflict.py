@@ -11,8 +11,9 @@ from __future__ import annotations
 
 import logging
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -20,11 +21,12 @@ logger = logging.getLogger(__name__)
 @dataclass
 class ConflictResult:
     """冲突检测结果。"""
+
     has_conflict: bool = False
     existing_memory: str = ""
     existing_id: str = ""
     conflict_type: str = ""  # "negation" / "semantic_contradiction" / "update" / "duplicate"
-    action: str = "accept"   # "accept" / "reject" / "merge"
+    action: str = "accept"  # "accept" / "reject" / "merge"
     reason: str = ""
 
 
@@ -38,22 +40,52 @@ class ConflictResolver:
     # 否定词模式（Stage 1）
     _NEGATION_PATTERNS = [
         # 中文否定
-        "不对", "不是", "不用", "错误", "纠正", "更正", "不再", "而非",
-        "实际上", "事实上", "相反", "纠正一下", "我说错了", "改用",
-        "并不", "并非", "不要", "无法", "没能", "改为",
+        "不对",
+        "不是",
+        "不用",
+        "错误",
+        "纠正",
+        "更正",
+        "不再",
+        "而非",
+        "实际上",
+        "事实上",
+        "相反",
+        "纠正一下",
+        "我说错了",
+        "改用",
+        "并不",
+        "并非",
+        "不要",
+        "无法",
+        "没能",
+        "改为",
         # 英文否定
-        "NOT ", "DON'T ", "WRONG", "INCORRECT", "ACTUALLY",
-        "CORRECTION", "INSTEAD", "NO LONGER", "RATHER THAN",
+        "NOT ",
+        "DON'T ",
+        "WRONG",
+        "INCORRECT",
+        "ACTUALLY",
+        "CORRECTION",
+        "INSTEAD",
+        "NO LONGER",
+        "RATHER THAN",
     ]
 
     # 纠正标记（高优先级）
     _CORRECTION_MARKERS = [
-        "CORRECTION:", "纠正:", "更正:", "纠正一下",
+        "CORRECTION:",
+        "纠正:",
+        "更正:",
+        "纠正一下",
     ]
 
-    def __init__(self, strategy: str = "latest",
-                 semantic_check_fn: Optional[Callable] = None,
-                 similarity_threshold: float = 0.85):
+    def __init__(
+        self,
+        strategy: str = "latest",
+        semantic_check_fn: Callable | None = None,
+        similarity_threshold: float = 0.85,
+    ):
         """初始化冲突仲裁器。
 
         Args:
@@ -69,10 +101,11 @@ class ConflictResolver:
         self._strategy = strategy
         self._semantic_check_fn = semantic_check_fn
         self._similarity_threshold = similarity_threshold
-        self._conflict_log: List[Dict[str, Any]] = []
+        self._conflict_log: list[dict[str, Any]] = []
 
-    def check(self, content: str,
-              existing_memories: Optional[List[Dict[str, Any]]] = None) -> ConflictResult:
+    def check(
+        self, content: str, existing_memories: list[dict[str, Any]] | None = None
+    ) -> ConflictResult:
         """两阶段冲突检测。
 
         Stage 1: 否定词快速检测
@@ -135,13 +168,15 @@ class ConflictResolver:
             conflict.reason = "Auto-accepted (manual mode would defer to user)"
 
         # 记录冲突（★ 包含 memory_id，供 resolve_by_id 查询）
-        self._conflict_log.append({
-            "memory_id": conflict.existing_id,
-            "content": content[:200],
-            "conflict_type": conflict.conflict_type,
-            "action": conflict.action,
-            "reason": conflict.reason,
-        })
+        self._conflict_log.append(
+            {
+                "memory_id": conflict.existing_id,
+                "content": content[:200],
+                "conflict_type": conflict.conflict_type,
+                "action": conflict.action,
+                "reason": conflict.reason,
+            }
+        )
 
         return conflict
 
@@ -175,8 +210,8 @@ class ConflictResolver:
     # ─── Stage 2: 语义相似度检测 ──────────────────────────────
 
     def _check_semantic_with_memories(
-        self, content: str, memories: List[Dict[str, Any]]
-    ) -> Optional[ConflictResult]:
+        self, content: str, memories: list[dict[str, Any]]
+    ) -> ConflictResult | None:
         """用已有记忆列表做语义冲突检测。
 
         通过否定词+同主题来判断：如果新内容否定某条已有记忆，则标记冲突。
@@ -186,14 +221,13 @@ class ConflictResolver:
         candidates = self._find_candidates(content_lower, memories)
         for mem_content, mem_content_lower, mem_id, overlap in candidates:
             result = self._compare_semantics(
-                content_lower, mem_content, mem_content_lower, mem_id, overlap)
+                content_lower, mem_content, mem_content_lower, mem_id, overlap
+            )
             if result:
                 return result
         return None
 
-    def _find_candidates(
-        self, content_lower: str, memories: List[Dict[str, Any]]
-    ) -> List[tuple]:
+    def _find_candidates(self, content_lower: str, memories: list[dict[str, Any]]) -> list[tuple]:
         """从记忆列表中筛选候选记忆，计算重叠率。"""
         candidates = []
         for mem in memories:
@@ -207,43 +241,57 @@ class ConflictResolver:
         return candidates
 
     def _compare_semantics(
-        self, content_lower: str, mem_content: str, mem_content_lower: str,
-        mem_id: str, overlap: float
-    ) -> Optional[ConflictResult]:
+        self,
+        content_lower: str,
+        mem_content: str,
+        mem_content_lower: str,
+        mem_id: str,
+        overlap: float,
+    ) -> ConflictResult | None:
         """对单条候选记忆执行语义冲突比较。"""
         result = self._check_mutual_exclusive(
-            content_lower, mem_content, mem_content_lower, mem_id, overlap)
+            content_lower, mem_content, mem_content_lower, mem_id, overlap
+        )
         if result:
             return result
         if overlap > 0.3:
             return self._check_topic_divergence(
-                content_lower, mem_content, mem_content_lower, mem_id, overlap)
+                content_lower, mem_content, mem_content_lower, mem_id, overlap
+            )
         return None
 
     def _check_mutual_exclusive(
-        self, content_lower: str, mem_content: str, mem_content_lower: str,
-        mem_id: str, overlap: float
-    ) -> Optional[ConflictResult]:
+        self,
+        content_lower: str,
+        mem_content: str,
+        mem_content_lower: str,
+        mem_id: str,
+        overlap: float,
+    ) -> ConflictResult | None:
         """检测互斥选项模式：同主题但选择了互斥的选项。"""
         _mutual_exclusive_patterns = [
-            (r'(?:aws|亚马逊)', r'(?:阿里云|腾讯云|华为云|azure|gcp)'),
-            (r'(?:腾讯云)', r'(?:阿里云|华为云|aws|azure)'),
-            (r'(?:阿里云)', r'(?:华为云|aws|azure|腾讯云)'),
-            (r'(?:kubernetes|k8s|gke|eks|aks)', r'(?:docker\s*swarm|nomad|tke|cce)'),
-            (r'(?:腾讯云.*(?:tke|k8s|kubernetes))', r'(?:华为云.*(?:cce|k8s|kubernetes)|阿里云.*(?:ack|k8s|kubernetes))'),
-            (r'(?:python)', r'(?:java|go|rust|typescript|c\+\+)'),
-            (r'(?:mysql)', r'(?:postgresql|postgres)'),
-            (r'(?:mongodb)', r'(?:redis|dynamodb|elasticsearch)'),
-            (r'(?:react)', r'(?:vue|angular|svelte)'),
-            (r'(?:docker)', r'(?:podman|containerd)'),
+            (r"(?:aws|亚马逊)", r"(?:阿里云|腾讯云|华为云|azure|gcp)"),
+            (r"(?:腾讯云)", r"(?:阿里云|华为云|aws|azure)"),
+            (r"(?:阿里云)", r"(?:华为云|aws|azure|腾讯云)"),
+            (r"(?:kubernetes|k8s|gke|eks|aks)", r"(?:docker\s*swarm|nomad|tke|cce)"),
+            (
+                r"(?:腾讯云.*(?:tke|k8s|kubernetes))",
+                r"(?:华为云.*(?:cce|k8s|kubernetes)|阿里云.*(?:ack|k8s|kubernetes))",
+            ),
+            (r"(?:python)", r"(?:java|go|rust|typescript|c\+\+)"),
+            (r"(?:mysql)", r"(?:postgresql|postgres)"),
+            (r"(?:mongodb)", r"(?:redis|dynamodb|elasticsearch)"),
+            (r"(?:react)", r"(?:vue|angular|svelte)"),
+            (r"(?:docker)", r"(?:podman|containerd)"),
         ]
         for pattern_a, pattern_b in _mutual_exclusive_patterns:
             a_in_content = bool(re.search(pattern_a, content_lower))
             b_in_content = bool(re.search(pattern_b, content_lower))
             a_in_mem = bool(re.search(pattern_a, mem_content_lower))
             b_in_mem = bool(re.search(pattern_b, mem_content_lower))
-            if (a_in_content and b_in_mem and not b_in_content and not a_in_mem) or \
-               (b_in_content and a_in_mem and not a_in_content and not b_in_mem):
+            if (a_in_content and b_in_mem and not b_in_content and not a_in_mem) or (
+                b_in_content and a_in_mem and not a_in_content and not b_in_mem
+            ):
                 return ConflictResult(
                     has_conflict=True,
                     existing_memory=mem_content[:200],
@@ -255,21 +303,25 @@ class ConflictResolver:
         return None
 
     def _check_topic_divergence(
-        self, content_lower: str, mem_content: str, mem_content_lower: str,
-        mem_id: str, overlap: float
-    ) -> Optional[ConflictResult]:
+        self,
+        content_lower: str,
+        mem_content: str,
+        mem_content_lower: str,
+        mem_id: str,
+        overlap: float,
+    ) -> ConflictResult | None:
         """检测同主题分歧：高重叠但含否定意图或不同选项。"""
 
         def _extract_words_for_diff(text):
             words = set()
-            words.update(re.findall(r'[a-zA-Z]{2,}', text))
+            words.update(re.findall(r"[a-zA-Z]{2,}", text))
             # 数字组合（版本号、端口等）
-            words.update(re.findall(r'\d+[.]\d+|\d+', text))
-            zh_chars = re.findall(r'[\u4e00-\u9fff]', text)
-            zh_str = ''.join(zh_chars)
+            words.update(re.findall(r"\d+[.]\d+|\d+", text))
+            zh_chars = re.findall(r"[\u4e00-\u9fff]", text)
+            zh_str = "".join(zh_chars)
             for n in (2, 3, 4):
                 for i in range(len(zh_str) - n + 1):
-                    words.add(zh_str[i:i+n])
+                    words.add(zh_str[i : i + n])
             return words
 
         words_a = _extract_words_for_diff(content_lower)
@@ -277,9 +329,21 @@ class ConflictResolver:
         diff_a = words_a - words_b
         diff_b = words_b - words_a
         negation_indicators = [
-            "不是", "不对", "并非", "不再", "改为", "而不是",
-            "不用", "改用", "不要", "无法", "没能",
-            "not", "no longer", "instead of", "rather than",
+            "不是",
+            "不对",
+            "并非",
+            "不再",
+            "改为",
+            "而不是",
+            "不用",
+            "改用",
+            "不要",
+            "无法",
+            "没能",
+            "not",
+            "no longer",
+            "instead of",
+            "rather than",
         ]
         for ni in negation_indicators:
             if ni in content_lower:
@@ -292,9 +356,15 @@ class ConflictResolver:
                     reason=f"Semantic conflict: new content contradicts existing memory (overlap={overlap:.0%})",
                 )
         if overlap > 0.3 and diff_a and diff_b:
-            nums_a = set(re.findall(r'\d+', content_lower))
-            nums_b = set(re.findall(r'\d+', mem_content_lower))
-            numeric_conflict = nums_a and nums_b and nums_a != nums_b and nums_a & nums_b != nums_a and nums_a & nums_b != nums_b
+            nums_a = set(re.findall(r"\d+", content_lower))
+            nums_b = set(re.findall(r"\d+", mem_content_lower))
+            numeric_conflict = (
+                nums_a
+                and nums_b
+                and nums_a != nums_b
+                and nums_a & nums_b != nums_a
+                and nums_a & nums_b != nums_b
+            )
             if numeric_conflict:
                 return ConflictResult(
                     has_conflict=True,
@@ -304,10 +374,14 @@ class ConflictResolver:
                     action=self._resolve_strategy(),
                     reason=f"Same topic but different numeric values detected (overlap={overlap:.0%})",
                 )
-            _option_pattern = r'[A-Z][a-z]+|[\u4e00-\u9fff]{2,4}(?:云|平台|服务|框架|语言|数据库|省|市|区|路|街|公司|部门|团队|项目)'
-            _city_pattern = r'北京|上海|广州|深圳|杭州|成都|武汉|南京|西安|重庆|天津|苏州|长沙|郑州|东莞|青岛|沈阳|宁波|昆明'
-            option_like_a = any(re.match(_option_pattern, w) or re.match(_city_pattern, w) for w in diff_a)
-            option_like_b = any(re.match(_option_pattern, w) or re.match(_city_pattern, w) for w in diff_b)
+            _option_pattern = r"[A-Z][a-z]+|[\u4e00-\u9fff]{2,4}(?:云|平台|服务|框架|语言|数据库|省|市|区|路|街|公司|部门|团队|项目)"
+            _city_pattern = r"北京|上海|广州|深圳|杭州|成都|武汉|南京|西安|重庆|天津|苏州|长沙|郑州|东莞|青岛|沈阳|宁波|昆明"
+            option_like_a = any(
+                re.match(_option_pattern, w) or re.match(_city_pattern, w) for w in diff_a
+            )
+            option_like_b = any(
+                re.match(_option_pattern, w) or re.match(_city_pattern, w) for w in diff_b
+            )
             if option_like_a and option_like_b:
                 return ConflictResult(
                     has_conflict=True,
@@ -319,7 +393,7 @@ class ConflictResolver:
                 )
         return None
 
-    def _check_semantic_with_fn(self, content: str) -> Optional[ConflictResult]:
+    def _check_semantic_with_fn(self, content: str) -> ConflictResult | None:
         """用语义检索函数做冲突检测。"""
         try:
             similar = self._semantic_check_fn(content, self._similarity_threshold)
@@ -342,21 +416,22 @@ class ConflictResolver:
     @staticmethod
     def _compute_overlap(text_a: str, text_b: str) -> float:
         """计算两段文本的词语重叠率。"""
+
         # ★ 改进分词：用2-4字滑动窗口分词，而非贪婪匹配连续中文字符
         def _extract_words(text):
             words = set()
             # 英文词
-            words.update(re.findall(r'[a-zA-Z]{2,}', text))
+            words.update(re.findall(r"[a-zA-Z]{2,}", text))
             # 数字组合（版本号、端口等）
-            words.update(re.findall(r'\d+[.]\d+|\d+', text))
+            words.update(re.findall(r"\d+[.]\d+|\d+", text))
             # 中文：2字、3字、4字滑动窗口
-            zh_chars = re.findall(r'[\u4e00-\u9fff]', text)
-            zh_str = ''.join(zh_chars)
+            zh_chars = re.findall(r"[\u4e00-\u9fff]", text)
+            zh_str = "".join(zh_chars)
             for n in (2, 3, 4):
                 for i in range(len(zh_str) - n + 1):
-                    words.add(zh_str[i:i+n])
+                    words.add(zh_str[i : i + n])
             return words
-        
+
         words_a = _extract_words(text_a)
         words_b = _extract_words(text_b)
         if not words_a or not words_b:

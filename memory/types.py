@@ -5,11 +5,12 @@ from __future__ import annotations
 import enum
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Dict, Optional
+from typing import Any
 
 
 class MemoryType(str, enum.Enum):
     """记忆类型枚举。"""
+
     FACT = "fact"
     PREFERENCE = "preference"
     CORRECTION = "correction"
@@ -20,6 +21,7 @@ class MemoryType(str, enum.Enum):
 
 class PrivacyLevel(str, enum.Enum):
     """隐私级别枚举。"""
+
     PUBLIC = "public"
     TEAM = "team"
     PERSONAL = "personal"
@@ -29,6 +31,7 @@ class PrivacyLevel(str, enum.Enum):
 @dataclass
 class MemoryEntry:
     """一条记忆的完整数据模型。"""
+
     memory_id: str
     content: str
     memory_type: MemoryType = MemoryType.FACT
@@ -37,13 +40,13 @@ class MemoryEntry:
     scope: str = "personal"
     wing: str = ""
     room: str = ""
-    provenance: Optional[Dict[str, Any]] = None
-    stored_at: Optional[datetime] = None
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    provenance: dict[str, Any] | None = None
+    stored_at: datetime | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """转换为字典（用于序列化）。"""
-        result = {
+        result: dict[str, Any] = {
             "memory_id": self.memory_id,
             "content": self.content,
             "type": self.memory_type.value,

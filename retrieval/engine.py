@@ -21,12 +21,12 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
-from omnimem.retrieval.vector import VectorRetriever
 from omnimem.retrieval.bm25 import BM25Retriever
-from omnimem.retrieval.rrf import RRFFusion
 from omnimem.retrieval.reranker import CrossEncoderReranker
+from omnimem.retrieval.rrf import RRFFusion
+from omnimem.retrieval.vector import VectorRetriever
 
 logger = logging.getLogger(__name__)
 
@@ -101,11 +101,38 @@ class HybridRetriever:
     _SYNONYM_MAP = {
         # ─── 宠物领域（QUAL-3核心修复） ───
         "宠物": [
-            "猫咪", "狗狗", "猫", "狗", "兔子", "仓鼠", "鹦鹉",
-            "橘猫", "英短", "布偶", "缅因", "暹罗", "蓝猫", "加菲",
-            "波斯猫", "美短", "折耳", "狸花", "三花", "奶牛猫",
-            "金毛", "拉布拉多", "哈士奇", "泰迪", "柯基", "柴犬",
-            "边牧", "萨摩耶", "阿拉斯加", "松狮", "比熊", "雪纳瑞",
+            "猫咪",
+            "狗狗",
+            "猫",
+            "狗",
+            "兔子",
+            "仓鼠",
+            "鹦鹉",
+            "橘猫",
+            "英短",
+            "布偶",
+            "缅因",
+            "暹罗",
+            "蓝猫",
+            "加菲",
+            "波斯猫",
+            "美短",
+            "折耳",
+            "狸花",
+            "三花",
+            "奶牛猫",
+            "金毛",
+            "拉布拉多",
+            "哈士奇",
+            "泰迪",
+            "柯基",
+            "柴犬",
+            "边牧",
+            "萨摩耶",
+            "阿拉斯加",
+            "松狮",
+            "比熊",
+            "雪纳瑞",
         ],
         "猫咪": ["猫", "宠物", "喵星人", "主子", "橘猫", "英短", "布偶", "缅因", "暹罗"],
         "狗狗": ["狗", "宠物", "汪星人", "金毛", "拉布拉多", "哈士奇", "泰迪", "柯基"],
@@ -113,11 +140,33 @@ class HybridRetriever:
         "狗": ["狗狗", "宠物", "金毛", "拉布拉多", "哈士奇", "泰迪", "柯基", "柴犬"],
         # ─── 饮食领域 ───
         "饮食": [
-            "食用", "喂食", "饲料", "吃", "食物", "营养",
-            "猫粮", "狗粮", "罐头", "冻干", "猫条", "零食",
-            "鸡胸肉", "牛肉", "鱼肉", "三文鱼", "虾",
-            "生骨肉", "自制粮", "处方粮", "幼猫粮", "成猫粮",
-            "化毛膏", "卵磷脂", "鱼油", "营养膏", "益生菌",
+            "食用",
+            "喂食",
+            "饲料",
+            "吃",
+            "食物",
+            "营养",
+            "猫粮",
+            "狗粮",
+            "罐头",
+            "冻干",
+            "猫条",
+            "零食",
+            "鸡胸肉",
+            "牛肉",
+            "鱼肉",
+            "三文鱼",
+            "虾",
+            "生骨肉",
+            "自制粮",
+            "处方粮",
+            "幼猫粮",
+            "成猫粮",
+            "化毛膏",
+            "卵磷脂",
+            "鱼油",
+            "营养膏",
+            "益生菌",
         ],
         "吃饭": ["饮食", "喂食", "吃", "食物", "猫粮", "狗粮", "罐头"],
         "喂食": ["饮食", "吃饭", "喂养", "投喂", "给吃的"],
@@ -135,31 +184,113 @@ class HybridRetriever:
         "喜欢": ["爱", "爱好", "感兴趣", "钟爱", "偏爱"],
         "问题": ["bug", "错误", "故障", "异常", "缺陷", "issue"],
         # ─── 深度学习领域（QUAL-2修复） ───
-        "深度学习": ["神经网络", "深度神经", "CNN", "RNN", "Transformer",
-                     "alexnet", "resnet", "vggnet", "bert", "gpt",
-                     "机器学习", "训练", "推理", "模型"],
-        "神经网络": ["深度学习", "CNN", "RNN", "Transformer", "alexnet",
-                     "resnet", "感知机", "前馈", "循环"],
-        "机器学习": ["深度学习", "训练", "分类", "回归", "聚类",
-                     "特征", "模型", "监督学习", "无监督"],
+        "深度学习": [
+            "神经网络",
+            "深度神经",
+            "CNN",
+            "RNN",
+            "Transformer",
+            "alexnet",
+            "resnet",
+            "vggnet",
+            "bert",
+            "gpt",
+            "机器学习",
+            "训练",
+            "推理",
+            "模型",
+        ],
+        "神经网络": [
+            "深度学习",
+            "CNN",
+            "RNN",
+            "Transformer",
+            "alexnet",
+            "resnet",
+            "感知机",
+            "前馈",
+            "循环",
+        ],
+        "机器学习": [
+            "深度学习",
+            "训练",
+            "分类",
+            "回归",
+            "聚类",
+            "特征",
+            "模型",
+            "监督学习",
+            "无监督",
+        ],
     }
 
     # ★ 类级别垃圾查询白名单：避免每次 _is_garbage_query 调用时重建集合
-    _GARBAGE_COMMON_WORDS = frozenset({
-        'test', 'what', 'how', 'why', 'when', 'where', 'this', 'that',
-        'with', 'from', 'have', 'will', 'would', 'could', 'should',
-        'about', 'just', 'like', 'only', 'some', 'them', 'than',
-        'into', 'over', 'also', 'back', 'after', 'used', 'first',
-        'well', 'way', 'even', 'want', 'because', 'any', 'these',
-        'most', 'make', 'know', 'time', 'year', 'good', 'work',
-        'qual', 'data', 'info', 'user', 'name', 'code', 'file',
-        'http', 'html', 'json', 'api', 'url', 'app', 'log',
-    })
+    _GARBAGE_COMMON_WORDS = frozenset(
+        {
+            "test",
+            "what",
+            "how",
+            "why",
+            "when",
+            "where",
+            "this",
+            "that",
+            "with",
+            "from",
+            "have",
+            "will",
+            "would",
+            "could",
+            "should",
+            "about",
+            "just",
+            "like",
+            "only",
+            "some",
+            "them",
+            "than",
+            "into",
+            "over",
+            "also",
+            "back",
+            "after",
+            "used",
+            "first",
+            "well",
+            "way",
+            "even",
+            "want",
+            "because",
+            "any",
+            "these",
+            "most",
+            "make",
+            "know",
+            "time",
+            "year",
+            "good",
+            "work",
+            "qual",
+            "data",
+            "info",
+            "user",
+            "name",
+            "code",
+            "file",
+            "http",
+            "html",
+            "json",
+            "api",
+            "url",
+            "app",
+            "log",
+        }
+    )
 
     def __init__(
         self,
         vector_backend: str = "chromadb",
-        data_dir: Path = None,
+        data_dir: Path | None = None,
         enable_reranker: bool = False,
     ):
         """初始化混合检索引擎。
@@ -177,11 +308,15 @@ class HybridRetriever:
         # ★ 读写锁替代全局互斥锁
         self._rw_lock = _ReadWriteLock()
         # ★ 查询结果缓存：key → (results, timestamp)
-        self._query_cache: Dict[str, Tuple[List[Dict[str, Any]], float]] = {}
+        self._query_cache: dict[str, tuple[list[dict[str, Any]], float]] = {}
         # ★ P1方案四：动态来源权重（由 FeedbackCollector 驱动）
-        self._source_weights: Dict[str, float] = {}
+        self._source_weights: dict[str, float] = {}
 
-    def add(self, content: str, memory_id: str, metadata: Dict[str, Any]) -> None:
+    def embed_text(self, text: str) -> list[float]:
+        """Embed text using the vector retriever."""
+        return self._vector.embed_text(text)
+
+    def add(self, content: str, memory_id: str, metadata: dict[str, Any]) -> None:
         """添加文档到所有检索通道。"""
         self._rw_lock.acquire_write()
         try:
@@ -191,7 +326,7 @@ class HybridRetriever:
         finally:
             self._rw_lock.release_write()
 
-    def add_batch(self, documents: List[Dict[str, Any]]) -> None:
+    def add_batch(self, documents: list[dict[str, Any]]) -> None:
         """批量添加文档到所有检索通道。
 
         Args:
@@ -211,8 +346,8 @@ class HybridRetriever:
         max_tokens: int = 1500,
         mode: str = "rag",
         top_k: int = 10,
-        store=None,
-    ) -> List[Dict[str, Any]]:
+        store=None,  # noqa: ARG002
+    ) -> list[dict[str, Any]]:
         """混合检索：向量 + BM25 + RRF 融合。
 
         RRF 融合检索流程:
@@ -276,9 +411,13 @@ class HybridRetriever:
                 vector_results = vec_future.result()
                 bm25_results = bm25_future.result()
             results = self._rrf_fuse(
-                query, vector_results, bm25_results,
-                is_garbage=is_garbage, doc_count=doc_count,
-                top_k=top_k, max_tokens=max_tokens,
+                query,
+                vector_results,
+                bm25_results,
+                is_garbage=is_garbage,
+                doc_count=doc_count,
+                top_k=top_k,
+                max_tokens=max_tokens,
             )
             # ★ 缓存搜索结果
             self._query_cache[cache_key] = (results, now)
@@ -286,11 +425,11 @@ class HybridRetriever:
         finally:
             self._rw_lock.release_read()
 
-    def _vector_search(self, query: str, top_k: int) -> List[Dict[str, Any]]:
+    def _vector_search(self, query: str, top_k: int) -> list[dict[str, Any]]:
         """向量检索通道。"""
         return self._vector.search(query, top_k=top_k)
 
-    def _bm25_search(self, query: str, top_k: int) -> List[Dict[str, Any]]:
+    def _bm25_search(self, query: str, top_k: int) -> list[dict[str, Any]]:
         """BM25 检索通道（含同义词扩展）。
 
         ★ 同义词扩展 BM25 查询：弥补词袋模型的语义鸿沟（QUAL-3修复）
@@ -313,14 +452,14 @@ class HybridRetriever:
     def _rrf_fuse(
         self,
         query: str,
-        vector_results: List[Dict[str, Any]],
-        bm25_results: List[Dict[str, Any]],
+        vector_results: list[dict[str, Any]],
+        bm25_results: list[dict[str, Any]],
         *,
         is_garbage: bool,
         doc_count: int,
         top_k: int,
         max_tokens: int,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """RRF 融合 + 数据量自适应阈值 + 垃圾查询二次验证 + Rerank + Token 裁剪。"""
         # 数据量自适应 min_rrf
         # ★ R22修复：RRF 分数数学上限 = weight/(k+rank)
@@ -329,13 +468,9 @@ class HybridRetriever:
         # 双路最优: 0.0738+0.0164=0.0902
         # 阈值不能超过数学上限，否则所有结果被过滤
         adaptive_min_rrf = 0.035
-        if doc_count >= 200:
+        if doc_count >= 200 or doc_count >= 100:
             adaptive_min_rrf = 0.04
-        elif doc_count >= 100:
-            adaptive_min_rrf = 0.04
-        elif doc_count >= 50:
-            adaptive_min_rrf = 0.035
-        elif doc_count >= 20:
+        elif doc_count >= 50 or doc_count >= 20:
             adaptive_min_rrf = 0.035
         # ★ R25优化：语料过少时（<10条）降低阈值
         # 小语料下 BM25 IDF 不可靠，单通道匹配的 RRF 分数低
@@ -376,7 +511,7 @@ class HybridRetriever:
         # Token 预算裁剪
         return self._trim_to_budget(fused, max_tokens)
 
-    def index_update(self, user_content: str, assistant_content: str) -> None:
+    def index_update(self, user_content: str, assistant_content: str) -> None:  # noqa: ARG002
         """后台异步索引更新（从 sync_turn 调用）。
 
         ★ 只存提炼后的用户消息核心事实，不存 "User:...Assistant:..." 对话原文。
@@ -384,12 +519,15 @@ class HybridRetriever:
         """
         import re
         import uuid
+
         clean_user = re.sub(
-            r'### Relevant Memories(?:\s*\(prefetched\))?\s*\n.*'
-            r'(?=\n(?!- )|\Z)',
-            '', user_content, flags=re.DOTALL | re.IGNORECASE,
+            r"### Relevant Memories(?:\s*\(prefetched\))?\s*\n.*"
+            r"(?=\n(?!- )|\Z)",
+            "",
+            user_content,
+            flags=re.DOTALL | re.IGNORECASE,
         )
-        clean_user = re.sub(r'^- \[cached\].*$', '', clean_user, flags=re.MULTILINE).strip()
+        clean_user = re.sub(r"^- \[cached\].*$", "", clean_user, flags=re.MULTILINE).strip()
 
         # ★ 只存用户消息的提炼摘要，不存对话原文
         # 截取用户消息的核心部分（前200字），不拼 Assistant 回复
@@ -411,7 +549,7 @@ class HybridRetriever:
         self._vector.flush()
         self._bm25.flush()
 
-    def set_source_weights(self, weights: Dict[str, float]) -> None:
+    def set_source_weights(self, weights: dict[str, float]) -> None:
         """设置动态来源权重（由 FeedbackCollector 驱动）。
 
         Args:
@@ -428,7 +566,7 @@ class HybridRetriever:
         """BM25 已索引文档数（用于判断是否需要跨会话重建）。"""
         return self._bm25.document_count
 
-    def rebuild_bm25_from_entries(self, entries: List[Dict[str, Any]]) -> int:
+    def rebuild_bm25_from_entries(self, entries: list[dict[str, Any]]) -> int:
         """从索引条目重建 BM25 检索通道（跨会话持久化恢复）。
 
         ★ R26优化：提供公共接口，避免 provider 直接访问 _bm25 私有属性。
@@ -441,18 +579,25 @@ class HybridRetriever:
             重建的条目数
         """
         if self._bm25.document_count > 0:
-            logger.debug("BM25 already has %d entries from disk cache, skipping rebuild", self._bm25.document_count)
+            logger.debug(
+                "BM25 already has %d entries from disk cache, skipping rebuild",
+                self._bm25.document_count,
+            )
             return 0
         rebuilt = 0
         for entry in entries:
             content = entry.get("content", "") or entry.get("summary", "")
             memory_id = entry.get("memory_id", "")
             if content and memory_id:
-                self._bm25.add(content, memory_id, {
-                    "memory_id": memory_id,
-                    "type": entry.get("type", "fact"),
-                    "scope": entry.get("scope", "personal"),
-                })
+                self._bm25.add(
+                    content,
+                    memory_id,
+                    {
+                        "memory_id": memory_id,
+                        "type": entry.get("type", "fact"),
+                        "scope": entry.get("scope", "personal"),
+                    },
+                )
                 rebuilt += 1
         return rebuilt
 
@@ -470,15 +615,16 @@ class HybridRetriever:
             True 表示应限制返回结果数量
         """
         import re
+
         q = query.strip()
         if not q or len(q) < 2:
             return True
 
         # 有中文字符 → 不是垃圾
-        if re.search(r'[\u4e00-\u9fff]', q):
+        if re.search(r"[\u4e00-\u9fff]", q):
             return False
 
-        words = re.findall(r'[a-zA-Z]{3,}', q.lower())
+        words = re.findall(r"[a-zA-Z]{3,}", q.lower())
         word_set = set(words)
         matched_common = word_set & HybridRetriever._GARBAGE_COMMON_WORDS
 
@@ -492,26 +638,26 @@ class HybridRetriever:
         # 规则B: 单个常见词但周围全是随机字符 → 垃圾
         # 如 "zzzzzxyz123qual1test": 只有test/qual匹配，其余是噪声
         if matched_common and len(q) > 8:
-            non_word_chars = re.sub(r'[a-zA-Z]{3,}', '', q)
+            non_word_chars = re.sub(r"[a-zA-Z]{3,}", "", q)
             noise_ratio = len(non_word_chars) / len(q)
             if noise_ratio > 0.5:
                 return True
 
         # 规则C: 连续随机字符比例 > 60%
-        random_chars = re.sub(r'[a-zA-Z0-9\s]', '', q)
+        random_chars = re.sub(r"[a-zA-Z0-9\s]", "", q)
         if len(random_chars) > len(q) * 0.6:
             return True
 
         # 规则D: 纯数字串
-        if re.match(r'^[\d\s]+$', q):
+        if re.match(r"^[\d\s]+$", q):
             return True
 
         # 规则E: 连续5+无元音或高重复字母序列
-        alpha_seq = re.findall(r'[a-zA-Z]{5,}', q)
+        alpha_seq = re.findall(r"[a-zA-Z]{5,}", q)
         for seq in alpha_seq:
             seq_lower = seq.lower()
-            if seq_lower not in common_words:
-                vowel_count = sum(1 for c in seq_lower if c in 'aeiou')
+            if seq_lower not in HybridRetriever._GARBAGE_COMMON_WORDS:
+                vowel_count = sum(1 for c in seq_lower if c in "aeiou")
                 unique_chars = len(set(seq_lower))
                 if vowel_count == 0 or unique_chars <= 2:
                     return True
@@ -522,21 +668,18 @@ class HybridRetriever:
 
         # 规则G: 纯字母数字长串(>8)且无任何常见词匹配 → 垃圾
         # 如 "abcdefg123456", "asdfghjkl123"
-        if not matched_common and re.match(r'^[a-zA-Z0-9]+$', q) and len(q) > 8:
-            return True
-
-        return False
+        return not matched_common and re.match(r"^[a-zA-Z0-9]+$", q) is not None and len(q) > 8
 
     @staticmethod
-    def _trim_to_budget(results: List[Dict[str, Any]], max_tokens: int) -> List[Dict[str, Any]]:
+    def _trim_to_budget(results: list[dict[str, Any]], max_tokens: int) -> list[dict[str, Any]]:
         """裁剪结果到 Token 预算内。"""
         budget = max_tokens
-        _CHARS_PER_TOKEN = 4
+        chars_per_token = 4
         trimmed = []
         used = 0
         for r in results:
             content = r.get("content", "")
-            est_tokens = max(1, len(content) // _CHARS_PER_TOKEN)
+            est_tokens = max(1, len(content) // chars_per_token)
             if used + est_tokens <= budget:
                 trimmed.append(r)
                 used += est_tokens

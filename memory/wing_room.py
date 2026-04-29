@@ -14,7 +14,6 @@ import hashlib
 import logging
 import re
 from pathlib import Path
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -46,15 +45,72 @@ _TYPE_TO_HALL = {
 # 停用词表（扩展版）
 _STOPWORDS = {
     # 中文停用词
-    "这是", "那个", "这个", "什么", "怎么", "如何", "可以", "需要",
-    "我们", "他们", "它们", "因为", "所以", "如果", "但是", "而且",
-    "就是", "已经", "还是", "或者", "不是", "没有", "可能", "应该",
-    "一下", "一些", "一种", "之后", "之前", "之间", "关于", "对于",
-    "通过", "使用", "进行", "实现", "包括", "根据", "目前", "同时",
+    "这是",
+    "那个",
+    "这个",
+    "什么",
+    "怎么",
+    "如何",
+    "可以",
+    "需要",
+    "我们",
+    "他们",
+    "它们",
+    "因为",
+    "所以",
+    "如果",
+    "但是",
+    "而且",
+    "就是",
+    "已经",
+    "还是",
+    "或者",
+    "不是",
+    "没有",
+    "可能",
+    "应该",
+    "一下",
+    "一些",
+    "一种",
+    "之后",
+    "之前",
+    "之间",
+    "关于",
+    "对于",
+    "通过",
+    "使用",
+    "进行",
+    "实现",
+    "包括",
+    "根据",
+    "目前",
+    "同时",
     # 英文停用词
-    "the", "and", "for", "are", "but", "not", "you", "all", "can",
-    "had", "her", "was", "one", "our", "this", "that", "with", "from",
-    "have", "been", "does", "will", "would", "could", "should",
+    "the",
+    "and",
+    "for",
+    "are",
+    "but",
+    "not",
+    "you",
+    "all",
+    "can",
+    "had",
+    "her",
+    "was",
+    "one",
+    "our",
+    "this",
+    "that",
+    "with",
+    "from",
+    "have",
+    "been",
+    "does",
+    "will",
+    "would",
+    "could",
+    "should",
 }
 
 
@@ -65,7 +121,7 @@ class WingRoomManager:
         self._palace_dir = palace_dir
         self._palace_dir.mkdir(parents=True, exist_ok=True)
         # ★ 话题检测缓存：减少高频 add 时的重复解析
-        self._topic_cache: Dict[str, str] = {}
+        self._topic_cache: dict[str, str] = {}
         self._topic_cache_max = 1000
 
     def resolve_wing(self, scope: str) -> str:
@@ -125,8 +181,7 @@ class WingRoomManager:
         if not self._palace_dir.exists():
             return []
         return [
-            d.name for d in self._palace_dir.iterdir()
-            if d.is_dir() and not d.name.startswith("_")
+            d.name for d in self._palace_dir.iterdir() if d.is_dir() and not d.name.startswith("_")
         ]
 
     def list_halls(self, wing: str) -> list:
@@ -134,22 +189,16 @@ class WingRoomManager:
         wing_path = self._palace_dir / wing
         if not wing_path.exists():
             return []
-        return [
-            d.name for d in wing_path.iterdir()
-            if d.is_dir() and not d.name.startswith("_")
-        ]
+        return [d.name for d in wing_path.iterdir() if d.is_dir() and not d.name.startswith("_")]
 
     def list_rooms(self, wing: str, hall: str) -> list:
         """列出指定 Hall 下的所有 Room。"""
         hall_path = self._palace_dir / wing / hall
         if not hall_path.exists():
             return []
-        return [
-            d.name for d in hall_path.iterdir()
-            if d.is_dir() and not d.name.startswith("_")
-        ]
+        return [d.name for d in hall_path.iterdir() if d.is_dir() and not d.name.startswith("_")]
 
-    def _detect_topic(self, content: str) -> Optional[str]:
+    def _detect_topic(self, content: str) -> str | None:
         """从内容中检测话题。
 
         策略优先级：
@@ -161,20 +210,21 @@ class WingRoomManager:
         # 策略 1: 尝试使用 KG 的 extract_entities
         try:
             from omnimem.deep.knowledge_graph import extract_entities
+
             entities = extract_entities(content)
             # 过滤停用词和太短的实体
-            valid = [e for e in entities
-                     if e.lower() not in _STOPWORDS and len(e) >= 2]
+            valid = [e for e in entities if e.lower() not in _STOPWORDS and len(e) >= 2]
             if valid:
                 # 优先纯英文实体（技术术语更精确），再按长度升序
                 def _entity_priority(e: str) -> tuple:
-                    is_pure_en = bool(re.match(r'^[A-Za-z0-9_.-]+$', e))
-                    is_mixed = bool(re.search(r'[A-Za-z]', e) and re.search(r'[\u4e00-\u9fff]', e))
+                    is_pure_en = bool(re.match(r"^[A-Za-z0-9_.-]+$", e))
+                    is_mixed = bool(re.search(r"[A-Za-z]", e) and re.search(r"[\u4e00-\u9fff]", e))
                     return (0 if is_pure_en else (1 if not is_mixed else 2), len(e))
+
                 valid.sort(key=_entity_priority)
                 best = valid[0]
                 # 纯英文实体统一小写，便于路径规范
-                if re.match(r'^[A-Za-z0-9_.-]+$', best):
+                if re.match(r"^[A-Za-z0-9_.-]+$", best):
                     return best.lower()
                 return best
         except ImportError:
@@ -183,13 +233,13 @@ class WingRoomManager:
         # 策略 2: 英文小写技术关键词（优先级高于中文正则）
         # 不用 \b，因为中英混合时 \b 在英文和中文之间无效
         # 用前后断言防止子串匹配（如 "pythonic" 不应匹配 "python"）
-        tech_pattern = r'(?<![a-z])(python|java|go|rust|typescript|react|vue|docker|k8s|redis|mysql|postgresql|mongodb|neo4j|chromadb|sqlite|api|sql|rest|graphql|kubernetes|nginx|flask|django|fastapi|tensorflow|pytorch)(?![a-z])'
+        tech_pattern = r"(?<![a-z])(python|java|go|rust|typescript|react|vue|docker|k8s|redis|mysql|postgresql|mongodb|neo4j|chromadb|sqlite|api|sql|rest|graphql|kubernetes|nginx|flask|django|fastapi|tensorflow|pytorch)(?![a-z])"
         tech_matches = re.findall(tech_pattern, content[:300].lower())
         if tech_matches:
             return tech_matches[0]
 
         # 策略 3: CamelCase / ALLCAPS 模式
-        en_pattern = r'\b[A-Z][a-z]+(?:[A-Z][a-z]+)+\b|\b[A-Z]{2,}\b'
+        en_pattern = r"\b[A-Z][a-z]+(?:[A-Z][a-z]+)+\b|\b[A-Z]{2,}\b"
         en_matches = re.findall(en_pattern, content[:300])
         if en_matches:
             for m in en_matches:
@@ -198,7 +248,7 @@ class WingRoomManager:
 
         # 策略 4: 中文名词短语（最宽泛，放最后）
         # ★ 优先从内容前 50 字提取，避免从长内容中间提取随机词（如"强调"）
-        zh_pattern = r'[\u4e00-\u9fff]{2,6}'
+        zh_pattern = r"[\u4e00-\u9fff]{2,6}"
         # 先尝试前 50 字
         zh_matches_head = re.findall(zh_pattern, content[:50])
         for m in zh_matches_head:
@@ -215,6 +265,6 @@ class WingRoomManager:
     @staticmethod
     def _sanitize_name(name: str) -> str:
         """清理名称，使其可安全用于文件路径。"""
-        sanitized = re.sub(r'[^\w\u4e00-\u9fff-]', '-', name)
-        sanitized = sanitized.strip('-')
+        sanitized = re.sub(r"[^\w\u4e00-\u9fff-]", "-", name)
+        sanitized = sanitized.strip("-")
         return sanitized[:50] if sanitized else "unnamed"

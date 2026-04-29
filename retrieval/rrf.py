@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -29,11 +29,11 @@ class RRFFusion:
 
     def merge(
         self,
-        result_lists: List[List[Dict[str, Any]]],
+        result_lists: list[list[dict[str, Any]]],
         id_key: str = "memory_id",
-        weights: List[float] = None,
+        weights: list[float] = None,
         min_rrf: float = None,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """融合多路检索结果。
 
         Args:
@@ -52,10 +52,10 @@ class RRFFusion:
         #   权重比 3:1 ≈ 75:25，确保语义相关结果优先于关键词匹配
         if weights is None:
             weights = [3.0, 1.0] + [1.0] * max(0, len(result_lists) - 2)
-        
+
         # 为每个文档累计 RRF 分数
-        rrf_scores: Dict[str, float] = {}
-        doc_map: Dict[str, Dict[str, Any]] = {}
+        rrf_scores: dict[str, float] = {}
+        doc_map: dict[str, dict[str, Any]] = {}
 
         for list_idx, result_list in enumerate(result_lists):
             weight = weights[list_idx] if list_idx < len(weights) else 1.0

@@ -6,12 +6,10 @@
 向后兼容的导入路径。
 """
 
-from typing import Optional
-
 from omnimem.utils.security import SecurityValidator
 
 
-def compat_scan_memory_content(content: str) -> Optional[str]:
+def compat_scan_memory_content(content: str) -> str | None:
     """扫描内容是否包含注入/外泄模式。
 
     委托 SecurityValidator.scan_threats() 实现，支持 Unicode 归一化、

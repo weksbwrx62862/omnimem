@@ -10,12 +10,13 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import sqlite3
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +34,7 @@ class ThreeLevelIndex:
         self._index_dir = index_dir
         self._index_dir.mkdir(parents=True, exist_ok=True)
         self._db_path = self._index_dir / "index.db"
-        self._conn: Optional[sqlite3.Connection] = None
+        self._conn: sqlite3.Connection | None = None
         self._pending_writes = 0
         self._init_db()
 
@@ -101,14 +102,27 @@ class ThreeLevelIndex:
                    (memory_id, wing, hall, room, content, summary, type,
                     confidence, privacy, scope, stored_at, provenance, metadata)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (memory_id, wing, hall, room, content, summary, type,
-                 confidence, privacy, scope, stored_at, provenance, metadata),
+                (
+                    memory_id,
+                    wing,
+                    hall,
+                    room,
+                    content,
+                    summary,
+                    type,
+                    confidence,
+                    privacy,
+                    scope,
+                    stored_at,
+                    provenance,
+                    metadata,
+                ),
             )
             self._maybe_commit()
         except Exception as e:
             logger.debug("Index add failed for %s: %s", memory_id, e)
 
-    def get(self, memory_id: str) -> Optional[Dict[str, Any]]:
+    def get(self, memory_id: str) -> dict[str, Any] | None:
         """根据 ID 获取索引记录。"""
         try:
             row = self._conn.execute(
@@ -134,7 +148,7 @@ class ThreeLevelIndex:
             logger.debug("Index delete failed for %s: %s", memory_id, e)
             return False
 
-    def search_l0(self, wing: str = "", hall: str = "") -> List[str]:
+    def search_l0(self, wing: str = "", hall: str = "") -> list[str]:
         """L0 目录索引：返回匹配的 Room 列表。"""
         query = "SELECT DISTINCT room FROM memory_index WHERE 1=1"
         params = []
@@ -151,7 +165,7 @@ class ThreeLevelIndex:
             logger.debug("L0 search failed: %s", e)
             return []
 
-    def search_l1(self, wing: str = "", type: str = "", limit: int = 50) -> List[Dict[str, Any]]:
+    def search_l1(self, wing: str = "", type: str = "", limit: int = 50) -> list[dict[str, Any]]:
         """L1 摘要索引：返回摘要记录（含 content 用于 warm_up）。"""
         query = "SELECT memory_id, wing, hall, room, summary, type, confidence, privacy, stored_at, content FROM memory_index WHERE 1=1"
         params = []
@@ -162,14 +176,21 @@ class ThreeLevelIndex:
             query += " AND type = ?"
             params.append(type)
         query += " ORDER BY stored_at DESC LIMIT ?"
-        params.append(limit)
+        params.append(str(limit))
         try:
             rows = self._conn.execute(query, params).fetchall()
             return [
                 {
-                    "memory_id": r[0], "wing": r[1], "hall": r[2], "room": r[3],
-                    "summary": r[4], "type": r[5], "confidence": r[6],
-                    "privacy": r[7], "stored_at": r[8], "content": r[9] if len(r) > 9 else "",
+                    "memory_id": r[0],
+                    "wing": r[1],
+                    "hall": r[2],
+                    "room": r[3],
+                    "summary": r[4],
+                    "type": r[5],
+                    "confidence": r[6],
+                    "privacy": r[7],
+                    "stored_at": r[8],
+                    "content": r[9] if len(r) > 9 else "",
                 }
                 for r in rows
             ]
@@ -183,7 +204,7 @@ class ThreeLevelIndex:
         wing: str = "",
         type: str = "",
         limit: int = 20,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """L2 全文索引：返回完整记录。"""
         query = "SELECT * FROM memory_index WHERE 1=1"
         params = []
@@ -198,7 +219,7 @@ class ThreeLevelIndex:
             query += " AND type = ?"
             params.append(type)
         query += " ORDER BY stored_at DESC LIMIT ?"
-        params.append(limit)
+        params.append(str(limit))
         try:
             rows = self._conn.execute(query, params).fetchall()
             return [self._row_to_dict(r) for r in rows]
@@ -206,7 +227,7 @@ class ThreeLevelIndex:
             logger.debug("L2 search failed: %s", e)
             return []
 
-    def search_all_for_retrieval(self, limit: int = 1000) -> List[Dict[str, Any]]:
+    def search_all_for_retrieval(self, limit: int = 1000) -> list[dict[str, Any]]:
         """获取所有记录（用于检索引擎全量索引）。"""
         try:
             rows = self._conn.execute(
@@ -277,26 +298,32 @@ class ThreeLevelIndex:
             except Exception as e:
                 logger.debug("Index flush failed: %s", e)
 
-    def _row_to_dict(self, row) -> Dict[str, Any]:
+    def _row_to_dict(self, row) -> dict[str, Any]:
         """将数据库行转为字典。"""
         keys = [
-            "memory_id", "wing", "hall", "room", "content", "summary",
-            "type", "confidence", "privacy", "scope", "stored_at",
-            "provenance", "metadata",
+            "memory_id",
+            "wing",
+            "hall",
+            "room",
+            "content",
+            "summary",
+            "type",
+            "confidence",
+            "privacy",
+            "scope",
+            "stored_at",
+            "provenance",
+            "metadata",
         ]
         result = {}
         for i, key in enumerate(keys):
             if i < len(row):
                 val = row[i]
                 if key == "provenance" and val:
-                    try:
+                    with contextlib.suppress(json.JSONDecodeError, TypeError):
                         val = json.loads(val)
-                    except (json.JSONDecodeError, TypeError):
-                        pass
                 if key == "metadata" and val:
-                    try:
+                    with contextlib.suppress(json.JSONDecodeError, TypeError):
                         val = json.loads(val)
-                    except (json.JSONDecodeError, TypeError):
-                        pass
                 result[key] = val
         return result

@@ -10,7 +10,7 @@ import asyncio
 import logging
 import time
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -50,8 +50,8 @@ class AsyncLLMClient:
         self._timeout = timeout
         self._cache_ttl = cache_ttl
         self._semaphore = asyncio.Semaphore(max_concurrent)
-        self._cache: Dict[str, tuple] = {}  # key -> (LLMResponse, timestamp)
-        self._client: Optional[Any] = None
+        self._cache: dict[str, tuple] = {}  # key -> (LLMResponse, timestamp)
+        self._client: Any | None = None
         self._closed = False
 
     # ─── Public API ──────────────────────────────────────────
@@ -105,9 +105,7 @@ class AsyncLLMClient:
             loop = asyncio.get_running_loop()
         except RuntimeError:
             # No running loop — safe to use asyncio.run
-            return asyncio.run(
-                self.call(prompt, system, max_tokens, temperature, use_cache)
-            )
+            return asyncio.run(self.call(prompt, system, max_tokens, temperature, use_cache))
 
         # Already inside an event loop — schedule and wait
         if loop.is_running():
@@ -132,6 +130,7 @@ class AsyncLLMClient:
                 # Async close must be called from async context;
                 # fire-and-forget a cleanup task if needed.
                 import asyncio
+
                 try:
                     loop = asyncio.get_running_loop()
                     loop.create_task(self._client.close())
@@ -148,8 +147,8 @@ class AsyncLLMClient:
     ) -> LLMResponse:
         """Actual HTTP call. Raises on failure so retry logic can catch it."""
         try:
-            import openai
             import httpx
+            import openai
 
             if self._client is None:
                 self._client = openai.AsyncOpenAI(
@@ -158,14 +157,14 @@ class AsyncLLMClient:
                     timeout=httpx.Timeout(self._timeout, connect=10.0),
                 )
 
-            messages: List[Dict[str, str]] = []
+            messages = []
             if system:
                 messages.append({"role": "system", "content": system})
             messages.append({"role": "user", "content": prompt})
 
             response = await self._client.chat.completions.create(
                 model=self._model,
-                messages=messages,
+                messages=messages,  # type: ignore[arg-type]
                 temperature=temperature,
                 max_tokens=max_tokens,
             )
@@ -178,19 +177,20 @@ class AsyncLLMClient:
     # ─── Credential helpers ──────────────────────────────────
 
     @staticmethod
-    def load_credentials_from_env() -> Dict[str, str]:
+    def load_credentials_from_env() -> dict[str, str]:
         """Load API credentials from environment variables."""
         import os
+
         return {
             "api_key": os.environ.get("OPENAI_API_KEY", ""),
             "base_url": os.environ.get("OPENAI_BASE_URL", ""),
         }
 
     @staticmethod
-    def load_credentials_from_hermes_env() -> Dict[str, str]:
+    def load_credentials_from_hermes_env() -> dict[str, str]:
         """Load API credentials from ~/.hermes/.env file."""
-        import os
         from pathlib import Path
+
         result = {"api_key": "", "base_url": ""}
         env_file = Path.home() / ".hermes" / ".env"
         if not env_file.exists():
@@ -212,16 +212,17 @@ class AsyncLLMClient:
         return result
 
     @staticmethod
-    def load_credentials_from_hermes_config() -> Dict[str, str]:
+    def load_credentials_from_hermes_config() -> dict[str, str]:
         """Load API credentials from ~/.hermes/config.yaml."""
-        import os
         from pathlib import Path
+
         result = {"api_key": "", "base_url": "", "model": ""}
         config_file = Path.home() / ".hermes" / "config.yaml"
         if not config_file.exists():
             return result
         try:
             import yaml
+
             cfg = yaml.safe_load(config_file.read_text(encoding="utf-8"))
             if cfg and isinstance(cfg, dict):
                 model_cfg = cfg.get("model") or {}

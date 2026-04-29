@@ -14,21 +14,20 @@
 
 from __future__ import annotations
 
-import json
 import logging
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
 # 4个阶段定义
 STAGES = {
-    "active":        (0, 7),
+    "active": (0, 7),
     "consolidating": (7, 30),
-    "archived":      (30, 90),
-    "forgotten":     (90, None),
+    "archived": (30, 90),
+    "forgotten": (90, None),
 }
 
 
@@ -44,7 +43,7 @@ class ForgettingCurve:
         self._governance_dir = governance_dir
         self._governance_dir.mkdir(parents=True, exist_ok=True)
         self._db_path = self._governance_dir / "forgetting.db"
-        self._conn: Optional[sqlite3.Connection] = None
+        self._conn: sqlite3.Connection | None = None
         self._pending_writes = 0
         self._init_db()
 
@@ -64,7 +63,9 @@ class ForgettingCurve:
         """)
         # ★ 兼容旧表：如果 recall_count 列不存在则添加
         try:
-            self._conn.execute("ALTER TABLE forgetting_state ADD COLUMN recall_count INTEGER DEFAULT 0")
+            self._conn.execute(
+                "ALTER TABLE forgetting_state ADD COLUMN recall_count INTEGER DEFAULT 0"
+            )
         except Exception:
             pass  # 列已存在
         self._conn.commit()
@@ -187,7 +188,9 @@ class ForgettingCurve:
                 # 如果阶段比预期低，降级
                 stage_order = ["active", "consolidating", "archived", "forgotten"]
                 current_idx = stage_order.index(stage) if stage in stage_order else 0
-                expected_idx = stage_order.index(expected_stage) if expected_stage in stage_order else 0
+                expected_idx = (
+                    stage_order.index(expected_stage) if expected_stage in stage_order else 0
+                )
 
                 if expected_idx > current_idx:
                     self._set_stage(memory_id, expected_stage)
@@ -209,7 +212,7 @@ class ForgettingCurve:
                 return stage
         return "active"
 
-    def get_status(self) -> Dict[str, Any]:
+    def get_status(self) -> dict[str, Any]:
         """获取遗忘状态概览。"""
         counts = {"active": 0, "consolidating": 0, "archived": 0, "forgotten": 0}
         try:
@@ -223,7 +226,7 @@ class ForgettingCurve:
             pass
         return counts
 
-    def get_archived_ids(self, limit: int = 5000) -> List[str]:
+    def get_archived_ids(self, limit: int = 5000) -> list[str]:
         """获取已归档（archived 或 forgotten）的记忆 ID 列表。
 
         Args:

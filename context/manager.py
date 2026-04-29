@@ -15,9 +15,9 @@ from __future__ import annotations
 
 import logging
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from functools import lru_cache
-from typing import Any, Dict, List, Optional, Set
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +25,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class ContextBudget:
     """上下文预算配置。"""
+
     # 预取阶段最大 token 数（注入到上下文的摘要）
     max_prefetch_tokens: int = 300
     # 每条记忆摘要最大字符数
@@ -40,10 +41,11 @@ class ContextBudget:
 @dataclass
 class RefinedItem:
     """精炼后的记忆条目。"""
-    summary: str           # 精炼摘要（≤ max_summary_chars）
-    memory_id: str         # 原始记忆 ID，用于按需拉取细节
-    memory_type: str       # fact / preference / correction / ...
-    confidence: float      # 置信度
+
+    summary: str  # 精炼摘要（≤ max_summary_chars）
+    memory_id: str  # 原始记忆 ID，用于按需拉取细节
+    memory_type: str  # fact / preference / correction / ...
+    confidence: float  # 置信度
     source_type: str = ""  # kv_cache / vector / bm25 / graph
 
 
@@ -58,34 +60,34 @@ class ContextManager:
     """
 
     # ★ P1方案三：结构化压缩模板 — 将常见长句模式压缩为固定格式短摘要
-    _COMPRESSION_TEMPLATES: List[tuple] = [
-        (r'用户(?:不喜欢|讨厌|反感|不爱)(.+?)(?:，|；|\.|$)', r'用户否定: \1'),
-        (r'用户(?:喜欢|爱|偏好|钟爱)(.+?)(?:，|；|\.|$)', r'用户偏好: \1'),
-        (r'用户(?:叫|称呼|让\s*叫)(.+?)(?:，|；|\.|$)', r'用户称呼: \1'),
-        (r'纠正[:：]\s*(.+?)(?:，|；|\.|$)', r'纠正: \1'),
-        (r'确认[:：]\s*(.+?)(?:，|；|\.|$)', r'确认: \1'),
-        (r'(?:记住|记住[:：])\s*(.+?)(?:，|；|\.|$)', r'记住: \1'),
+    _COMPRESSION_TEMPLATES: list[tuple] = [
+        (r"用户(?:不喜欢|讨厌|反感|不爱)(.+?)(?:，|；|\.|$)", r"用户否定: \1"),
+        (r"用户(?:喜欢|爱|偏好|钟爱)(.+?)(?:，|；|\.|$)", r"用户偏好: \1"),
+        (r"用户(?:叫|称呼|让\s*叫)(.+?)(?:，|；|\.|$)", r"用户称呼: \1"),
+        (r"纠正[:：]\s*(.+?)(?:，|；|\.|$)", r"纠正: \1"),
+        (r"确认[:：]\s*(.+?)(?:，|；|\.|$)", r"确认: \1"),
+        (r"(?:记住|记住[:：])\s*(.+?)(?:，|；|\.|$)", r"记住: \1"),
     ]
 
     def __init__(
         self,
-        budget: Optional[ContextBudget] = None,
+        budget: ContextBudget | None = None,
         embedding_fn=None,
     ):
         self._budget = budget or ContextBudget()
         # 本轮已注入的摘要指纹集合，防止重复注入
-        self._injected_fingerprints: Set[str] = set()
+        self._injected_fingerprints: set[str] = set()
         # ★ 持久指纹：system_prompt_block 注入的指纹，跨轮保留
         #   防止 prefetch 重复注入 system_prompt_block 已经注入的记忆
-        self._persistent_fingerprints: Set[str] = set()
+        self._persistent_fingerprints: set[str] = set()
         # 本轮注入历史（用于 omni_detail 回溯）
-        self._injected_items: List[RefinedItem] = []
+        self._injected_items: list[RefinedItem] = []
         # ★ Embedding 语义去重：可选的 embedding 函数（接收 str 返回 List[float]）
         self._embedding_fn = embedding_fn
         # 指纹 → 摘要映射，供 embedding 去重时获取原文
-        self._fp_to_summary: Dict[str, str] = {}
+        self._fp_to_summary: dict[str, str] = {}
         # embedding 向量本地缓存（避免同一轮内重复计算）
-        self._embedding_cache: Dict[str, List[float]] = {}
+        self._embedding_cache: dict[str, list[float]] = {}
 
     def reset_for_new_turn(self) -> None:
         """每轮开始时重置注入状态。
@@ -102,7 +104,7 @@ class ContextManager:
             self._persistent_fingerprints.add(fingerprint)
             self._injected_fingerprints.add(fingerprint)
 
-    def get_injected_fingerprints(self) -> Set[str]:
+    def get_injected_fingerprints(self) -> set[str]:
         """返回本轮已注入的摘要指纹集合（含持久指纹）。"""
         return set(self._injected_fingerprints)
 
@@ -127,14 +129,14 @@ class ContextManager:
 
         # ★ 优先级0: 先剥离结构化标记（无论长度，这些标记是噪音不是语义）
         structured_prefixes = [
-            (r'^CORRECTION:\s*', '纠正: '),
-            (r'^REINFORCED:\s*', '确认: '),
-            (r'^纠正:\s*', '纠正: '),
-            (r'^确认:\s*', '确认: '),
-            (r'^\[Pre-compression emergency save\]\s*', ''),
-            (r'^\[Emergency save\]\s*', ''),
-            (r'^\[Turn \d+\]\s*', ''),
-            (r'^\[Checkpoint at turn \d+\]\s*', ''),
+            (r"^CORRECTION:\s*", "纠正: "),
+            (r"^REINFORCED:\s*", "确认: "),
+            (r"^纠正:\s*", "纠正: "),
+            (r"^确认:\s*", "确认: "),
+            (r"^\[Pre-compression emergency save\]\s*", ""),
+            (r"^\[Emergency save\]\s*", ""),
+            (r"^\[Turn \d+\]\s*", ""),
+            (r"^\[Checkpoint at turn \d+\]\s*", ""),
         ]
         for pattern, replacement in structured_prefixes:
             new_content = re.sub(pattern, replacement, content, flags=re.IGNORECASE)
@@ -164,8 +166,8 @@ class ContextManager:
         # 优先取含信号词的短句
         # ★ R19修复Minor-2: 先将真实换行符替换为空格，避免路径中\n被还原后导致split截断
         #   如 "C:\new\test" 中 \n 被还原为换行后，split 会在冒号后截断 summary
-        content_for_split = content.replace('\n', ' ').replace('\r', ' ').replace('\t', ' ')
-        sentences = re.split(r'[。！？.!?]', content_for_split)
+        content_for_split = content.replace("\n", " ").replace("\r", " ").replace("\t", " ")
+        sentences = re.split(r"[。！？.!?]", content_for_split)
         for s in sentences:
             s = s.strip()
             if 5 <= len(s) <= max_chars:
@@ -173,15 +175,15 @@ class ContextManager:
 
         # 策略4: 截断到 max_chars，尽量在句子边界截断
         # ★ 先替换换行符，避免截断后的 summary 在换行处断裂
-        clean_content = content.replace('\n', ' ').replace('\r', ' ').replace('\t', ' ')
+        clean_content = content.replace("\n", " ").replace("\r", " ").replace("\t", " ")
         truncated = clean_content[:max_chars]
         # 找最后一个句子结束符
         last_punct = max(
-            truncated.rfind('。'),
-            truncated.rfind('，'),
-            truncated.rfind('.'),
-            truncated.rfind(','),
-            truncated.rfind(' '),
+            truncated.rfind("。"),
+            truncated.rfind("，"),
+            truncated.rfind("."),
+            truncated.rfind(","),
+            truncated.rfind(" "),
         )
         if last_punct > max_chars // 2:
             truncated = truncated[:last_punct]
@@ -191,43 +193,73 @@ class ContextManager:
 
     # 语义等价词映射：同义表达归一化为同一个标准词
     # 同时作为分词词典：匹配时先尝试长词，再尝试短词
-    _SYNONYM_MAP: Dict[str, str] = {
+    _SYNONYM_MAP: dict[str, str] = {
         # 偏好类
-        "喜欢": "偏好", "偏好": "偏好", "习惯": "偏好", "更希望": "偏好",
-        "倾向": "偏好", "爱": "偏好",
+        "喜欢": "偏好",
+        "偏好": "偏好",
+        "习惯": "偏好",
+        "更希望": "偏好",
+        "倾向": "偏好",
+        "爱": "偏好",
         # 称呼类
-        "称呼": "称呼", "叫我": "称呼", "叫": "称呼",
+        "称呼": "称呼",
+        "叫我": "称呼",
+        "叫": "称呼",
         # 确认类
-        "确认": "确认", "没错": "确认", "正确": "确认",
+        "确认": "确认",
+        "没错": "确认",
+        "正确": "确认",
         # 纠正类
-        "纠正": "纠正", "错了": "纠正", "不对": "纠正", "不是": "纠正",
+        "纠正": "纠正",
+        "错了": "纠正",
+        "不对": "纠正",
+        "不是": "纠正",
         # 颜色
-        "暗色": "深色", "深色": "深色", "黑色": "深色", "dark": "深色",
-        "亮色": "浅色", "浅色": "浅色", "白色": "浅色", "light": "浅色",
+        "暗色": "深色",
+        "深色": "深色",
+        "黑色": "深色",
+        "dark": "深色",
+        "亮色": "浅色",
+        "浅色": "浅色",
+        "白色": "浅色",
+        "light": "浅色",
         # 主题/风格
-        "主题": "主题", "模式": "主题", "风格": "主题", "theme": "主题",
+        "主题": "主题",
+        "模式": "主题",
+        "风格": "主题",
+        "theme": "主题",
         # 组合词归一化（关键：让 "暗色主题" ≡ "深色模式"）
-        "暗色主题": "深色主题", "深色模式": "深色主题", "暗色模式": "深色主题",
+        "暗色主题": "深色主题",
+        "深色模式": "深色主题",
+        "暗色模式": "深色主题",
         "深色主题": "深色主题",
         # 编程语言
-        "python": "python", "py": "python",
+        "python": "python",
+        "py": "python",
         # 通用
-        "姓名": "姓名", "名字": "姓名", "姓": "姓名",
+        "姓名": "姓名",
+        "名字": "姓名",
+        "姓": "姓名",
         # 常见实体
-        "用户": "用户", "编程": "编程", "框架": "框架",
-        "数据库": "数据库", "项目": "项目", "老板": "老板",
+        "用户": "用户",
+        "编程": "编程",
+        "框架": "框架",
+        "数据库": "数据库",
+        "项目": "项目",
+        "老板": "老板",
         "编程语言": "编程",
         # 常见动词（用于分词辅助）
-        "使用": "使用", "确认": "确认", "记住": "记住", "纠正": "纠正",
+        "使用": "使用",
+        "记住": "记住",
     }
 
     # 分词词典：从 _SYNONYM_MAP 的 key 中提取，按长度降序排列
     # 用于基于词典的最大匹配分词
-    _DICT_WORDS: Optional[List[str]] = None
-    _DICT_SET: Optional[Set[str]] = None
+    _DICT_WORDS: list[str] | None = None
+    _DICT_SET: set[str] | None = None
 
     @classmethod
-    def _get_dict_words(cls) -> List[str]:
+    def _get_dict_words(cls) -> list[str]:
         """获取分词词典（惰性初始化，按词长降序排列）。"""
         if cls._DICT_WORDS is None:
             all_words = set(cls._SYNONYM_MAP.keys())
@@ -237,7 +269,7 @@ class ContextManager:
         return cls._DICT_WORDS
 
     @classmethod
-    def _get_dict_set(cls) -> Set[str]:
+    def _get_dict_set(cls) -> set[str]:
         """获取分词词典集合（惰性初始化，用于 O(1) 快速查找）。"""
         if cls._DICT_SET is None:
             cls._get_dict_words()
@@ -249,7 +281,7 @@ class ContextManager:
         return cls._SYNONYM_MAP.get(word, word)
 
     @classmethod
-    def _tokenize_chinese(cls, content: str) -> List[str]:
+    def _tokenize_chinese(cls, content: str) -> list[str]:
         """基于词典的最大匹配中文分词。
 
         策略：
@@ -262,13 +294,13 @@ class ContextManager:
         tokens = []
 
         # 1. 提取英文词（2+字）
-        en_words = re.findall(r'[a-zA-Z]{2,}', content)
+        en_words = re.findall(r"[a-zA-Z]{2,}", content)
         for w in en_words:
             tokens.append(w.lower())
 
         # 2. 按分隔符切分中文片段
         # 分隔符: 冒号、逗号、空格、括号等
-        segments = re.split(r'[:：，,；;\s\[\]【】\(\)（）·]', content)
+        segments = re.split(r"[:：，,；;\s\[\]【】\(\)（）·]", content)
 
         dict_words = cls._get_dict_words()
         dict_set = cls._get_dict_set()  # 复用类级别缓存集合
@@ -278,7 +310,7 @@ class ContextManager:
             if not segment:
                 continue
             # 移除英文部分（已提取）
-            zh_only = re.sub(r'[a-zA-Z0-9]', '', segment)
+            zh_only = re.sub(r"[a-zA-Z0-9]", "", segment)
             if not zh_only:
                 continue
 
@@ -289,9 +321,9 @@ class ContextManager:
                 # 尝试从最长词开始匹配
                 for word in dict_words:
                     # 只用纯中文词典词
-                    if not all('\u4e00' <= c <= '\u9fff' for c in word):
+                    if not all("\u4e00" <= c <= "\u9fff" for c in word):
                         continue
-                    if zh_only[i:i+len(word)] == word:
+                    if zh_only[i : i + len(word)] == word:
                         tokens.append(word)
                         i += len(word)
                         matched = True
@@ -301,7 +333,7 @@ class ContextManager:
                     remaining = len(zh_only) - i
                     if remaining >= 3:
                         # 先尝试3字块中是否包含2字词典词
-                        chunk3 = zh_only[i:i+3]
+                        chunk3 = zh_only[i : i + 3]
                         found_sub = False
                         # 尝试位置0的2字词
                         if chunk3[:2] in dict_set:
@@ -318,7 +350,7 @@ class ContextManager:
                             tokens.append(chunk3)
                             i += 3
                     elif remaining >= 2:
-                        chunk2 = zh_only[i:i+2]
+                        chunk2 = zh_only[i : i + 2]
                         # 尝试拆2字块中的词典词
                         if chunk2[1:] in dict_set:
                             # 第2字是词典词（如 "我喜" → 跳过"我"，保留"喜"... 但"喜"不是词）
@@ -334,12 +366,56 @@ class ContextManager:
                     else:
                         # 剩余1字 — 保留非停用词单字（如"猫"、"徐"等实体词）
                         ch = zh_only[i]
-                        if ch not in ('的', '了', '是', '在', '我', '你', '他', '她',
-                                      '它', '们', '这', '那', '有', '不', '也', '都',
-                                      '就', '还', '会', '能', '要', '和', '与', '或',
-                                      '而', '但', '被', '把', '给', '让', '从', '到',
-                                      '用', '对', '好', '很', '以', '为', '着', '过',
-                                      '吧', '呢', '啊', '呀', '嘛', '着', '过', '了'):
+                        if ch not in (
+                            "的",
+                            "了",
+                            "是",
+                            "在",
+                            "我",
+                            "你",
+                            "他",
+                            "她",
+                            "它",
+                            "们",
+                            "这",
+                            "那",
+                            "有",
+                            "不",
+                            "也",
+                            "都",
+                            "就",
+                            "还",
+                            "会",
+                            "能",
+                            "要",
+                            "和",
+                            "与",
+                            "或",
+                            "而",
+                            "但",
+                            "被",
+                            "把",
+                            "给",
+                            "让",
+                            "从",
+                            "到",
+                            "用",
+                            "对",
+                            "好",
+                            "很",
+                            "以",
+                            "为",
+                            "着",
+                            "过",
+                            "吧",
+                            "呢",
+                            "啊",
+                            "呀",
+                            "嘛",
+                            "着",
+                            "过",
+                            "了",
+                        ):
                             tokens.append(ch)
                         i += 1
 
@@ -372,13 +448,32 @@ class ContextManager:
 
         # 去除归一化后的低信息量词（辅助语气词、通用停用词）
         low_info = {
-            "偏好偏好", "对", "好", "很", "就", "也", "都", "还", "又",
-            "才", "再", "就行", "就好", "可以了", "吧", "呢", "啊",
-            "呀", "嘛", "着", "过", "了",
+            "偏好偏好",
+            "对",
+            "好",
+            "很",
+            "就",
+            "也",
+            "都",
+            "还",
+            "又",
+            "才",
+            "再",
+            "就行",
+            "就好",
+            "可以了",
+            "吧",
+            "呢",
+            "啊",
+            "呀",
+            "嘛",
+            "着",
+            "过",
+            "了",
         }
         normalized -= low_info
 
-        return '|'.join(sorted(normalized))
+        return "|".join(sorted(normalized))
 
     @classmethod
     def _fingerprint_similarity(cls, fp1: str, fp2: str) -> float:
@@ -399,8 +494,8 @@ class ContextManager:
         """
         if not fp1 or not fp2:
             return 0.0
-        words1 = set(fp1.split('|'))
-        words2 = set(fp2.split('|'))
+        words1 = set(fp1.split("|"))
+        words2 = set(fp2.split("|"))
 
         # 去除空串
         words1 = {w for w in words1 if w}
@@ -511,7 +606,7 @@ class ContextManager:
             return 0.0
 
         # 余弦相似度
-        dot = sum(a * b for a, b in zip(vec1, vec2))
+        dot = sum(a * b for a, b in zip(vec1, vec2, strict=False))
         norm1 = sum(a * a for a in vec1) ** 0.5
         norm2 = sum(b * b for b in vec2) ** 0.5
         if norm1 == 0 or norm2 == 0:
@@ -522,7 +617,7 @@ class ContextManager:
 
     def refine_prefetch_results(
         self,
-        raw_results: List[Dict[str, Any]],
+        raw_results: list[dict[str, Any]],
     ) -> str:
         """将原始检索结果精炼后格式化为注入文本。
 
@@ -536,7 +631,7 @@ class ContextManager:
         if not raw_results:
             return ""
 
-        refined_items: List[RefinedItem] = []
+        refined_items: list[RefinedItem] = []
         total_chars = 0
 
         for r in raw_results:
@@ -562,7 +657,9 @@ class ContextManager:
             # 3. 预算检查
             estimated_chars = len(summary) + 20  # 格式开销
             if total_chars + estimated_chars > self._budget.max_prefetch_tokens:
-                logger.debug("ContextManager: budget exceeded, stopping at %d items", len(refined_items))
+                logger.debug(
+                    "ContextManager: budget exceeded, stopping at %d items", len(refined_items)
+                )
                 break
             if len(refined_items) >= self._budget.max_prefetch_items:
                 break
@@ -587,9 +684,9 @@ class ContextManager:
 
     def refine_recall_results(
         self,
-        raw_results: List[Dict[str, Any]],
+        raw_results: list[dict[str, Any]],
         max_tokens: int = 1500,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """将 omni_recall 的原始检索结果精炼后返回。
 
         与 prefetch 不同，recall 是 Agent 主动调用的，可以返回更多信息。
@@ -600,7 +697,7 @@ class ContextManager:
             return []
 
         refined = []
-        seen_fps: List[str] = []  # 改为列表，以支持相似度比较
+        seen_fps: list[str] = []  # 改为列表，以支持相似度比较
 
         for r in raw_results:
             raw_content = r.get("content", "")
@@ -614,7 +711,10 @@ class ContextManager:
             is_dup = False
             if fp:
                 for existing_fp in seen_fps:
-                    if self._fingerprint_similarity(fp, existing_fp) > self._budget.dedup_similarity_threshold:
+                    if (
+                        self._fingerprint_similarity(fp, existing_fp)
+                        > self._budget.dedup_similarity_threshold
+                    ):
                         is_dup = True
                         break
                 if not is_dup:
@@ -622,22 +722,24 @@ class ContextManager:
             if is_dup:
                 continue
 
-            refined.append({
-                "content": summary,
-                "original_content": raw_content,  # 保留原文供 omni_detail 使用
-                "type": r.get("type", "fact"),
-                "confidence": r.get("confidence"),
-                "memory_id": r.get("memory_id", ""),
-                "wing": r.get("wing"),
-                "room": r.get("room"),
-                "stored_at": r.get("stored_at"),
-            })
+            refined.append(
+                {
+                    "content": summary,
+                    "original_content": raw_content,  # 保留原文供 omni_detail 使用
+                    "type": r.get("type", "fact"),
+                    "confidence": r.get("confidence"),
+                    "memory_id": r.get("memory_id", ""),
+                    "wing": r.get("wing"),
+                    "room": r.get("room"),
+                    "stored_at": r.get("stored_at"),
+                }
+            )
 
         return refined
 
     # ─── 按需加载 (Lazy Provisioning) ─────────────────────────
 
-    def get_detail_for(self, memory_id: str, store: Any) -> Dict[str, Any]:
+    def get_detail_for(self, memory_id: str, store: Any) -> dict[str, Any]:
         """按需拉取某条记忆的完整细节。
 
         预取阶段只注入摘要，Agent 需要细节时调用此方法。
@@ -677,7 +779,7 @@ class ContextManager:
 
         return {"status": "not_found", "memory_id": memory_id}
 
-    def get_injected_items(self) -> List[Dict[str, str]]:
+    def get_injected_items(self) -> list[dict[str, str]]:
         """返回本轮已注入的记忆列表（供 omni_detail 列出可查细节的记忆）。"""
         return [
             {

@@ -22,12 +22,13 @@ import threading
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
 
 # ─── 数据模型 ────────────────────────────────────────────────
+
 
 @dataclass
 class ShadeBio:
@@ -35,6 +36,7 @@ class ShadeBio:
 
     不同场景使用不同的 LoRA 适配器，实现"身份切换"。
     """
+
     name: str
     description: str = ""
     adapter_id: str = ""
@@ -44,30 +46,33 @@ class ShadeBio:
 @dataclass
 class LoRAAdapter:
     """LoRA 适配器描述。"""
+
     adapter_id: str = ""
-    shade: str = "default"       # 关联的 Shade 名称
+    shade: str = "default"  # 关联的 Shade 名称
     rank: int = 16
     alpha: int = 32
-    target_modules: List[str] = field(default_factory=lambda: ["q_proj", "v_proj"])
+    target_modules: list[str] = field(default_factory=lambda: ["q_proj", "v_proj"])
     version: int = 1
     trained_at: str = ""
     training_samples: int = 0
-    status: str = "empty"        # empty / training / ready / error
+    status: str = "empty"  # empty / training / ready / error
     path: str = ""
 
 
 @dataclass
 class TrainingData:
     """训练数据条目。"""
+
     data_id: str = ""
     content: str = ""
-    source_type: str = ""        # mental_model / observation / fact
-    source_ids: List[str] = field(default_factory=list)
+    source_type: str = ""  # mental_model / observation / fact
+    source_ids: list[str] = field(default_factory=list)
     shade: str = "default"
     submitted_at: str = ""
 
 
 # ─── LoRATrainer ──────────────────────────────────────────────
+
 
 class LoRATrainer:
     """LoRA 微调管线。
@@ -89,10 +94,13 @@ class LoRATrainer:
         "default": ShadeBio(name="default", description="默认模式：平衡综合"),
     }
 
-    def __init__(self, data_dir: Optional[Path] = None,
-                 base_model: str = "Qwen2.5-7B",
-                 lora_rank: int = 16,
-                 lora_alpha: int = 32):
+    def __init__(
+        self,
+        data_dir: Path | None = None,
+        base_model: str = "Qwen2.5-7B",
+        lora_rank: int = 16,
+        lora_alpha: int = 32,
+    ):
         """初始化 LoRATrainer。
 
         Args:
@@ -105,11 +113,11 @@ class LoRATrainer:
         self._base_model = base_model
         self._lora_rank = lora_rank
         self._lora_alpha = lora_alpha
-        self._training_queue: List[Dict[str, Any]] = []
+        self._training_queue: list[dict[str, Any]] = []
         self._is_training = False
-        self._conn: Optional[sqlite3.Connection] = None
-        self._adapters: Dict[str, LoRAAdapter] = {}
-        self._shades: Dict[str, ShadeBio] = dict(self.DEFAULT_SHADES)
+        self._conn: sqlite3.Connection | None = None
+        self._adapters: dict[str, LoRAAdapter] = {}
+        self._shades: dict[str, ShadeBio] = dict(self.DEFAULT_SHADES)
         self._active_shade = "default"
         self._torch_available = False
         self._train_count = 0
@@ -124,8 +132,9 @@ class LoRATrainer:
     def _check_dependencies(self) -> None:
         """检测训练依赖是否可用。"""
         try:
-            import torch  # noqa: F401
             import peft  # noqa: F401
+            import torch  # noqa: F401
+
             self._torch_available = True
             logger.info("LoRATrainer: torch+peft available, GPU training enabled")
         except ImportError:
@@ -178,13 +187,21 @@ class LoRATrainer:
         if not self._conn:
             return
         try:
-            rows = self._conn.execute(
-                "SELECT * FROM adapters"
-            ).fetchall()
-            keys = ["adapter_id", "shade", "rank", "alpha", "target_modules",
-                    "version", "trained_at", "training_samples", "status", "path"]
+            rows = self._conn.execute("SELECT * FROM adapters").fetchall()
+            keys = [
+                "adapter_id",
+                "shade",
+                "rank",
+                "alpha",
+                "target_modules",
+                "version",
+                "trained_at",
+                "training_samples",
+                "status",
+                "path",
+            ]
             for row in rows:
-                d = dict(zip(keys, row))
+                d = dict(zip(keys, row, strict=False))
                 d["target_modules"] = json.loads(d.get("target_modules", "[]"))
                 adapter = LoRAAdapter(**d)
                 self._adapters[adapter.adapter_id] = adapter
@@ -196,8 +213,7 @@ class LoRATrainer:
 
     # ─── 训练数据管理 ────────────────────────────────────────
 
-    def submit_training_data(self, memories: List[Dict[str, Any]],
-                             shade: str = "default") -> int:
+    def submit_training_data(self, memories: list[dict[str, Any]], shade: str = "default") -> int:
         """提交训练数据。
 
         Args:
@@ -239,7 +255,7 @@ class LoRATrainer:
         logger.info("LoRATrainer: submitted %d training data items for shade '%s'", count, shade)
         return count
 
-    def format_training_data(self, shade: str = "default") -> List[Dict[str, str]]:
+    def format_training_data(self, shade: str = "default") -> list[dict[str, str]]:
         """格式化训练数据为 instruction-following 格式。
 
         将 L3 mental_models 转换为 Q&A 格式的训练样本。
@@ -288,8 +304,7 @@ class LoRATrainer:
 
     # ─── 训练执行 ────────────────────────────────────────────
 
-    def train(self, shade: str = "default",
-              epochs: int = 3, lr: float = 1e-4) -> Dict[str, Any]:
+    def train(self, shade: str = "default", epochs: int = 3, lr: float = 1e-4) -> dict[str, Any]:
         """执行 LoRA 微调训练。
 
         当 torch/peft 不可用时以模拟模式运行。
@@ -338,19 +353,19 @@ class LoRATrainer:
             # 清空已训练的队列
             self._training_queue.clear()
 
-    def _real_train(self, adapter_id: str, samples: List[Dict[str, str]],
-                    epochs: int, lr: float) -> Dict[str, Any]:
+    def _real_train(
+        self, adapter_id: str, samples: list[dict[str, str]], epochs: int, lr: float
+    ) -> dict[str, Any]:
         """真实 GPU 训练 (需要 torch + peft)。
 
         注意: 这是一个框架级实现，实际训练逻辑需要根据
         具体的基座模型和训练框架调整。
         """
         try:
-            import torch
-            from peft import LoraConfig, get_peft_model, TaskType
+            from peft import LoraConfig, TaskType
 
             # LoRA 配置 (Second-Me 参数)
-            lora_config = LoraConfig(
+            LoraConfig(
                 task_type=TaskType.CAUSAL_LM,
                 r=self._lora_rank,
                 lora_alpha=self._lora_alpha,
@@ -360,11 +375,12 @@ class LoRATrainer:
 
             logger.info(
                 "LoRATrainer: starting real training with %d samples, %d epochs",
-                len(samples), epochs,
+                len(samples),
+                epochs,
             )
 
             # 实际训练逻辑需要基座模型加载器，这里记录配置
-            adapter = self._adapters.get(adapter_id)
+            self._adapters.get(adapter_id)
             adapter_path = ""
             if self._data_dir:
                 adapter_path = str(self._data_dir / "adapters" / adapter_id)
@@ -387,8 +403,9 @@ class LoRATrainer:
             # 降级为模拟训练
             return self._simulate_train(adapter_id, samples, epochs, lr)
 
-    def _simulate_train(self, adapter_id: str, samples: List[Dict[str, str]],
-                        epochs: int, lr: float) -> Dict[str, Any]:
+    def _simulate_train(
+        self, adapter_id: str, samples: list[dict[str, str]], epochs: int, lr: float
+    ) -> dict[str, Any]:
         """模拟训练 (无 GPU 时使用)。"""
         adapter_path = ""
         if self._data_dir:
@@ -419,7 +436,7 @@ class LoRATrainer:
 
     # ─── Shade 角色分身 ──────────────────────────────────────
 
-    def switch_shade(self, shade_name: str) -> Dict[str, Any]:
+    def switch_shade(self, shade_name: str) -> dict[str, Any]:
         """切换当前活跃的 Shade 角色。
 
         Args:
@@ -454,7 +471,7 @@ class LoRATrainer:
             "adapter_status": adapter_status,
         }
 
-    def register_shade(self, name: str, description: str = "") -> Dict[str, Any]:
+    def register_shade(self, name: str, description: str = "") -> dict[str, Any]:
         """注册自定义 Shade 角色。"""
         if name in self._shades:
             return {"status": "exists", "shade": name}
@@ -463,20 +480,22 @@ class LoRATrainer:
         self._shades[name] = shade
         return {"status": "created", "shade": name, "description": description}
 
-    def get_shades(self) -> List[Dict[str, Any]]:
+    def get_shades(self) -> list[dict[str, Any]]:
         """获取所有 Shade 信息。"""
         result = []
         for name, shade in self._shades.items():
             adapter_status = "none"
             if shade.adapter_id and shade.adapter_id in self._adapters:
                 adapter_status = self._adapters[shade.adapter_id].status
-            result.append({
-                "name": shade.name,
-                "description": shade.description,
-                "adapter_id": shade.adapter_id,
-                "adapter_status": adapter_status,
-                "active": shade.active or name == self._active_shade,
-            })
+            result.append(
+                {
+                    "name": shade.name,
+                    "description": shade.description,
+                    "adapter_id": shade.adapter_id,
+                    "adapter_status": adapter_status,
+                    "active": shade.active or name == self._active_shade,
+                }
+            )
         return result
 
     @property
@@ -485,7 +504,7 @@ class LoRATrainer:
         return self._active_shade
 
     @property
-    def active_adapter(self) -> Optional[LoRAAdapter]:
+    def active_adapter(self) -> LoRAAdapter | None:
         """当前活跃的适配器。"""
         shade = self._shades.get(self._active_shade)
         if shade and shade.adapter_id:
@@ -494,11 +513,11 @@ class LoRATrainer:
 
     # ─── 适配器管理 ──────────────────────────────────────────
 
-    def list_adapters(self) -> List[Dict[str, Any]]:
+    def list_adapters(self) -> list[dict[str, Any]]:
         """列出所有适配器。"""
         return [a.__dict__ for a in self._adapters.values()]
 
-    def get_adapter(self, adapter_id: str) -> Optional[Dict[str, Any]]:
+    def get_adapter(self, adapter_id: str) -> dict[str, Any] | None:
         """获取适配器信息。"""
         adapter = self._adapters.get(adapter_id)
         return adapter.__dict__ if adapter else None
@@ -513,7 +532,7 @@ class LoRATrainer:
     def is_training(self) -> bool:
         return self._is_training
 
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> dict[str, Any]:
         """获取训练统计。"""
         return {
             "base_model": self._base_model,
@@ -586,7 +605,7 @@ class LoRATrainer:
             except Exception as e:
                 logger.debug("LoRA adapter persist failed: %s", e)
 
-    def _persist_training_data(self, td: Dict[str, Any]) -> None:
+    def _persist_training_data(self, td: dict[str, Any]) -> None:
         """持久化训练数据。"""
         if not self._conn:
             return

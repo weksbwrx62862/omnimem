@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import logging
 from pathlib import Path
 
@@ -40,10 +41,8 @@ class SoulSystem:
         user_path = self._soul_dir / "user.md"
         existing = ""
         if user_path.exists():
-            try:
+            with contextlib.suppress(Exception):
                 existing = user_path.read_text(encoding="utf-8").strip()
-            except Exception:
-                pass
         updated = f"{existing}\n\n{content}".strip() if existing else content
         user_path.write_text(updated, encoding="utf-8")
 

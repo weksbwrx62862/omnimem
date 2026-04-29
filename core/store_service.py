@@ -13,7 +13,7 @@ Responsibilities:
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -75,7 +75,7 @@ class MemoryStoreService:
 
     # ─── Signal-driven storage ───────────────────────────────
 
-    def store_correction(self, signals, user_content: str) -> Optional[str]:
+    def store_correction(self, signals, user_content: str) -> str | None:
         """存储纠错记忆 — 精炼版：只存纠正目标而非整段对话。
 
         Returns:
@@ -89,12 +89,10 @@ class MemoryStoreService:
             memory_type="correction",
             confidence=4,
             privacy="personal",
-            provenance=self._provenance.track(
-                core, source=self._session_id, method="correction"
-            ),
+            provenance=self._provenance.track(core, source=self._session_id, method="correction"),
         )
 
-    def store_reinforcement(self, signals, user_content: str) -> Optional[str]:
+    def store_reinforcement(self, signals, user_content: str) -> str | None:
         """存储正反馈记忆 — 精炼版：只存强化目标。"""
         core = signals.reinforcement_target or self.extract_core_fact(user_content)
         return self._store.add(
@@ -109,7 +107,7 @@ class MemoryStoreService:
             ),
         )
 
-    def store_fact(self, signals, user_content: str) -> Optional[str]:
+    def store_fact(self, signals, user_content: str) -> str | None:
         """存储一般事实 — 精炼版：用感知引擎提炼的 fact_content。"""
         content = signals.fact_content or self.extract_core_fact(user_content)
         mem_type = "preference" if signals.has_preference else "fact"
@@ -120,9 +118,7 @@ class MemoryStoreService:
             memory_type=mem_type,
             confidence=3,
             privacy="personal",
-            provenance=self._provenance.track(
-                content, source=self._session_id, method="fact"
-            ),
+            provenance=self._provenance.track(content, source=self._session_id, method="fact"),
         )
 
     # ─── Auto checkpoint ─────────────────────────────────────
@@ -159,7 +155,7 @@ class MemoryStoreService:
 
     # ─── Emergency save ──────────────────────────────────────
 
-    def emergency_save(self, messages: List[Dict[str, Any]]) -> str:
+    def emergency_save(self, messages: list[dict[str, Any]]) -> str:
         """压缩前紧急保存 — 精炼版：只存关键事实摘要，不存原文。
 
         Returns:
@@ -170,9 +166,7 @@ class MemoryStoreService:
             role = msg.get("role", "unknown")
             content = msg.get("content", "")
             if isinstance(content, list):
-                content = " ".join(
-                    c.get("text", "") for c in content if isinstance(c, dict)
-                )
+                content = " ".join(c.get("text", "") for c in content if isinstance(c, dict))
             if not content or role != "user":
                 continue
             core = self.extract_core_fact(content)
@@ -200,7 +194,7 @@ class MemoryStoreService:
 
     def extract_session_memories(
         self,
-        messages: List[Dict[str, Any]],
+        messages: list[dict[str, Any]],
         strip_system_injections,
         should_store,
         memorize_fn,
@@ -233,19 +227,21 @@ class MemoryStoreService:
                         mem = refined
                 if not should_store(mem):
                     continue
-                memorize_fn({
-                    "content": mem,
-                    "memory_type": "fact",
-                    "confidence": 2,
-                    "scope": "personal",
-                    "privacy": "personal",
-                })
+                memorize_fn(
+                    {
+                        "content": mem,
+                        "memory_type": "fact",
+                        "confidence": 2,
+                        "scope": "personal",
+                        "privacy": "personal",
+                    }
+                )
                 count += 1
         return count
 
     # ─── Delegation storage ──────────────────────────────────
 
-    def store_delegation(self, task: str, result: str, child_session_id: str = "") -> Optional[str]:
+    def store_delegation(self, task: str, result: str, child_session_id: str = "") -> str | None:
         """存储子 Agent 委托记录。"""
         return self._store.add(
             wing="delegation",
@@ -254,7 +250,5 @@ class MemoryStoreService:
             memory_type="event",
             confidence=3,
             privacy="team",
-            provenance=self._provenance.track(
-                task, source=self._session_id, method="delegation"
-            ),
+            provenance=self._provenance.track(task, source=self._session_id, method="delegation"),
         )

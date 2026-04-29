@@ -32,7 +32,7 @@ _mock_agent.memory_provider.MemoryProvider = object
 sys.modules.setdefault("agent", _mock_agent)
 sys.modules.setdefault("agent.memory_provider", _mock_agent.memory_provider)
 
-from omnimem.provider import OmniMemProvider
+from omnimem.provider import OmniMemProvider  # noqa: E402
 
 
 def register(ctx) -> None:

@@ -15,7 +15,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -41,9 +41,9 @@ _PRIORITY_MARKERS = {
 
 
 def priority_compress(
-    items: List[Dict[str, Any]],
+    items: list[dict[str, Any]],
     max_tokens: int = 4000,
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """优先级确定性后处理。
 
     Args:
@@ -61,14 +61,14 @@ def priority_compress(
     sorted_items = sorted(items, key=lambda x: x.get("_priority", 3))
 
     # 3. 按预算裁剪
-    _CHARS_PER_TOKEN = 4
+    chars_per_token = 4
     budget = max_tokens
     result = []
     used = 0
 
     for item in sorted_items:
         content = item.get("content", "")
-        est_tokens = max(1, len(content) // _CHARS_PER_TOKEN)
+        est_tokens = max(1, len(content) // chars_per_token)
 
         # 优先级 0 的项目：即使超预算也保留
         if item.get("_priority") == 0:
@@ -89,7 +89,7 @@ def priority_compress(
     return result
 
 
-def _compute_priority(item: Dict[str, Any]) -> int:
+def _compute_priority(item: dict[str, Any]) -> int:
     """计算单个记忆项的优先级。"""
     content = item.get("content", "")
     memory_type = item.get("type", "fact")
