@@ -195,7 +195,8 @@ class ConsolidationEngine:
         db_path = data_dir / "consolidation.db"
         self._conn = sqlite3.connect(str(db_path), check_same_thread=False)
         self._conn.execute("PRAGMA journal_mode=WAL")
-        self._conn.execute("""
+        self._conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS consolidation_items (
                 item_id TEXT PRIMARY KEY,
                 stage TEXT NOT NULL,
@@ -205,10 +206,13 @@ class ConsolidationEngine:
                 created_at TEXT,
                 metadata TEXT
             )
-        """)
-        self._conn.execute("""
+        """
+        )
+        self._conn.execute(
+            """
             CREATE INDEX IF NOT EXISTS idx_stage ON consolidation_items(stage)
-        """)
+        """
+        )
         self._conn.commit()
 
     def submit(self, memory_id: str, content: str, memory_type: str = "fact") -> None:

@@ -42,7 +42,8 @@ class ThreeLevelIndex:
         """初始化 SQLite 数据库。"""
         self._conn = sqlite3.connect(str(self._db_path), check_same_thread=False)
         self._conn.execute("PRAGMA journal_mode=WAL")
-        self._conn.execute("""
+        self._conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS memory_index (
                 memory_id TEXT PRIMARY KEY,
                 wing TEXT NOT NULL,
@@ -58,16 +59,23 @@ class ThreeLevelIndex:
                 provenance TEXT,
                 metadata TEXT
             )
-        """)
-        self._conn.execute("""
+        """
+        )
+        self._conn.execute(
+            """
             CREATE INDEX IF NOT EXISTS idx_wing ON memory_index(wing)
-        """)
-        self._conn.execute("""
+        """
+        )
+        self._conn.execute(
+            """
             CREATE INDEX IF NOT EXISTS idx_type ON memory_index(type)
-        """)
-        self._conn.execute("""
+        """
+        )
+        self._conn.execute(
+            """
             CREATE INDEX IF NOT EXISTS idx_stored_at ON memory_index(stored_at)
-        """)
+        """
+        )
         self._conn.commit()
 
     def _maybe_commit(self) -> None:

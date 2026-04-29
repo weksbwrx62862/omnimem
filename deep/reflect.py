@@ -219,7 +219,8 @@ class ReflectEngine:
         db_path = data_dir / "reflect.db"
         self._conn = sqlite3.connect(str(db_path), check_same_thread=False)
         self._conn.execute("PRAGMA journal_mode=WAL")
-        self._conn.execute("""
+        self._conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS reflections (
                 reflection_id TEXT PRIMARY KEY,
                 query TEXT NOT NULL,
@@ -231,10 +232,13 @@ class ReflectEngine:
                 created_at TEXT,
                 metadata TEXT
             )
-        """)
-        self._conn.execute("""
+        """
+        )
+        self._conn.execute(
+            """
             CREATE INDEX IF NOT EXISTS idx_reflect_query ON reflections(query)
-        """)
+        """
+        )
         self._conn.commit()
 
     # ─── 公开接口 ─────────────────────────────────────────────

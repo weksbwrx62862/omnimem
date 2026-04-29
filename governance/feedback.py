@@ -39,7 +39,8 @@ class FeedbackCollector:
         self._conn = sqlite3.connect(str(self._db_path), check_same_thread=False)
         self._conn.execute("PRAGMA journal_mode=WAL")
 
-        self._conn.execute("""
+        self._conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS feedback_clicks (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 query TEXT,
@@ -49,15 +50,21 @@ class FeedbackCollector:
                 action TEXT DEFAULT 'click',
                 timestamp TEXT DEFAULT CURRENT_TIMESTAMP
             )
-        """)
-        self._conn.execute("""
+        """
+        )
+        self._conn.execute(
+            """
             CREATE INDEX IF NOT EXISTS idx_fb_query ON feedback_clicks(query)
-        """)
-        self._conn.execute("""
+        """
+        )
+        self._conn.execute(
+            """
             CREATE INDEX IF NOT EXISTS idx_fb_mid ON feedback_clicks(memory_id)
-        """)
+        """
+        )
 
-        self._conn.execute("""
+        self._conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS feedback_shown (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 query TEXT,
@@ -67,7 +74,8 @@ class FeedbackCollector:
                 was_clicked INTEGER DEFAULT 0,
                 timestamp TEXT DEFAULT CURRENT_TIMESTAMP
             )
-        """)
+        """
+        )
         self._conn.commit()
 
     def record_click(

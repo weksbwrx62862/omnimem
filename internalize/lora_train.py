@@ -149,7 +149,8 @@ class LoRATrainer:
         self._conn.execute("PRAGMA journal_mode=WAL")
 
         # 适配器表
-        self._conn.execute("""
+        self._conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS adapters (
                 adapter_id TEXT PRIMARY KEY,
                 shade TEXT,
@@ -162,10 +163,12 @@ class LoRATrainer:
                 status TEXT DEFAULT 'empty',
                 path TEXT
             )
-        """)
+        """
+        )
 
         # 训练数据表
-        self._conn.execute("""
+        self._conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS training_data (
                 data_id TEXT PRIMARY KEY,
                 content TEXT NOT NULL,
@@ -175,7 +178,8 @@ class LoRATrainer:
                 submitted_at TEXT,
                 used_in_training INTEGER DEFAULT 0
             )
-        """)
+        """
+        )
 
         self._conn.commit()
 

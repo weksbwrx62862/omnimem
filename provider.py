@@ -25,7 +25,6 @@ from pathlib import Path
 from typing import Any
 
 from agent.memory_provider import MemoryProvider
-
 from omnimem.config import OmniMemConfig
 from omnimem.context.manager import ContextBudget, ContextManager
 from omnimem.core.attachment import CompactAttachment, build_attachments
@@ -496,9 +495,9 @@ class OmniMemProvider(MemoryProvider):
                     graph_results = self._knowledge_graph.graph_search(query, max_depth=2, limit=10)
                     if graph_results:
                         for gr in graph_results[:5]:
-                            gr["content"] = (
-                                f"{gr.get('subject', '')} {gr.get('predicate', '')} {gr.get('object', '')}"
-                            )
+                            gr[
+                                "content"
+                            ] = f"{gr.get('subject', '')} {gr.get('predicate', '')} {gr.get('object', '')}"
                             gr["type"] = "graph_triple"
                             gr["confidence"] = gr.get("confidence", 0.5)
                         live_results.extend(graph_results[:5])

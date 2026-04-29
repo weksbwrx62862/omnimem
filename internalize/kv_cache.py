@@ -63,7 +63,8 @@ class KVCacheManager:
         db_path = data_dir / "kv_cache.db"
         self._conn = sqlite3.connect(str(db_path), check_same_thread=False)
         self._conn.execute("PRAGMA journal_mode=WAL")
-        self._conn.execute("""
+        self._conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS kv_cache_entries (
                 cache_key TEXT PRIMARY KEY,
                 content TEXT NOT NULL,
@@ -73,10 +74,13 @@ class KVCacheManager:
                 last_accessed TEXT,
                 source_memory_ids TEXT
             )
-        """)
-        self._conn.execute("""
+        """
+        )
+        self._conn.execute(
+            """
             CREATE INDEX IF NOT EXISTS idx_access_count ON kv_cache_entries(access_count DESC)
-        """)
+        """
+        )
         self._conn.commit()
 
         # 从持久化存储中恢复缓存
