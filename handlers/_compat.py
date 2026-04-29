@@ -8,7 +8,7 @@
 
 from typing import Optional
 
-from plugins.memory.omnimem.utils.security import SecurityValidator
+from omnimem.utils.security import SecurityValidator
 
 
 def compat_scan_memory_content(content: str) -> Optional[str]:

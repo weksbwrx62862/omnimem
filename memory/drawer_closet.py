@@ -20,7 +20,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from plugins.memory.omnimem.memory.meta_store import MetaStore
+from omnimem.memory.meta_store import MetaStore
 
 logger = logging.getLogger(__name__)
 

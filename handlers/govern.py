@@ -70,7 +70,7 @@ def _scan_memory_conflicts(provider) -> List[Dict[str, Any]]:
                 ca = a.get("content", "").lower()
                 cb = b.get("content", "").lower()
                 # 检查：两条记忆是否有否定词且内容有重叠
-                from plugins.memory.omnimem.governance.conflict import ConflictResolver
+                from omnimem.governance.conflict import ConflictResolver
                 overlap = ConflictResolver._compute_overlap(ca, cb)
                 a_has_neg = any(ni in ca for ni in _NEGATION_INDICATORS)
                 b_has_neg = any(ni in cb for ni in _NEGATION_INDICATORS)

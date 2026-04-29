@@ -27,41 +27,41 @@ import re
 
 from agent.memory_provider import MemoryProvider
 
-from plugins.memory.omnimem.core.block import CoreBlock
-from plugins.memory.omnimem.core.attachment import CompactAttachment, build_attachments
-from plugins.memory.omnimem.core.soul import SoulSystem
-from plugins.memory.omnimem.core.budget import BudgetManager
-from plugins.memory.omnimem.core.store_service import MemoryStoreService
-from plugins.memory.omnimem.core.background import BackgroundTaskExecutor
-from plugins.memory.omnimem.core.saga import SagaCoordinator, SagaStep
-from plugins.memory.omnimem.memory.wing_room import WingRoomManager
-from plugins.memory.omnimem.memory.drawer_closet import DrawerClosetStore
-from plugins.memory.omnimem.memory.index import ThreeLevelIndex
-from plugins.memory.omnimem.memory.markdown_store import MarkdownStore
-from plugins.memory.omnimem.retrieval.engine import HybridRetriever
-from plugins.memory.omnimem.governance.conflict import ConflictResolver
-from plugins.memory.omnimem.governance.decay import TemporalDecay
-from plugins.memory.omnimem.governance.forgetting import ForgettingCurve
-from plugins.memory.omnimem.governance.privacy import PrivacyManager
-from plugins.memory.omnimem.governance.provenance import ProvenanceTracker
-from plugins.memory.omnimem.governance.sync import SyncEngine, SyncConfig
-from plugins.memory.omnimem.governance.auditor import GovernanceAuditor
-from plugins.memory.omnimem.governance.feedback import FeedbackCollector
-from plugins.memory.omnimem.governance.vector_clock import VectorClock
-from plugins.memory.omnimem.perception.engine import PerceptionEngine
-from plugins.memory.omnimem.config import OmniMemConfig
-from plugins.memory.omnimem.context.manager import ContextManager, ContextBudget
+from omnimem.core.block import CoreBlock
+from omnimem.core.attachment import CompactAttachment, build_attachments
+from omnimem.core.soul import SoulSystem
+from omnimem.core.budget import BudgetManager
+from omnimem.core.store_service import MemoryStoreService
+from omnimem.core.background import BackgroundTaskExecutor
+from omnimem.core.saga import SagaCoordinator, SagaStep
+from omnimem.memory.wing_room import WingRoomManager
+from omnimem.memory.drawer_closet import DrawerClosetStore
+from omnimem.memory.index import ThreeLevelIndex
+from omnimem.memory.markdown_store import MarkdownStore
+from omnimem.retrieval.engine import HybridRetriever
+from omnimem.governance.conflict import ConflictResolver
+from omnimem.governance.decay import TemporalDecay
+from omnimem.governance.forgetting import ForgettingCurve
+from omnimem.governance.privacy import PrivacyManager
+from omnimem.governance.provenance import ProvenanceTracker
+from omnimem.governance.sync import SyncEngine, SyncConfig
+from omnimem.governance.auditor import GovernanceAuditor
+from omnimem.governance.feedback import FeedbackCollector
+from omnimem.governance.vector_clock import VectorClock
+from omnimem.perception.engine import PerceptionEngine
+from omnimem.config import OmniMemConfig
+from omnimem.context.manager import ContextManager, ContextBudget
 from concurrent.futures import ThreadPoolExecutor
-from plugins.memory.omnimem.utils.llm_client import AsyncLLMClient
-from plugins.memory.omnimem.utils.security import SecurityValidator
+from omnimem.utils.llm_client import AsyncLLMClient
+from omnimem.utils.security import SecurityValidator
 
 # ★ 委托调用：从 handlers 子模块导入拆分后的处理器
-from plugins.memory.omnimem.handlers.schemas import get_tool_schemas as _get_tool_schemas
-from plugins.memory.omnimem.handlers.memorize import handle_memorize as _handle_memorize_impl
-from plugins.memory.omnimem.handlers.recall import handle_recall as _handle_recall_impl
-from plugins.memory.omnimem.handlers.govern import handle_govern as _handle_govern_impl
-from plugins.memory.omnimem.handlers.govern import _scan_memory_conflicts as _scan_memory_conflicts_impl
-from plugins.memory.omnimem.handlers._compat import compat_scan_memory_content as _compat_scan_memory_content
+from omnimem.handlers.schemas import get_tool_schemas as _get_tool_schemas
+from omnimem.handlers.memorize import handle_memorize as _handle_memorize_impl
+from omnimem.handlers.recall import handle_recall as _handle_recall_impl
+from omnimem.handlers.govern import handle_govern as _handle_govern_impl
+from omnimem.handlers.govern import _scan_memory_conflicts as _scan_memory_conflicts_impl
+from omnimem.handlers._compat import compat_scan_memory_content as _compat_scan_memory_content
 
 logger = logging.getLogger(__name__)
 
@@ -283,9 +283,9 @@ class OmniMemProvider(MemoryProvider):
 
     def _init_reflect(self) -> None:
         """初始化 L3 深层记忆（Consolidation + 知识图谱 + 反思引擎）。"""
-        from plugins.memory.omnimem.deep.consolidation import ConsolidationEngine
-        from plugins.memory.omnimem.deep.knowledge_graph import KnowledgeGraph
-        from plugins.memory.omnimem.deep.reflect import ReflectEngine
+        from omnimem.deep.consolidation import ConsolidationEngine
+        from omnimem.deep.knowledge_graph import KnowledgeGraph
+        from omnimem.deep.reflect import ReflectEngine
 
         deep_dir = self._data_dir / "deep"
         self._consolidation = ConsolidationEngine(
@@ -302,8 +302,8 @@ class OmniMemProvider(MemoryProvider):
 
     def _init_lora(self) -> None:
         """初始化 L4 内化记忆（KV Cache + LoRA 训练器）。"""
-        from plugins.memory.omnimem.internalize.kv_cache import KVCacheManager
-        from plugins.memory.omnimem.internalize.lora_train import LoRATrainer
+        from omnimem.internalize.kv_cache import KVCacheManager
+        from omnimem.internalize.lora_train import LoRATrainer
 
         internalize_dir = self._data_dir / "internalize"
         self._kv_cache = KVCacheManager(
@@ -324,7 +324,7 @@ class OmniMemProvider(MemoryProvider):
     def async_provider(self):
         """获取异步包装器（延迟初始化）。"""
         if not hasattr(self, "_async_provider"):
-            from plugins.memory.omnimem.core.async_provider import AsyncOmniMemProvider
+            from omnimem.core.async_provider import AsyncOmniMemProvider
             self._async_provider = AsyncOmniMemProvider(self)
         return self._async_provider
 

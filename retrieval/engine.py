@@ -23,10 +23,10 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from plugins.memory.omnimem.retrieval.vector import VectorRetriever
-from plugins.memory.omnimem.retrieval.bm25 import BM25Retriever
-from plugins.memory.omnimem.retrieval.rrf import RRFFusion
-from plugins.memory.omnimem.retrieval.reranker import CrossEncoderReranker
+from omnimem.retrieval.vector import VectorRetriever
+from omnimem.retrieval.bm25 import BM25Retriever
+from omnimem.retrieval.rrf import RRFFusion
+from omnimem.retrieval.reranker import CrossEncoderReranker
 
 logger = logging.getLogger(__name__)
 

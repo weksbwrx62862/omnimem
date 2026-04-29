@@ -27,7 +27,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
-from plugins.memory.omnimem.governance.vector_clock import (
+from omnimem.governance.vector_clock import (
     VectorClock,
     detect_conflict,
     merge_records,

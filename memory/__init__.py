@@ -1,7 +1,7 @@
 """L2 结构化记忆模块。"""
 
-from plugins.memory.omnimem.memory.wing_room import WingRoomManager
-from plugins.memory.omnimem.memory.drawer_closet import DrawerClosetStore
-from plugins.memory.omnimem.memory.index import ThreeLevelIndex
-from plugins.memory.omnimem.memory.markdown_store import MarkdownStore
-from plugins.memory.omnimem.memory.types import MemoryEntry, MemoryType
+from omnimem.memory.wing_room import WingRoomManager
+from omnimem.memory.drawer_closet import DrawerClosetStore
+from omnimem.memory.index import ThreeLevelIndex
+from omnimem.memory.markdown_store import MarkdownStore
+from omnimem.memory.types import MemoryEntry, MemoryType
