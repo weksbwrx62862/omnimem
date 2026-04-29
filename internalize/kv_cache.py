@@ -17,7 +17,7 @@ import sqlite3
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -32,9 +32,12 @@ class KVCacheManager:
       4. 推理时先查 KV Cache，命中则跳过检索
     """
 
-    def __init__(self, data_dir: Optional[Path] = None,
-                 auto_preload_threshold: int = 10,
-                 max_cache_size: int = 100):
+    def __init__(
+        self,
+        data_dir: Optional[Path] = None,
+        auto_preload_threshold: int = 10,
+        max_cache_size: int = 100,
+    ):
         """初始化 KVCacheManager。
 
         Args:
@@ -45,8 +48,8 @@ class KVCacheManager:
         self._data_dir = data_dir
         self._auto_threshold = auto_preload_threshold
         self._max_cache_size = max_cache_size
-        self._cache: Dict[str, Dict[str, Any]] = {}
-        self._access_counts: Dict[str, int] = {}
+        self._cache: dict[str, dict[str, Any]] = {}
+        self._access_counts: dict[str, int] = {}
         self._conn: Optional[sqlite3.Connection] = None
         self._preload_count = 0
         self._lock = threading.RLock()
@@ -60,7 +63,8 @@ class KVCacheManager:
         db_path = data_dir / "kv_cache.db"
         self._conn = sqlite3.connect(str(db_path), check_same_thread=False)
         self._conn.execute("PRAGMA journal_mode=WAL")
-        self._conn.execute("""
+        self._conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS kv_cache_entries (
                 cache_key TEXT PRIMARY KEY,
                 content TEXT NOT NULL,
@@ -70,10 +74,13 @@ class KVCacheManager:
                 last_accessed TEXT,
                 source_memory_ids TEXT
             )
-        """)
-        self._conn.execute("""
+        """
+        )
+        self._conn.execute(
+            """
             CREATE INDEX IF NOT EXISTS idx_access_count ON kv_cache_entries(access_count DESC)
-        """)
+        """
+        )
         self._conn.commit()
 
         # 从持久化存储中恢复缓存
@@ -112,7 +119,7 @@ class KVCacheManager:
 
     # ─── 公开接口 ─────────────────────────────────────────────
 
-    def preload(self, patterns: List[Dict[str, Any]]) -> int:
+    def preload(self, patterns: list[dict[str, Any]]) -> int:
         """预加载高频模式到 KV Cache。
 
         Args:
@@ -152,7 +159,7 @@ class KVCacheManager:
         """检查是否已缓存。"""
         return key in self._cache
 
-    def get_hot_patterns(self, top_k: int = 10) -> List[Dict[str, Any]]:
+    def get_hot_patterns(self, top_k: int = 10) -> list[dict[str, Any]]:
         """获取最热访问模式。"""
         sorted_items = sorted(
             self._access_counts.items(),
@@ -167,9 +174,13 @@ class KVCacheManager:
                 results.append(entry)
         return results
 
-    def check_and_auto_preload(self, key: str, content: str,
-                                metadata: Optional[Dict[str, Any]] = None,
-                                source_memory_ids: Optional[List[str]] = None) -> bool:
+    def check_and_auto_preload(
+        self,
+        key: str,
+        content: str,
+        metadata: Optional[dict[str, Any]] = None,
+        source_memory_ids: Optional[list[str]] = None,
+    ) -> bool:
         """检查访问频率并自动预填充。
 
         当 access_count > threshold 时自动触发预填充。
@@ -205,13 +216,14 @@ class KVCacheManager:
             self._persist_entry(key, pattern)
             logger.info(
                 "KV Cache: auto-preloaded key '%s' (access_count=%d)",
-                key[:50], current_count,
+                key[:50],
+                current_count,
             )
             return True
 
         return False
 
-    def search_cache(self, query: str, limit: int = 5) -> List[Dict[str, Any]]:
+    def search_cache(self, query: str, limit: int = 5) -> list[dict[str, Any]]:
         """在缓存中搜索匹配的内容。
 
         简单的关键词匹配，用于推理加速时的缓存查找。
@@ -241,7 +253,7 @@ class KVCacheManager:
             except Exception:
                 pass
 
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> dict[str, Any]:
         """获取 KV Cache 统计。"""
         total_accesses = sum(self._access_counts.values())
         hot_patterns = self.get_hot_patterns(top_k=3)
@@ -267,7 +279,7 @@ class KVCacheManager:
 
     # ─── 持久化 ───────────────────────────────────────────────
 
-    def _persist_entry(self, key: str, pattern: Dict[str, Any]) -> None:
+    def _persist_entry(self, key: str, pattern: dict[str, Any]) -> None:
         """持久化缓存条目。"""
         if not self._conn:
             return

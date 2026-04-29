@@ -20,7 +20,7 @@ OPT-1 改进:
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List
+from typing import Any
 
 from omnimem.governance.encryption import MemoryEncryption
 
@@ -36,7 +36,7 @@ class PrivacyManager:
 
     def __init__(self, default_level: str = "personal", session_id: str = ""):
         self._default_level = default_level
-        self._overrides: Dict[str, str] = {}
+        self._overrides: dict[str, str] = {}
         self._store = None  # ★ 延迟绑定存储层，用于回填
         # OPT-1: 初始化加密器
         self._encryption = MemoryEncryption(session_seed=session_id)
@@ -101,10 +101,10 @@ class PrivacyManager:
 
     def filter(
         self,
-        results: List[Dict[str, Any]],
+        results: list[dict[str, Any]],
         session_id: str = "",
         max_privacy: str = "personal",
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """按隐私级别过滤检索结果。
 
         OPT-1 改进: secret 级不再直接丢弃，而是保留并标记 _encrypted=True，

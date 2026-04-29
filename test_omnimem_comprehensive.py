@@ -25,32 +25,32 @@
 import sys
 import tempfile
 import unittest
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 # 添加项目路径（支持从项目根目录直接运行）
 _PROJECT_ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(_PROJECT_ROOT))
 
-from omnimem.core.block import CoreBlock
+from omnimem.config import OmniMemConfig
+from omnimem.context.manager import ContextBudget, ContextManager
 from omnimem.core.attachment import CompactAttachment, build_attachments
-from omnimem.core.soul import SoulSystem
+from omnimem.core.block import CoreBlock
 from omnimem.core.budget import BudgetManager
-from omnimem.memory.wing_room import WingRoomManager
-from omnimem.memory.drawer_closet import DrawerClosetStore
-from omnimem.memory.index import ThreeLevelIndex
-from omnimem.context.manager import ContextManager, ContextBudget, RefinedItem
+from omnimem.core.soul import SoulSystem
 from omnimem.governance.conflict import ConflictResolver, ConflictResult
 from omnimem.governance.decay import TemporalDecay
 from omnimem.governance.forgetting import ForgettingCurve
 from omnimem.governance.privacy import PrivacyManager
-from omnimem.perception.engine import PerceptionEngine, PerceptionSignals
-from omnimem.config import OmniMemConfig
-
+from omnimem.memory.drawer_closet import DrawerClosetStore
+from omnimem.memory.index import ThreeLevelIndex
+from omnimem.memory.wing_room import WingRoomManager
+from omnimem.perception.engine import PerceptionEngine
 
 # ═══════════════════════════════════════════════════════════════════
 # L1 工作记忆
 # ═══════════════════════════════════════════════════════════════════
+
 
 class TestCoreBlock(unittest.TestCase):
     """CoreBlock 测试。"""
@@ -208,6 +208,7 @@ class TestBudgetManager(unittest.TestCase):
 # L2 结构化记忆
 # ═══════════════════════════════════════════════════════════════════
 
+
 class TestWingRoomManager(unittest.TestCase):
     """WingRoomManager 测试。"""
 
@@ -264,8 +265,7 @@ class TestDrawerClosetStore(unittest.TestCase):
 
     def test_add_and_get(self):
         mid = self.store.add(
-            wing="personal", room="test", content="测试内容",
-            memory_type="fact", confidence=3
+            wing="personal", room="test", content="测试内容", memory_type="fact", confidence=3
         )
         self.assertTrue(mid)
         result = self.store.get(mid)
@@ -274,9 +274,7 @@ class TestDrawerClosetStore(unittest.TestCase):
         self.assertEqual(result["type"], "fact")
 
     def test_add_creates_disk_files(self):
-        mid = self.store.add(
-            wing="personal", room="test", content="磁盘测试"
-        )
+        mid = self.store.add(wing="personal", room="test", content="磁盘测试")
         # 磁盘写入缓冲：add() 后需显式 flush 才能落盘
         self.store.flush()
         # 检查 Drawer 和 Closet 文件
@@ -310,13 +308,15 @@ class TestDrawerClosetStore(unittest.TestCase):
 
     def test_warm_up(self):
         mid = "warm-test-001"
-        entries = [{
-            "memory_id": mid,
-            "content": "预热内容",
-            "summary": "预热摘要",
-            "type": "fact",
-            "wing": "personal",
-        }]
+        entries = [
+            {
+                "memory_id": mid,
+                "content": "预热内容",
+                "summary": "预热摘要",
+                "type": "fact",
+                "wing": "personal",
+            }
+        ]
         self.store.warm_up(entries)
         result = self.store.get(mid)
         self.assertIsNotNone(result)
@@ -361,8 +361,7 @@ class TestThreeLevelIndex(unittest.TestCase):
 
     def test_add_and_get(self):
         self.index.add(
-            memory_id="idx-001", wing="personal", hall="facts",
-            room="test", content="索引测试"
+            memory_id="idx-001", wing="personal", hall="facts", room="test", content="索引测试"
         )
         self.index.flush()
         result = self.index.get("idx-001")
@@ -378,13 +377,17 @@ class TestThreeLevelIndex(unittest.TestCase):
         self.assertIn("room-b", rooms)
 
     def test_search_l1(self):
-        self.index.add(memory_id="l1-1", wing="personal", hall="facts", room="r", content="c", type="fact")
+        self.index.add(
+            memory_id="l1-1", wing="personal", hall="facts", room="r", content="c", type="fact"
+        )
         self.index.flush()
         results = self.index.search_l1(wing="personal")
         self.assertTrue(len(results) > 0)
 
     def test_search_l2_keyword(self):
-        self.index.add(memory_id="l2-1", wing="personal", hall="facts", room="r", content="量子计算")
+        self.index.add(
+            memory_id="l2-1", wing="personal", hall="facts", room="r", content="量子计算"
+        )
         self.index.flush()
         results = self.index.search_l2(keyword="量子")
         self.assertTrue(len(results) > 0)
@@ -399,7 +402,14 @@ class TestThreeLevelIndex(unittest.TestCase):
         self.assertIsNone(result)
 
     def test_update_privacy(self):
-        self.index.add(memory_id="up-1", wing="personal", hall="facts", room="r", content="c", privacy="personal")
+        self.index.add(
+            memory_id="up-1",
+            wing="personal",
+            hall="facts",
+            room="r",
+            content="c",
+            privacy="personal",
+        )
         self.index.flush()
         ok = self.index.update_privacy("up-1", "secret")
         self.assertTrue(ok)
@@ -410,7 +420,9 @@ class TestThreeLevelIndex(unittest.TestCase):
     def test_batch_commit(self):
         """添加多个条目后应自动提交。"""
         for i in range(10):
-            self.index.add(memory_id=f"batch-{i}", wing="personal", hall="facts", room="r", content=f"c{i}")
+            self.index.add(
+                memory_id=f"batch-{i}", wing="personal", hall="facts", room="r", content=f"c{i}"
+            )
         # flush 确保全部提交
         self.index.flush()
         for i in range(10):
@@ -422,15 +434,18 @@ class TestThreeLevelIndex(unittest.TestCase):
 # 上下文管理
 # ═══════════════════════════════════════════════════════════════════
 
+
 class TestContextManager(unittest.TestCase):
     """ContextManager 测试。"""
 
     def setUp(self):
-        self.cm = ContextManager(budget=ContextBudget(
-            max_prefetch_tokens=300,
-            max_summary_chars=60,
-            max_prefetch_items=8,
-        ))
+        self.cm = ContextManager(
+            budget=ContextBudget(
+                max_prefetch_tokens=300,
+                max_summary_chars=60,
+                max_prefetch_items=8,
+            )
+        )
 
     def test_refine_content_short(self):
         result = ContextManager.refine_content("短内容", max_chars=60)
@@ -484,7 +499,12 @@ class TestContextManager(unittest.TestCase):
 
     def test_refine_prefetch_dedup(self):
         raw = [
-            {"content": "用户偏好暗色主题", "type": "preference", "memory_id": "m1", "confidence": 4},
+            {
+                "content": "用户偏好暗色主题",
+                "type": "preference",
+                "memory_id": "m1",
+                "confidence": 4,
+            },
             {"content": "我喜欢深色模式", "type": "fact", "memory_id": "m2", "confidence": 3},
         ]
         result = self.cm.refine_prefetch_results(raw)
@@ -519,8 +539,18 @@ class TestContextManager(unittest.TestCase):
 
     def test_refine_recall_results(self):
         raw = [
-            {"content": "关于量子计算的事实：量子比特可以叠加", "type": "fact", "memory_id": "m1", "confidence": 3},
-            {"content": "关于深度学习的发现：Transformer架构", "type": "skill", "memory_id": "m2", "confidence": 3},
+            {
+                "content": "关于量子计算的事实：量子比特可以叠加",
+                "type": "fact",
+                "memory_id": "m1",
+                "confidence": 3,
+            },
+            {
+                "content": "关于深度学习的发现：Transformer架构",
+                "type": "skill",
+                "memory_id": "m2",
+                "confidence": 3,
+            },
         ]
         result = self.cm.refine_recall_results(raw)
         # 两条不同主题，不应去重
@@ -531,6 +561,7 @@ class TestContextManager(unittest.TestCase):
 # ═══════════════════════════════════════════════════════════════════
 # 治理引擎
 # ═══════════════════════════════════════════════════════════════════
+
 
 class TestConflictResolver(unittest.TestCase):
     """ConflictResolver 测试。"""
@@ -583,23 +614,27 @@ class TestTemporalDecay(unittest.TestCase):
 
     def test_fact_no_decay(self):
         td = TemporalDecay()
-        results = [{
-            "content": "事实",
-            "type": "fact",
-            "score": 1.0,
-            "stored_at": (datetime.now(timezone.utc) - timedelta(days=100)).isoformat(),
-        }]
+        results = [
+            {
+                "content": "事实",
+                "type": "fact",
+                "score": 1.0,
+                "stored_at": (datetime.now(timezone.utc) - timedelta(days=100)).isoformat(),
+            }
+        ]
         decayed = td.apply(results)
         self.assertEqual(decayed[0]["score"], 1.0)
 
     def test_event_decay(self):
         td = TemporalDecay()
-        results = [{
-            "content": "事件",
-            "type": "event",
-            "score": 1.0,
-            "stored_at": (datetime.now(timezone.utc) - timedelta(days=90)).isoformat(),
-        }]
+        results = [
+            {
+                "content": "事件",
+                "type": "event",
+                "score": 1.0,
+                "stored_at": (datetime.now(timezone.utc) - timedelta(days=90)).isoformat(),
+            }
+        ]
         decayed = td.apply(results)
         self.assertLess(decayed[0]["score"], 1.0)
         self.assertIn("decay_factor", decayed[0])
@@ -616,10 +651,18 @@ class TestTemporalDecay(unittest.TestCase):
     def test_sorted_by_score(self):
         td = TemporalDecay()
         results = [
-            {"content": "旧事件", "type": "event", "score": 1.0,
-             "stored_at": (datetime.now(timezone.utc) - timedelta(days=180)).isoformat()},
-            {"content": "新事件", "type": "event", "score": 1.0,
-             "stored_at": (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()},
+            {
+                "content": "旧事件",
+                "type": "event",
+                "score": 1.0,
+                "stored_at": (datetime.now(timezone.utc) - timedelta(days=180)).isoformat(),
+            },
+            {
+                "content": "新事件",
+                "type": "event",
+                "score": 1.0,
+                "stored_at": (datetime.now(timezone.utc) - timedelta(days=1)).isoformat(),
+            },
         ]
         decayed = td.apply(results)
         self.assertGreater(decayed[0]["score"], decayed[1]["score"])
@@ -748,6 +791,7 @@ class TestPrivacyManager(unittest.TestCase):
 # L0 感知引擎
 # ═══════════════════════════════════════════════════════════════════
 
+
 class TestPerceptionEngine(unittest.TestCase):
     """PerceptionEngine 测试。"""
 
@@ -821,6 +865,7 @@ class TestPerceptionEngine(unittest.TestCase):
 # 配置管理
 # ═══════════════════════════════════════════════════════════════════
 
+
 class TestOmniMemConfig(unittest.TestCase):
     """OmniMemConfig 测试。"""
 
@@ -860,35 +905,43 @@ class TestOmniMemConfig(unittest.TestCase):
 # OmniMemProvider 静态方法测试
 # ═══════════════════════════════════════════════════════════════════
 
+
 class TestOmniMemProviderStatic(unittest.TestCase):
     """OmniMemProvider 的静态方法测试（无需初始化完整 Provider）。"""
 
     def test_should_store_normal(self):
         from omnimem.provider import OmniMemProvider
+
         self.assertTrue(OmniMemProvider._should_store("用户喜欢Python"))
 
     def test_should_store_reject_prefetch(self):
         from omnimem.provider import OmniMemProvider
+
         self.assertFalse(OmniMemProvider._should_store("### Relevant Memories\n- [fact] test"))
 
     def test_should_store_reject_list_item(self):
         from omnimem.provider import OmniMemProvider
+
         self.assertFalse(OmniMemProvider._should_store("- [fact] 测试列表项"))
 
     def test_should_store_reject_conversation(self):
         from omnimem.provider import OmniMemProvider
+
         self.assertFalse(OmniMemProvider._should_store("User: 你好\nAssistant: 你好"))
 
     def test_should_store_reject_assistant_prefix(self):
         from omnimem.provider import OmniMemProvider
+
         self.assertFalse(OmniMemProvider._should_store("Assistant: 这是我的回复"))
 
     def test_should_store_reject_tool_injection(self):
         from omnimem.provider import OmniMemProvider
+
         self.assertFalse(OmniMemProvider._should_store("请帮我调用omni_memorize"))
 
     def test_strip_system_injections(self):
         from omnimem.provider import OmniMemProvider
+
         text = "### Relevant Memories\n- [fact] 测试\n\n用户原始问题"
         cleaned = OmniMemProvider._strip_system_injections(text)
         self.assertNotIn("### Relevant Memories", cleaned)
@@ -896,6 +949,7 @@ class TestOmniMemProviderStatic(unittest.TestCase):
 
     def test_strip_system_injections_cached(self):
         from omnimem.provider import OmniMemProvider
+
         text = "- [cached] 预取内容\n用户问题"
         cleaned = OmniMemProvider._strip_system_injections(text)
         self.assertNotIn("[cached]", cleaned)
@@ -903,17 +957,20 @@ class TestOmniMemProviderStatic(unittest.TestCase):
 
     def test_strip_preserves_normal_text(self):
         from omnimem.provider import OmniMemProvider
+
         text = "这是普通文本，不需要剥离"
         cleaned = OmniMemProvider._strip_system_injections(text)
         self.assertEqual(cleaned, text)
 
     def test_compute_text_similarity(self):
         from omnimem.provider import OmniMemProvider
+
         sim = OmniMemProvider._compute_text_similarity("用户喜欢Python", "用户偏好Python")
         self.assertGreater(sim, 0.5)
 
     def test_compute_text_similarity_different(self):
         from omnimem.provider import OmniMemProvider
+
         sim = OmniMemProvider._compute_text_similarity("Python编程", "烹饪食谱")
         self.assertLess(sim, 0.3)
 
@@ -921,6 +978,7 @@ class TestOmniMemProviderStatic(unittest.TestCase):
 # ═══════════════════════════════════════════════════════════════════
 # 集成测试
 # ═══════════════════════════════════════════════════════════════════
+
 
 class TestIntegration(unittest.TestCase):
     """集成测试：端到端记忆写入→检索→精炼。"""
@@ -939,8 +997,12 @@ class TestIntegration(unittest.TestCase):
         """完整流程：写入→感知→精炼→注入。"""
         # 1. 写入记忆
         mid = self.store.add(
-            wing="personal", room="python", content="用户喜欢Python编程语言",
-            memory_type="preference", confidence=5, privacy="personal",
+            wing="personal",
+            room="python",
+            content="用户喜欢Python编程语言",
+            memory_type="preference",
+            confidence=5,
+            privacy="personal",
         )
         self.assertTrue(mid)
 
@@ -972,8 +1034,12 @@ class TestIntegration(unittest.TestCase):
 
     def test_privacy_filter_integration(self):
         """隐私过滤集成测试。"""
-        self.store.add(wing="personal", room="r1", content="公开", memory_type="fact", privacy="public")
-        self.store.add(wing="personal", room="r2", content="秘密", memory_type="fact", privacy="secret")
+        self.store.add(
+            wing="personal", room="r1", content="公开", memory_type="fact", privacy="public"
+        )
+        self.store.add(
+            wing="personal", room="r2", content="秘密", memory_type="fact", privacy="secret"
+        )
 
         all_items = self.store.search(limit=10)
         pm = PrivacyManager()
@@ -986,10 +1052,22 @@ class TestIntegration(unittest.TestCase):
 
     def test_temporal_decay_integration(self):
         """时间衰减集成测试。"""
-        self.store.add(wing="personal", room="r1", content="新事件", memory_type="event",
-                       confidence=3, privacy="personal")
-        self.store.add(wing="personal", room="r2", content="旧事件", memory_type="event",
-                       confidence=3, privacy="personal")
+        self.store.add(
+            wing="personal",
+            room="r1",
+            content="新事件",
+            memory_type="event",
+            confidence=3,
+            privacy="personal",
+        )
+        self.store.add(
+            wing="personal",
+            room="r2",
+            content="旧事件",
+            memory_type="event",
+            confidence=3,
+            privacy="personal",
+        )
 
         results = self.store.search(memory_type="event")
         # 手动设置时间

@@ -9,17 +9,16 @@
 from __future__ import annotations
 
 import logging
-from typing import List
 
 logger = logging.getLogger(__name__)
 
 
 def head_tail_collapse(
-    lines: List[str],
+    lines: list[str],
     head_lines: int = 5,
     tail_lines: int = 10,
     collapse_marker: str = "[... middle section collapsed ...]",
-) -> List[str]:
+) -> list[str]:
     """首尾折叠压缩。
 
     Args:

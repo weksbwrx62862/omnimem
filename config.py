@@ -4,9 +4,8 @@ from __future__ import annotations
 
 import logging
 import os
-import time
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -17,18 +16,18 @@ DEFAULTS = {
     "vector_backend": "chromadb",
     "max_prefetch_tokens": 300,
     "budget_tokens": 4000,
-    "fact_threshold": 10,         # Consolidation 触发阈值
+    "fact_threshold": 10,  # Consolidation 触发阈值
     "enable_reranker": False,
     "conflict_strategy": "latest",
     "default_privacy": "personal",
     "auto_memorize": True,
-    "kv_cache_threshold": 10,     # KV Cache 自动预填充阈值
-    "kv_cache_max": 100,          # KV Cache 最大条目数
+    "kv_cache_threshold": 10,  # KV Cache 自动预填充阈值
+    "kv_cache_max": 100,  # KV Cache 最大条目数
     "lora_base_model": "Qwen2.5-7B",  # LoRA 基座模型
-    "lora_rank": 16,              # LoRA 秩
-    "lora_alpha": 32,             # LoRA alpha
-    "sync_mode": "none",          # 同步模式: none / file_lock / changelog
-    "sync_interval": 30,          # 同步间隔(秒)
+    "lora_rank": 16,  # LoRA 秩
+    "lora_alpha": 32,  # LoRA alpha
+    "sync_mode": "none",  # 同步模式: none / file_lock / changelog
+    "sync_interval": 30,  # 同步间隔(秒)
     "sync_conflict_resolution": "latest_wins",  # 同步冲突解决策略
 }
 
@@ -40,7 +39,7 @@ class OmniMemConfig:
         self._config_dir = config_dir
         self._config_dir.mkdir(parents=True, exist_ok=True)
         self._config_path = self._config_dir / "config.yaml"
-        self._values: Dict[str, Any] = dict(DEFAULTS)
+        self._values: dict[str, Any] = dict(DEFAULTS)
         self._last_mtime: float = 0.0
         self._load()
 
@@ -66,6 +65,7 @@ class OmniMemConfig:
             return
         try:
             import yaml
+
             with open(self._config_path, encoding="utf-8") as f:
                 file_values = yaml.safe_load(f) or {}
             self._values.update(file_values)
@@ -75,12 +75,13 @@ class OmniMemConfig:
         except Exception as e:
             logger.debug("Config load failed: %s", e)
 
-    def save(self, values: Optional[Dict[str, Any]] = None) -> None:
+    def save(self, values: Optional[dict[str, Any]] = None) -> None:
         """保存配置到文件。"""
         if values:
             self._values.update(values)
         try:
             import yaml
+
             self._config_path.parent.mkdir(parents=True, exist_ok=True)
             with open(self._config_path, "w", encoding="utf-8") as f:
                 yaml.dump(self._values, f, allow_unicode=True, default_flow_style=False)
@@ -98,6 +99,6 @@ class OmniMemConfig:
         self._values[key] = value
 
     @property
-    def values(self) -> Dict[str, Any]:
+    def values(self) -> dict[str, Any]:
         """返回所有配置值。"""
         return dict(self._values)

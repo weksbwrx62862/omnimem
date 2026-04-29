@@ -11,15 +11,15 @@ Phase 3 完整实现。
 
 from __future__ import annotations
 
-import json
 import logging
 import re
 import sqlite3
 import threading
 import time
+from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Set, Tuple
+from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -28,68 +28,109 @@ logger = logging.getLogger(__name__)
 
 # 中文实体模式：人名/地名/机构/技术术语
 _ZH_ENTITY_PATTERNS = [
-    r'[\u4e00-\u9fff]{2,4}(?=公司|团队|项目|系统|框架|平台|模块|服务|接口|数据库)',  # 组织/系统名
-    r'(?<=用户|客户|同事|老板|领导|朋友)[\u4e00-\u9fff]{2,3}',  # 人名
+    r"[\u4e00-\u9fff]{2,4}(?=公司|团队|项目|系统|框架|平台|模块|服务|接口|数据库)",  # 组织/系统名
+    r"(?<=用户|客户|同事|老板|领导|朋友)[\u4e00-\u9fff]{2,3}",  # 人名
 ]
 
 # 英文实体模式
 _EN_ENTITY_PATTERNS = [
-    r'\b[A-Z][a-z]+(?:[A-Z][a-z]+)+\b',  # CamelCase
-    r'\b[A-Z]{2,}\b',                      # 缩写 API, SQL, etc.
-    r'\b[a-z]+(?:-[a-z]+)+\b',             # kebab-case
+    r"\b[A-Z][a-z]+(?:[A-Z][a-z]+)+\b",  # CamelCase
+    r"\b[A-Z]{2,}\b",  # 缩写 API, SQL, etc.
+    r"\b[a-z]+(?:-[a-z]+)+\b",  # kebab-case
     # 技术名词：不用 \b（中英混合时无效），但用前后断言防止子串匹配
     # 例：匹配 "Docker部署" 中的 "Docker"，但不匹配 "Pythonic" 中的 "Python"
-    r'(?<![A-Za-z])(Python|Java|Go|Rust|TypeScript|React|Vue|Docker|K8s|Redis|MySQL|PostgreSQL|MongoDB|Neo4j|ChromaDB|SQLite)(?![A-Za-z])',
+    r"(?<![A-Za-z])(Python|Java|Go|Rust|TypeScript|React|Vue|Docker|K8s|Redis|MySQL|PostgreSQL|MongoDB|Neo4j|ChromaDB|SQLite)(?![A-Za-z])",
 ]
 
 # 通用实体模式：从关系三元组中提取的实体
 _GENERIC_ENTITY_PATTERNS = [
     # 中文关键词前面的名词（如"前端使用React"中的"前端"）
-    r'(?<=[，。、\s])[\u4e00-\u9fff]{2,6}(?=使用|采用|选用|基于|依赖|运行)',
+    r"(?<=[，。、\s])[\u4e00-\u9fff]{2,6}(?=使用|采用|选用|基于|依赖|运行)",
     # 中文关键词后面的英文技术名词
-    r'(?:使用|采用|选用|基于|依赖)\s*([A-Z][A-Za-z0-9_.-]*)',
+    r"(?:使用|采用|选用|基于|依赖)\s*([A-Z][A-Za-z0-9_.-]*)",
 ]
 
 # 关系模式：从文本中提取 (主语, 关系, 宾语) 三元组
 _RELATION_PATTERNS = [
     # 中文关系
-    (r'([\u4e00-\u9fff]{2,8})\s*(?:使用|采用|选用|基于|依赖|运行在)\s*([\u4e00-\u9fffA-Za-z0-9_.-]+)', 'uses'),
-    (r'([\u4e00-\u9fff]{2,8})\s*(?:属于|归入|隶属于)\s*([\u4e00-\u9fffA-Za-z0-9_.-]+)', 'belongs_to'),
-    (r'([\u4e00-\u9fff]{2,8})\s*(?:导致|引起|造成|触发)\s*([\u4e00-\u9fffA-Za-z0-9_.-]+)', 'causes'),
-    (r'([\u4e00-\u9fff]{2,8})\s*(?:替代|取代|替换|升级为)\s*([\u4e00-\u9fffA-Za-z0-9_.-]+)', 'replaces'),
-    (r'([\u4e00-\u9fff]{2,8})\s*(?:连接|关联|对应|映射到)\s*([\u4e00-\u9fffA-Za-z0-9_.-]+)', 'connects_to'),
-    (r'([\u4e00-\u9fff]{2,8})\s*(?:优于|胜过|好于)\s*([\u4e00-\u9fffA-Za-z0-9_.-]+)', 'better_than'),
-    (r'([\u4e00-\u9fff]{2,8})\s*(?:包含|包括|由.*组成)\s*([\u4e00-\u9fffA-Za-z0-9_.-]+)', 'contains'),
-    (r'([\u4e00-\u9fff]{2,8})\s*(?:在|于)\s*([\u4e00-\u9fff]{2,8})\s*(?:中|里|上)', 'located_in'),
+    (
+        r"([\u4e00-\u9fff]{2,8})\s*(?:使用|采用|选用|基于|依赖|运行在)\s*([\u4e00-\u9fffA-Za-z0-9_.-]+)",
+        "uses",
+    ),
+    (
+        r"([\u4e00-\u9fff]{2,8})\s*(?:属于|归入|隶属于)\s*([\u4e00-\u9fffA-Za-z0-9_.-]+)",
+        "belongs_to",
+    ),
+    (
+        r"([\u4e00-\u9fff]{2,8})\s*(?:导致|引起|造成|触发)\s*([\u4e00-\u9fffA-Za-z0-9_.-]+)",
+        "causes",
+    ),
+    (
+        r"([\u4e00-\u9fff]{2,8})\s*(?:替代|取代|替换|升级为)\s*([\u4e00-\u9fffA-Za-z0-9_.-]+)",
+        "replaces",
+    ),
+    (
+        r"([\u4e00-\u9fff]{2,8})\s*(?:连接|关联|对应|映射到)\s*([\u4e00-\u9fffA-Za-z0-9_.-]+)",
+        "connects_to",
+    ),
+    (
+        r"([\u4e00-\u9fff]{2,8})\s*(?:优于|胜过|好于)\s*([\u4e00-\u9fffA-Za-z0-9_.-]+)",
+        "better_than",
+    ),
+    (
+        r"([\u4e00-\u9fff]{2,8})\s*(?:包含|包括|由.*组成)\s*([\u4e00-\u9fffA-Za-z0-9_.-]+)",
+        "contains",
+    ),
+    (r"([\u4e00-\u9fff]{2,8})\s*(?:在|于)\s*([\u4e00-\u9fff]{2,8})\s*(?:中|里|上)", "located_in"),
     # 英文关系
-    (r'(\b[A-Za-z][A-Za-z0-9_.-]*)\s+(?:uses?|depends?\s+on|relies?\s+on)\s+(\b[A-Za-z][A-Za-z0-9_.-]*)', 'uses'),
-    (r'(\b[A-Za-z][A-Za-z0-9_.-]*)\s+(?:causes?|leads?\s+to|triggers?)\s+(\b[A-Za-z][A-Za-z0-9_.-]*)', 'causes'),
-    (r'(\b[A-Za-z][A-Za-z0-9_.-]*)\s+(?:replaces?|supersedes?)\s+(\b[A-Za-z][A-Za-z0-9_.-]*)', 'replaces'),
-    (r'(\b[A-Za-z][A-Za-z0-9_.-]*)\s+(?:contains?|includes?)\s+(\b[A-Za-z][A-Za-z0-9_.-]*)', 'contains'),
+    (
+        r"(\b[A-Za-z][A-Za-z0-9_.-]*)\s+(?:uses?|depends?\s+on|relies?\s+on)\s+(\b[A-Za-z][A-Za-z0-9_.-]*)",
+        "uses",
+    ),
+    (
+        r"(\b[A-Za-z][A-Za-z0-9_.-]*)\s+(?:causes?|leads?\s+to|triggers?)\s+(\b[A-Za-z][A-Za-z0-9_.-]*)",
+        "causes",
+    ),
+    (
+        r"(\b[A-Za-z][A-Za-z0-9_.-]*)\s+(?:replaces?|supersedes?)\s+(\b[A-Za-z][A-Za-z0-9_.-]*)",
+        "replaces",
+    ),
+    (
+        r"(\b[A-Za-z][A-Za-z0-9_.-]*)\s+(?:contains?|includes?)\s+(\b[A-Za-z][A-Za-z0-9_.-]*)",
+        "contains",
+    ),
 ]
 
 # 否定关系模式
 _NEGATION_PATTERNS = [
-    (r'([\u4e00-\u9fff]{2,8})\s*(?:不|并非|没有|无法|不能)\s*(?:使用|采用|依赖|支持)\s*([\u4e00-\u9fffA-Za-z0-9_.-]+)', 'not_uses'),
-    (r'([\u4e00-\u9fff]{2,8})\s*(?:不同于|区别于|不是)\s*([\u4e00-\u9fffA-Za-z0-9_.-]+)', 'differs_from'),
+    (
+        r"([\u4e00-\u9fff]{2,8})\s*(?:不|并非|没有|无法|不能)\s*(?:使用|采用|依赖|支持)\s*([\u4e00-\u9fffA-Za-z0-9_.-]+)",
+        "not_uses",
+    ),
+    (
+        r"([\u4e00-\u9fff]{2,8})\s*(?:不同于|区别于|不是)\s*([\u4e00-\u9fffA-Za-z0-9_.-]+)",
+        "differs_from",
+    ),
 ]
 
 
 # ─── 实体抽取函数 ────────────────────────────────────────────
 
-def extract_entities(text: str) -> List[str]:
+
+def extract_entities(text: str) -> list[str]:
     """从文本中提取实体。
 
     ★ P1方案四：优先使用 jieba 分词 + 词性标注（若可用），
     与规则正则互补，提升通用命名实体覆盖率。
     """
-    entities: Set[str] = set()
+    entities: set[str] = set()
 
     # 优先路径：jieba NER（人名nr/地名ns/机构名nt/其他专名nz）
     try:
         import jieba.posseg as pseg
+
         for word, flag in pseg.lcut(text):
-            if flag in ('nr', 'ns', 'nt', 'nz') and len(word) >= 2:
+            if flag in ("nr", "ns", "nt", "nz") and len(word) >= 2:
                 entities.add(word)
     except ImportError:
         pass
@@ -119,13 +160,13 @@ def extract_entities(text: str) -> List[str]:
     return [e for e in entities if len(e) >= 2]
 
 
-def extract_triples(text: str) -> List[Tuple[str, str, str]]:
+def extract_triples(text: str) -> list[tuple[str, str, str]]:
     """从文本中提取 (主语, 关系, 宾语) 三元组。
 
     Returns:
         List of (subject, predicate, object) tuples
     """
-    triples: List[Tuple[str, str, str]] = []
+    triples: list[tuple[str, str, str]] = []
 
     for pattern, predicate in _RELATION_PATTERNS:
         matches = re.findall(pattern, text)
@@ -147,7 +188,7 @@ def extract_triples(text: str) -> List[Tuple[str, str, str]]:
     return triples
 
 
-def infer_relations(existing_triples: List[Dict[str, Any]]) -> List[Tuple[str, str, str]]:
+def infer_relations(existing_triples: list[dict[str, Any]]) -> list[tuple[str, str, str]]:
     """基于已有三元组推理隐含关系。
 
     推理规则:
@@ -155,10 +196,10 @@ def infer_relations(existing_triples: List[Dict[str, Any]]) -> List[Tuple[str, s
       - 互逆: A belongs_to B → B contains A
       - 替代链: A replaces B, B replaces C → A replaces C
     """
-    inferred: List[Tuple[str, str, str]] = []
+    inferred: list[tuple[str, str, str]] = []
 
     # 建立主语→(关系→宾语)的索引
-    subj_map: Dict[str, Dict[str, List[str]]] = {}
+    subj_map: dict[str, dict[str, list[str]]] = {}
     for t in existing_triples:
         s, p, o = t.get("subject", ""), t.get("predicate", ""), t.get("object", "")
         if not s or not p or not o:
@@ -188,6 +229,7 @@ def infer_relations(existing_triples: List[Dict[str, Any]]) -> List[Tuple[str, s
 
 # ─── KnowledgeGraph ────────────────────────────────────────────
 
+
 class KnowledgeGraph:
     """SQLite 知识图谱，支持实体抽取、关系推理和图谱检索。"""
 
@@ -200,7 +242,7 @@ class KnowledgeGraph:
         self._lock = threading.RLock()
         # ★ TTL 查询缓存：减少重复实体查询的 SQLite IO
         self._CACHE_TTL = 30.0
-        self._query_cache: Dict[str, Tuple[Any, float]] = {}
+        self._query_cache: dict[str, tuple[Any, float]] = {}
         self._init_db()
 
     def _init_db(self) -> None:
@@ -209,7 +251,8 @@ class KnowledgeGraph:
         self._conn.execute("PRAGMA journal_mode=WAL")
 
         # 三元组表（含时序有效性）
-        self._conn.execute("""
+        self._conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS triples (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 subject TEXT NOT NULL,
@@ -222,19 +265,27 @@ class KnowledgeGraph:
                 valid_to TEXT,
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP
             )
-        """)
-        self._conn.execute("""
+        """
+        )
+        self._conn.execute(
+            """
             CREATE INDEX IF NOT EXISTS idx_subject ON triples(subject)
-        """)
-        self._conn.execute("""
+        """
+        )
+        self._conn.execute(
+            """
             CREATE INDEX IF NOT EXISTS idx_object ON triples(object)
-        """)
-        self._conn.execute("""
+        """
+        )
+        self._conn.execute(
+            """
             CREATE INDEX IF NOT EXISTS idx_predicate ON triples(predicate)
-        """)
+        """
+        )
 
         # 实体表
-        self._conn.execute("""
+        self._conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS entities (
                 name TEXT PRIMARY KEY,
                 entity_type TEXT DEFAULT 'unknown',
@@ -242,7 +293,8 @@ class KnowledgeGraph:
                 first_seen TEXT,
                 last_seen TEXT
             )
-        """)
+        """
+        )
 
         self._conn.commit()
 
@@ -269,7 +321,9 @@ class KnowledgeGraph:
                         (subject, predicate, obj),
                     ).fetchone()
                     if existing:
-                        logger.debug("Triple blocked by negation: %s %s %s", subject, predicate, obj)
+                        logger.debug(
+                            "Triple blocked by negation: %s %s %s", subject, predicate, obj
+                        )
                         return -1
 
                 now = datetime.now(timezone.utc).isoformat()
@@ -277,8 +331,17 @@ class KnowledgeGraph:
                     """INSERT INTO triples (subject, predicate, object, source_memory_id,
                        confidence, is_negation, valid_from, valid_to, created_at)
                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                    (subject, predicate, obj, source_memory_id, confidence,
-                     1 if is_negation else 0, valid_from, valid_to, now),
+                    (
+                        subject,
+                        predicate,
+                        obj,
+                        source_memory_id,
+                        confidence,
+                        1 if is_negation else 0,
+                        valid_from,
+                        valid_to,
+                        now,
+                    ),
                 )
                 self._conn.commit()
                 self._triple_count += 1
@@ -303,7 +366,7 @@ class KnowledgeGraph:
         content: str,
         source_memory_id: str = "",
         confidence: float = 1.0,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """添加三元组并自动检测否定关系。
 
         Returns:
@@ -313,7 +376,17 @@ class KnowledgeGraph:
             # 检查内容是否包含否定
             is_negation = any(
                 neg_word in content
-                for neg_word in ["不", "并非", "没有", "无法", "不能", "不是", "don't", "not", "no longer"]
+                for neg_word in [
+                    "不",
+                    "并非",
+                    "没有",
+                    "无法",
+                    "不能",
+                    "不是",
+                    "don't",
+                    "not",
+                    "no longer",
+                ]
             )
 
             # 如果是新三元组，检查与已有三元组的否定冲突
@@ -336,7 +409,9 @@ class KnowledgeGraph:
                 self._invalidate_cache()
 
         triple_id = self.add_triple(
-            subject, predicate, obj,
+            subject,
+            predicate,
+            obj,
             source_memory_id=source_memory_id,
             confidence=confidence,
             is_negation=is_negation,
@@ -365,9 +440,9 @@ class KnowledgeGraph:
         """数据变更后清除查询缓存。"""
         self._query_cache.clear()
 
-    def query_by_subject(self, subject: str,
-                         include_expired: bool = False) -> List[Dict[str, Any]]:
+    def query_by_subject(self, subject: str, include_expired: bool = False) -> list[dict[str, Any]]:
         """按主语查询三元组。"""
+
         def _fetch():
             try:
                 if include_expired:
@@ -383,11 +458,12 @@ class KnowledgeGraph:
                 return self._rows_to_dicts(rows)
             except Exception:
                 return []
+
         return self._cached(f"subj:{subject}:{include_expired}", _fetch)
 
-    def query_by_object(self, obj: str,
-                        include_expired: bool = False) -> List[Dict[str, Any]]:
+    def query_by_object(self, obj: str, include_expired: bool = False) -> list[dict[str, Any]]:
         """按宾语查询三元组。"""
+
         def _fetch():
             try:
                 if include_expired:
@@ -403,10 +479,10 @@ class KnowledgeGraph:
                 return self._rows_to_dicts(rows)
             except Exception:
                 return []
+
         return self._cached(f"obj:{obj}:{include_expired}", _fetch)
 
-    def query_by_predicate(self, predicate: str,
-                           limit: int = 50) -> List[Dict[str, Any]]:
+    def query_by_predicate(self, predicate: str, limit: int = 50) -> list[dict[str, Any]]:
         """按谓词查询三元组。"""
         try:
             rows = self._conn.execute(
@@ -417,11 +493,12 @@ class KnowledgeGraph:
         except Exception:
             return []
 
-    def get_neighbors(self, entity: str, depth: int = 1) -> List[Dict[str, Any]]:
+    def get_neighbors(self, entity: str, depth: int = 1) -> list[dict[str, Any]]:
         """获取实体的邻居（递归扩展查询），带 TTL 缓存。"""
+
         def _fetch():
             results = []
-            visited: Set[str] = set()
+            visited: set[str] = set()
 
             def _expand(e: str, d: int) -> None:
                 if d <= 0 or e in visited:
@@ -438,7 +515,7 @@ class KnowledgeGraph:
                         _expand(t.get("subject", ""), d - 1)
 
             _expand(entity, depth)
-            seen_ids: Set[int] = set()
+            seen_ids: set[int] = set()
             unique_results = []
             for r in results:
                 rid = r.get("id")
@@ -451,8 +528,9 @@ class KnowledgeGraph:
 
     # ─── 从记忆中自动抽取 ─────────────────────────────────────
 
-    def extract_and_store(self, content: str, memory_id: str = "",
-                          confidence: float = 0.8) -> Dict[str, Any]:
+    def extract_and_store(
+        self, content: str, memory_id: str = "", confidence: float = 0.8
+    ) -> dict[str, Any]:
         """从记忆内容中抽取实体和三元组并存储。
 
         Returns:
@@ -470,7 +548,9 @@ class KnowledgeGraph:
 
         for subj, pred, obj in raw_triples:
             result = self.add_triple_with_negation_check(
-                subj, pred, obj,
+                subj,
+                pred,
+                obj,
                 content=content,
                 source_memory_id=memory_id,
                 confidence=confidence,
@@ -485,7 +565,7 @@ class KnowledgeGraph:
         inferred_stored = []
         seen_inferred: set = set()
         for subj, pred, obj in raw_triples:
-            local_triples: List[Dict[str, Any]] = []
+            local_triples: list[dict[str, Any]] = []
             try:
                 local_triples.extend(self.query_by_subject(subj))
                 local_triples.extend(self.query_by_object(subj))
@@ -506,12 +586,16 @@ class KnowledgeGraph:
                 ).fetchone()
                 if not existing:
                     tid = self.add_triple(
-                        isubj, ipred, iobj,
+                        isubj,
+                        ipred,
+                        iobj,
                         source_memory_id=f"inferred-from:{memory_id}",
                         confidence=0.5,
                     )
                     if tid > 0:
-                        inferred_stored.append({"subject": isubj, "predicate": ipred, "object": iobj})
+                        inferred_stored.append(
+                            {"subject": isubj, "predicate": ipred, "object": iobj}
+                        )
 
         return {
             "entities_extracted": len(entities),
@@ -523,8 +607,7 @@ class KnowledgeGraph:
 
     # ─── 图谱检索通道 ─────────────────────────────────────────
 
-    def graph_search(self, query: str, max_depth: int = 2,
-                     limit: int = 20) -> List[Dict[str, Any]]:
+    def graph_search(self, query: str, max_depth: int = 2, limit: int = 20) -> list[dict[str, Any]]:
         """图谱检索通道：从查询中提取实体，然后扩展搜索。
 
         用于检索引擎的第6通道 (Graph Retriever)。
@@ -545,13 +628,13 @@ class KnowledgeGraph:
                 return []
 
         # 对每个实体进行扩展搜索
-        all_results: List[Dict[str, Any]] = []
+        all_results: list[dict[str, Any]] = []
         for entity in query_entities[:3]:  # 最多3个实体
             neighbors = self.get_neighbors(entity, depth=max_depth)
             all_results.extend(neighbors)
 
         # 去重
-        seen_ids: Set[int] = set()
+        seen_ids: set[int] = set()
         unique = []
         for r in all_results:
             rid = r.get("id")
@@ -563,20 +646,18 @@ class KnowledgeGraph:
 
     # ─── 实体操作 ─────────────────────────────────────────────
 
-    def get_entity(self, name: str) -> Optional[Dict[str, Any]]:
+    def get_entity(self, name: str) -> Optional[dict[str, Any]]:
         """获取实体信息。"""
         try:
-            row = self._conn.execute(
-                "SELECT * FROM entities WHERE name = ?", (name,)
-            ).fetchone()
+            row = self._conn.execute("SELECT * FROM entities WHERE name = ?", (name,)).fetchone()
             if row:
                 keys = ["name", "entity_type", "mention_count", "first_seen", "last_seen"]
-                return dict(zip(keys, row))
+                return dict(zip(keys, row, strict=False))
             return None
         except Exception:
             return None
 
-    def get_all_entities(self, limit: int = 100) -> List[Dict[str, Any]]:
+    def get_all_entities(self, limit: int = 100) -> list[dict[str, Any]]:
         """获取所有实体。"""
         try:
             rows = self._conn.execute(
@@ -584,15 +665,15 @@ class KnowledgeGraph:
                 (limit,),
             ).fetchall()
             keys = ["name", "entity_type", "mention_count", "first_seen", "last_seen"]
-            return [dict(zip(keys, row)) for row in rows]
+            return [dict(zip(keys, row, strict=False)) for row in rows]
         except Exception:
             return []
 
     # ─── 统计 ─────────────────────────────────────────────────
 
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> dict[str, Any]:
         """获取图谱统计。"""
-        stats: Dict[str, Any] = {"total_triples": 0, "total_entities": 0}
+        stats: dict[str, Any] = {"total_triples": 0, "total_entities": 0}
         if self._conn:
             try:
                 row = self._conn.execute("SELECT COUNT(*) FROM triples").fetchone()
@@ -617,7 +698,7 @@ class KnowledgeGraph:
         start: str,
         end: str,
         max_depth: int = 5,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """返回两实体间的最短关系路径（BFS）。
 
         Args:
@@ -632,7 +713,8 @@ class KnowledgeGraph:
             return []
         try:
             from collections import deque
-            visited: Dict[str, tuple] = {start: ()}  # entity -> (prev_entity, triple_dict)
+
+            visited: dict[str, tuple] = {start: ()}  # entity -> (prev_entity, triple_dict)
             queue: deque = deque([start])
             depth = 0
 
@@ -658,10 +740,15 @@ class KnowledgeGraph:
                     for subj, pred, obj, conf in rows:
                         neighbor = obj if subj == current else subj
                         if neighbor not in visited:
-                            visited[neighbor] = (current, {
-                                "subject": subj, "predicate": pred,
-                                "object": obj, "confidence": conf,
-                            })
+                            visited[neighbor] = (
+                                current,
+                                {
+                                    "subject": subj,
+                                    "predicate": pred,
+                                    "object": obj,
+                                    "confidence": conf,
+                                },
+                            )
                             queue.append(neighbor)
                 depth += 1
             return []
@@ -669,7 +756,7 @@ class KnowledgeGraph:
             logger.debug("Shortest path failed: %s", e)
             return []
 
-    def connected_components(self, min_size: int = 3, limit: int = 500) -> List[List[str]]:
+    def connected_components(self, min_size: int = 3, limit: int = 500) -> list[list[str]]:
         """发现知识社区（连通分量）。
 
         Args:
@@ -688,6 +775,7 @@ class KnowledgeGraph:
                 (limit * 2,),
             ).fetchall()
             from collections import defaultdict
+
             graph = defaultdict(set)
             all_entities: set = set()
             for subj, obj in rows:
@@ -697,12 +785,12 @@ class KnowledgeGraph:
                 all_entities.add(obj)
 
             visited: set = set()
-            components: List[List[str]] = []
+            components: list[list[str]] = []
             for entity in all_entities:
                 if entity in visited:
                     continue
                 stack = [entity]
-                comp: List[str] = []
+                comp: list[str] = []
                 while stack:
                     node = stack.pop()
                     if node in visited:
@@ -756,31 +844,50 @@ class KnowledgeGraph:
     def _infer_entity_type(self, name: str) -> str:
         """推断实体类型。"""
         # 技术术语
-        tech_terms = {"Python", "Java", "Go", "Rust", "TypeScript", "React", "Vue",
-                      "Docker", "K8s", "Redis", "MySQL", "PostgreSQL", "MongoDB",
-                      "Neo4j", "ChromaDB", "SQLite", "API", "SQL", "REST", "GraphQL"}
+        tech_terms = {
+            "Python",
+            "Java",
+            "Go",
+            "Rust",
+            "TypeScript",
+            "React",
+            "Vue",
+            "Docker",
+            "K8s",
+            "Redis",
+            "MySQL",
+            "PostgreSQL",
+            "MongoDB",
+            "Neo4j",
+            "ChromaDB",
+            "SQLite",
+            "API",
+            "SQL",
+            "REST",
+            "GraphQL",
+        }
         if name in tech_terms:
             return "technology"
 
         # CamelCase → 可能是类名/组件名
-        if re.match(r'^[A-Z][a-z]+(?:[A-Z][a-z]+)+$', name):
+        if re.match(r"^[A-Z][a-z]+(?:[A-Z][a-z]+)+$", name):
             return "component"
 
         # 全大写 → 缩写
-        if re.match(r'^[A-Z]{2,}$', name):
+        if re.match(r"^[A-Z]{2,}$", name):
             return "abbreviation"
 
         # kebab-case → 工具/包名
-        if re.match(r'^[a-z]+(?:-[a-z]+)+$', name):
+        if re.match(r"^[a-z]+(?:-[a-z]+)+$", name):
             return "package"
 
         # 中文 → 默认概念
-        if re.match(r'^[\u4e00-\u9fff]+$', name):
+        if re.match(r"^[\u4e00-\u9fff]+$", name):
             return "concept"
 
         return "unknown"
 
-    def _get_all_triples(self, limit: int = 5000) -> List[Dict[str, Any]]:
+    def _get_all_triples(self, limit: int = 5000) -> list[dict[str, Any]]:
         """获取所有有效三元组。"""
         try:
             rows = self._conn.execute(
@@ -791,8 +898,18 @@ class KnowledgeGraph:
         except Exception:
             return []
 
-    def _rows_to_dicts(self, rows) -> List[Dict[str, Any]]:
+    def _rows_to_dicts(self, rows) -> list[dict[str, Any]]:
         """将行转为字典。"""
-        keys = ["id", "subject", "predicate", "object", "source_memory_id",
-                "confidence", "is_negation", "valid_from", "valid_to", "created_at"]
-        return [dict(zip(keys, row)) for row in rows]
+        keys = [
+            "id",
+            "subject",
+            "predicate",
+            "object",
+            "source_memory_id",
+            "confidence",
+            "is_negation",
+            "valid_from",
+            "valid_to",
+            "created_at",
+        ]
+        return [dict(zip(keys, row, strict=False)) for row in rows]

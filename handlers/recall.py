@@ -8,17 +8,17 @@ from __future__ import annotations
 import json
 import logging
 import re
-from typing import Any, Dict, List, Set
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
 # ★ R26优化：提取公共正则常量，避免4处硬编码重复
 _CJK_KEYWORD_RE = re.compile(
-    r'[\u4e00-\u9fff]{2,}|[\uac00-\ud7af]{2,}|[\u3040-\u309f\u30a0-\u30ff]{2,}|[a-zA-Z]{3,}'
+    r"[\u4e00-\u9fff]{2,}|[\uac00-\ud7af]{2,}|[\u3040-\u309f\u30a0-\u30ff]{2,}|[a-zA-Z]{3,}"
 )
 
 # ★ R27优化：模块级同义词映射，避免 llm 模式每次调用重建字典
-_SYNONYM_MAP: Dict[str, List[str]] = {
+_SYNONYM_MAP: dict[str, list[str]] = {
     "宠物": ["猫咪", "狗狗", "兔子", "仓鼠", "小鸟", "小鱼"],
     "饮食": ["食用", "喂食", "饲料", "鸡胸肉", "猫粮", "狗粮"],
     "编程": ["代码", "开发", "程序", "coding"],
@@ -27,23 +27,23 @@ _SYNONYM_MAP: Dict[str, List[str]] = {
 }
 
 
-def _extract_query_keywords(query: str) -> Set[str]:
+def _extract_query_keywords(query: str) -> set[str]:
     """从查询中提取关键词集合，含 CJK 长词窗口切分。"""
     _raw_kw = _CJK_KEYWORD_RE.findall(query.lower())
     keywords = set()
     for kw in _raw_kw:
         # ★ R25修复：连续汉字 >4 字时按2-4字窗口切分
-        if re.match(r'[\u4e00-\u9fff]+$', kw) and len(kw) > 4:
+        if re.match(r"[\u4e00-\u9fff]+$", kw) and len(kw) > 4:
             for i in range(len(kw)):
                 for l in (4, 3, 2):
                     if i + l <= len(kw):
-                        keywords.add(kw[i:i+l])
+                        keywords.add(kw[i : i + l])
         else:
             keywords.add(kw)
     return keywords
 
 
-def handle_recall(provider, args: Dict[str, Any]) -> str:
+def handle_recall(provider, args: dict[str, Any]) -> str:
     """主动检索记忆 — 经 ContextManager 精炼后返回精简摘要。
 
     与 prefetch 不同，recall 是 Agent 主动调用，预算更宽松。
@@ -83,9 +83,7 @@ def handle_recall(provider, args: Dict[str, Any]) -> str:
     # ★ R27优化：预提取查询关键词，避免同一函数内4次重复正则匹配与CJK切分
     _query_keywords = _extract_query_keywords(query)
 
-    results = provider._retriever.search(
-        query, max_tokens=max_tokens, mode=mode
-    )
+    results = provider._retriever.search(query, max_tokens=max_tokens, mode=mode)
 
     # ★ llm 模式补充通道：从 store 做内容搜索，弥补向量/BM25 可能遗漏的
     # 但需要过滤：只保留与 query 有关键词重叠的结果，避免噪音
@@ -130,7 +128,9 @@ def handle_recall(provider, args: Dict[str, Any]) -> str:
             graph_results = provider._knowledge_graph.graph_search(query, max_depth=2, limit=10)
             if graph_results:
                 for gr in graph_results[:5]:
-                    gr["content"] = f"{gr.get('subject','')} {gr.get('predicate','')} {gr.get('object','')}"
+                    gr[
+                        "content"
+                    ] = f"{gr.get('subject','')} {gr.get('predicate','')} {gr.get('object','')}"
                     gr["type"] = "graph_triple"
                     gr["confidence"] = gr.get("confidence", 0.5)
                 results.extend(graph_results[:5])
@@ -237,19 +237,24 @@ def handle_recall(provider, args: Dict[str, Any]) -> str:
             except Exception:
                 pass
         if not results:
-            return json.dumps({
-                "status": "no_results",
-                "query": query,
-                "message": "No relevant memories found.",
-            })
+            return json.dumps(
+                {
+                    "status": "no_results",
+                    "query": query,
+                    "message": "No relevant memories found.",
+                }
+            )
 
     # ★ 经 ContextManager 精炼 — 精简摘要 + 保留原文供 detail 拉取
     refined = provider._context_manager.refine_recall_results(results, max_tokens=max_tokens)
 
-    return json.dumps({
-        "status": "found",
-        "query": query,
-        "count": len(refined),
-        "memories": refined,
-        "hint": "Use omni_detail with a memory_id to fetch full content.",
-    }, ensure_ascii=False)
+    return json.dumps(
+        {
+            "status": "found",
+            "query": query,
+            "count": len(refined),
+            "memories": refined,
+            "hint": "Use omni_detail with a memory_id to fetch full content.",
+        },
+        ensure_ascii=False,
+    )

@@ -18,7 +18,7 @@ from __future__ import annotations
 import logging
 import re
 import unicodedata
-from typing import Optional, Tuple
+from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -34,44 +34,59 @@ class SecurityValidator:
 
     # ─── Zero-width and invisible characters commonly used for obfuscation ───
     _INVISIBLE_CHARS: set[str] = {
-        '\u200b',  # ZWSP: Zero-Width Space
-        '\u200c',  # ZWNJ: Zero-Width Non-Joiner
-        '\u2060',  # WJ: Word Joiner
-        '\ufeff',  # BOM: Byte Order Mark
-        '\u202a', '\u202b', '\u202c', '\u202d', '\u202e',  # BiDi controls
-        '\u180e',  # Mongolian Vowel Separator
-        '\u2061', '\u2062', '\u2063', '\u2064',  # Invisible operators
-        '\u206a', '\u206b', '\u206c', '\u206d', '\u206e', '\u206f',  # Deprecated format chars
-        '\u200e', '\u200f',  # LRM, RLM
-        '\u061c',  # ALM: Arabic Letter Mark
-        '\u200d',  # ZWJ: Zero-Width Joiner (also used for emoji sequences, but included for strict scanning)
+        "\u200b",  # ZWSP: Zero-Width Space
+        "\u200c",  # ZWNJ: Zero-Width Non-Joiner
+        "\u2060",  # WJ: Word Joiner
+        "\ufeff",  # BOM: Byte Order Mark
+        "\u202a",
+        "\u202b",
+        "\u202c",
+        "\u202d",
+        "\u202e",  # BiDi controls
+        "\u180e",  # Mongolian Vowel Separator
+        "\u2061",
+        "\u2062",
+        "\u2063",
+        "\u2064",  # Invisible operators
+        "\u206a",
+        "\u206b",
+        "\u206c",
+        "\u206d",
+        "\u206e",
+        "\u206f",  # Deprecated format chars
+        "\u200e",
+        "\u200f",  # LRM, RLM
+        "\u061c",  # ALM: Arabic Letter Mark
+        "\u200d",  # ZWJ: Zero-Width Joiner (also used for emoji sequences, but included for strict scanning)
     }
 
     # ─── Homoglyph mapping: confusable characters → ASCII equivalents ───
-    _HOMOGLYPH_MAP = str.maketrans({
-        '\uFF03': '#',   # Fullwidth number sign → #
-        '\uFE5F': '#',   # Small number sign → #
-        '\uFF0D': '-',   # Fullwidth hyphen → -
-        '\u2212': '-',   # Minus sign → -
-        '\u2010': '-',   # Hyphen → -
-        '\u2011': '-',   # Non-breaking hyphen → -
-        '\uFF08': '(',   # Fullwidth left paren → (
-        '\uFF09': ')',   # Fullwidth right paren → )
-        '\uFF0F': '/',   # Fullwidth slash → /
-        '\uFF3C': '\\',  # Fullwidth backslash → \
-        '\uFF1A': ':',   # Fullwidth colon → :
-        '\uFF1B': ';',   # Fullwidth semicolon → ;
-        '\uFF0C': ',',   # Fullwidth comma → ,
-        '\u3002': '.',   # Ideographic full stop → .
-        '\uFF01': '!',   # Fullwidth exclamation → !
-        '\uFF1F': '?',   # Fullwidth question → ?
-        '\uFF1C': '<',   # Fullwidth less-than → <
-        '\uFF1E': '>',   # Fullwidth greater-than → >
-        '\uFF3B': '[',   # Fullwidth left bracket → [
-        '\uFF3D': ']',   # Fullwidth right bracket → ]
-        '\uFF5B': '{',   # Fullwidth left brace → {
-        '\uFF5D': '}',   # Fullwidth right brace → }
-    })
+    _HOMOGLYPH_MAP = str.maketrans(
+        {
+            "\uFF03": "#",  # Fullwidth number sign → #
+            "\uFE5F": "#",  # Small number sign → #
+            "\uFF0D": "-",  # Fullwidth hyphen → -
+            "\u2212": "-",  # Minus sign → -
+            "\u2010": "-",  # Hyphen → -
+            "\u2011": "-",  # Non-breaking hyphen → -
+            "\uFF08": "(",  # Fullwidth left paren → (
+            "\uFF09": ")",  # Fullwidth right paren → )
+            "\uFF0F": "/",  # Fullwidth slash → /
+            "\uFF3C": "\\",  # Fullwidth backslash → \
+            "\uFF1A": ":",  # Fullwidth colon → :
+            "\uFF1B": ";",  # Fullwidth semicolon → ;
+            "\uFF0C": ",",  # Fullwidth comma → ,
+            "\u3002": ".",  # Ideographic full stop → .
+            "\uFF01": "!",  # Fullwidth exclamation → !
+            "\uFF1F": "?",  # Fullwidth question → ?
+            "\uFF1C": "<",  # Fullwidth less-than → <
+            "\uFF1E": ">",  # Fullwidth greater-than → >
+            "\uFF3B": "[",  # Fullwidth left bracket → [
+            "\uFF3D": "]",  # Fullwidth right bracket → ]
+            "\uFF5B": "{",  # Fullwidth left brace → {
+            "\uFF5D": "}",  # Fullwidth right brace → }
+        }
+    )
 
     # ─── System injection markers (lowercased normalized form) ───
     _INJECTION_MARKERS: list[str] = [
@@ -84,28 +99,40 @@ class SecurityValidator:
 
     # ─── Tool invocation injection patterns ───
     _TOOL_INJECTION_PATTERNS: list[str] = [
-        r'(请|帮|尝试|调用|使用|执行|运行)\s*.*(omni_memorize|omni_recall|omni_govern|omni_reflect)',
-        r'(call|invoke|trigger)\s*.*(omni_memorize|omni_recall|omni_govern)',
-        r'你是\s*(管理员|root|superuser|god).*(存储|保存|记录|写入)',
+        r"(请|帮|尝试|调用|使用|执行|运行)\s*.*(omni_memorize|omni_recall|omni_govern|omni_reflect)",
+        r"(call|invoke|trigger)\s*.*(omni_memorize|omni_recall|omni_govern)",
+        r"你是\s*(管理员|root|superuser|god).*(存储|保存|记录|写入)",
     ]
 
     # ─── Threat patterns for security scanning (compatible with _compat.py) ───
     _THREAT_PATTERNS: list[tuple[str, str]] = [
-        (r'ignore\s+(previous|all|above|prior)\s+instructions', "prompt_injection"),
-        (r'ignore\s+(all\s+)?(the\s+)?(previous|above|prior|existing)\s*instructions?', "prompt_injection"),
-        (r'disregard\s+(all\s+)?(your\s+)?(instructions|rules|guidelines|orders)', "disregard_rules"),
-        (r'forget\s+(everything|all|what)\s+(you|that|we)(\s+were|\s*have)?\s+told', "forget_context"),
-        (r'you\s+are\s+now\s+', "role_hijack"),
-        (r'do\s+not\s+tell\s+the\s+user', "deception_hide"),
-        (r'system\s+prompt\s+override', "sys_prompt_override"),
-        (r'disregard\s+(your|all|any)\s+(instructions|rules|guidelines)', "disregard_rules"),
-        (r'act\s+as\s+(if|though)\s+you\s+(have\s+no|don\'t\s+have)\s*(restrictions|limits|rules)', "bypass_restrictions"),
-        (r'curl\s+[^\n]*\$\{?\w*(KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL|API)', "exfil_curl"),
-        (r'wget\s+[^\n]*\$\{?\w*(KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL|API)', "exfil_wget"),
-        (r'cat\s+[^\n]*(\.env|credentials|\.netrc|\.pgpass|\.npmrc|\.pypirc)', "read_secrets"),
-        (r'authorized_keys', "ssh_backdoor"),
-        (r'\$HOME/\.ssh|\~/\.ssh', "ssh_access"),
-        (r'\$HOME/\.hermes/\.env|\~/\.hermes/.env', "hermes_env"),
+        (r"ignore\s+(previous|all|above|prior)\s+instructions", "prompt_injection"),
+        (
+            r"ignore\s+(all\s+)?(the\s+)?(previous|above|prior|existing)\s*instructions?",
+            "prompt_injection",
+        ),
+        (
+            r"disregard\s+(all\s+)?(your\s+)?(instructions|rules|guidelines|orders)",
+            "disregard_rules",
+        ),
+        (
+            r"forget\s+(everything|all|what)\s+(you|that|we)(\s+were|\s*have)?\s+told",
+            "forget_context",
+        ),
+        (r"you\s+are\s+now\s+", "role_hijack"),
+        (r"do\s+not\s+tell\s+the\s+user", "deception_hide"),
+        (r"system\s+prompt\s+override", "sys_prompt_override"),
+        (r"disregard\s+(your|all|any)\s+(instructions|rules|guidelines)", "disregard_rules"),
+        (
+            r"act\s+as\s+(if|though)\s+you\s+(have\s+no|don\'t\s+have)\s*(restrictions|limits|rules)",
+            "bypass_restrictions",
+        ),
+        (r"curl\s+[^\n]*\$\{?\w*(KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL|API)", "exfil_curl"),
+        (r"wget\s+[^\n]*\$\{?\w*(KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL|API)", "exfil_wget"),
+        (r"cat\s+[^\n]*(\.env|credentials|\.netrc|\.pgpass|\.npmrc|\.pypirc)", "read_secrets"),
+        (r"authorized_keys", "ssh_backdoor"),
+        (r"\$HOME/\.ssh|\~/\.ssh", "ssh_access"),
+        (r"\$HOME/\.hermes/\.env|\~/\.hermes/.env", "hermes_env"),
     ]
 
     # ─── Public API ─────────────────────────────────────────────
@@ -122,11 +149,11 @@ class SecurityValidator:
         if not isinstance(text, str):
             text = str(text)
         # Step 1: NFKC normalization (e.g., fullwidth → halfwidth)
-        normalized = unicodedata.normalize('NFKC', text)
+        normalized = unicodedata.normalize("NFKC", text)
         # Step 2: Homoglyph substitution
         normalized = normalized.translate(cls._HOMOGLYPH_MAP)
         # Step 3: Remove invisible characters
-        normalized = ''.join(c for c in normalized if c not in cls._INVISIBLE_CHARS)
+        normalized = "".join(c for c in normalized if c not in cls._INVISIBLE_CHARS)
         return normalized
 
     @classmethod
@@ -168,7 +195,9 @@ class SecurityValidator:
     @classmethod
     def is_memory_summary_item(cls, text: str) -> bool:
         """Check if text is a memory summary list item (e.g., '- [fact] ...')."""
-        return bool(re.match(r'^\s*- \[(fact|preference|correction|skill|procedural|event)\]', text))
+        return bool(
+            re.match(r"^\s*- \[(fact|preference|correction|skill|procedural|event)\]", text)
+        )
 
     @classmethod
     def is_dialog_fragment(cls, text: str) -> bool:
@@ -181,7 +210,7 @@ class SecurityValidator:
         return text.startswith("Assistant:")
 
     @classmethod
-    def should_store(cls, text: str) -> Tuple[bool, Optional[str]]:
+    def should_store(cls, text: str) -> tuple[bool, Optional[str]]:
         """Full validation for whether content should be stored in memory.
 
         This is the hardened replacement for OmniMemProvider._should_store().
@@ -193,7 +222,7 @@ class SecurityValidator:
             return False, "Empty or non-string content"
 
         # 1. Invisible character check (raw text — normalization would hide them)
-        if (reason := cls.check_invisible_chars(text)):
+        if reason := cls.check_invisible_chars(text):
             logger.debug("SecurityValidator.should_store blocked: %s", reason)
             return False, reason
 
@@ -244,16 +273,18 @@ class SecurityValidator:
 
         # Step 1: Remove standard injection block headers + subsequent list lines
         cleaned = re.sub(
-            r'###\s+Relevant\s+Memories(?:\s*\(prefetched\))?\s*\n'
-            r'(?:-?\s*\[[^\]]*\][^\n]*\n?)*',
-            '', cleaned, flags=re.MULTILINE | re.IGNORECASE,
+            r"###\s+Relevant\s+Memories(?:\s*\(prefetched\))?\s*\n"
+            r"(?:-?\s*\[[^\]]*\][^\n]*\n?)*",
+            "",
+            cleaned,
+            flags=re.MULTILINE | re.IGNORECASE,
         )
 
         # Step 2: Remove standalone [cached] lines
-        cleaned = re.sub(r'^-?\s*\[cached\].*$', '', cleaned, flags=re.MULTILINE)
+        cleaned = re.sub(r"^-?\s*\[cached\].*$", "", cleaned, flags=re.MULTILINE)
 
         # Step 3: Collapse excessive blank lines
-        cleaned = re.sub(r'\n{3,}', '\n\n', cleaned).strip()
+        cleaned = re.sub(r"\n{3,}", "\n\n", cleaned).strip()
 
         # Step 4: If normalization reveals hidden injection markers (e.g., via
         # fullwidth characters that weren't caught by raw-text regex), do a
@@ -272,11 +303,11 @@ class SecurityValidator:
                         skip_list_block = True
                         continue
                     if skip_list_block:
-                        if re.match(r'^\s*- \[[^\]]*\]', line):
+                        if re.match(r"^\s*- \[[^\]]*\]", line):
                             continue
                         skip_list_block = False
                     filtered.append(line)
-                cleaned = '\n'.join(filtered)
+                cleaned = "\n".join(filtered)
                 logger.warning(
                     "SecurityValidator.strip_system_injections: "
                     "Encoding-bypass injection marker detected and removed: %s",
@@ -297,7 +328,7 @@ class SecurityValidator:
             Block reason if threat found, else None.
         """
         # Check invisible characters on raw text
-        if (reason := cls.check_invisible_chars(content)):
+        if reason := cls.check_invisible_chars(content):
             return f"Blocked: {reason} (possible injection)."
 
         # Normalize and scan threat patterns
