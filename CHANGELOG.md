@@ -5,22 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
-
-### Added
-- Added `pyproject.toml` for modern Python packaging and dependency management
-- Added `requirements.txt` and `requirements-dev.txt` for dependency installation
-- Added GitHub Actions CI workflow for automated testing and linting
-- Restructured tests into `tests/` directory with proper pytest configuration
-- Added pre-commit hooks configuration (ruff, mypy, trailing-whitespace)
-- Added GitHub Issue templates (bug report, feature request)
-- Added GitHub Pull Request template
-- Added this CHANGELOG.md
-
-### Changed
-- Tests now use `omnimem.*` imports instead of `plugins.memory.omnimem.*`
-
-## [1.0.0] - 2024-XX-XX
+## [1.0.0] - 2026-04-30
 
 ### Added
 - Initial release of OmniMem
@@ -33,3 +18,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Context Manager with semantic deduplication and token budget control
 - Security features (anti-recursion, input sanitization, Unicode normalization)
 - Comprehensive test suite covering all core modules
+- `pyproject.toml` for modern Python packaging and dependency management
+- `requirements.txt` and `requirements-dev.txt` for dependency installation
+- GitHub Actions CI workflow for automated testing and linting
+- Restructured tests into `tests/` directory with proper pytest configuration
+- Pre-commit hooks configuration (ruff, mypy, trailing-whitespace)
+- GitHub Issue templates (bug report, feature request)
+- GitHub Pull Request template
+- Social preview generator
+
+### Changed
+- Tests now use `omnimem.*` imports instead of `plugins.memory.omnimem.*`
+
+### Fixed
+- Unified import paths from `plugins.memory.omnimem` to `omnimem`
+- Upgraded GitHub Actions to Node.js 24 (checkout v5, setup-python v6, codecov-action v5)
