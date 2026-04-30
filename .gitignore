@@ -68,3 +68,6 @@ cache/
 *.db
 *.sqlite
 *.sqlite3
+
+# Trae agent files (local only)
+.trae/
