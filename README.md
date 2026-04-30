@@ -1,12 +1,16 @@
-# OmniMem
+<div align="center">
 
-> 五层混合记忆系统：感知 → 工作 → 结构化 → 深层 → 内化
+# 🧠 OmniMem
+
+**五层混合记忆系统 — 感知 → 工作 → 结构化 → 深层 → 内化**
 
 [![Python](https://img.shields.io/badge/Python-3.10%2B-blue)](https://www.python.org/)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Code Style](https://img.shields.io/badge/code%20style-ruff-000000.svg)](https://github.com/astral-sh/ruff)
 [![CI](https://github.com/yourusername/omnimem/actions/workflows/ci.yml/badge.svg)](https://github.com/yourusername/omnimem/actions)
 [![PyPI](https://img.shields.io/pypi/v/omnimem)](https://pypi.org/project/omnimem/)
+
+</div>
 
 OmniMem 是一个为 AI Agent 设计的多层混合记忆系统，采用**五层架构**模拟人类记忆机制，并配备完整的**治理引擎**，实现高效、可靠、可溯源的记忆管理。
 
@@ -455,6 +459,82 @@ OmniMem 的设计灵感来源于人类记忆系统：
 - [ ] 记忆可视化（知识图谱渲染）
 - [ ] 自动 LoRA 训练流水线
 
+## 开发指南
+
+### 本地开发环境
+
+```bash
+# 克隆仓库
+git clone https://github.com/weksbwrx62862/omnimem.git
+cd omnimem
+
+# 创建虚拟环境
+python -m venv venv
+source venv/bin/activate  # Linux/macOS
+# venv\Scripts\activate   # Windows
+
+# 安装开发依赖
+pip install -e ".[dev]"
+
+# 运行测试
+pytest tests/ -v
+
+# 运行 lint
+ruff check src/
+mypy src/
+```
+
+### 代码规范
+
+- **类型注解**: 所有公共函数必须有完整的类型注解
+- **Docstring**: 使用 Google 风格的 docstring
+- **测试**: 新功能必须包含单元测试
+- **提交**: 使用 Conventional Commits 规范（`feat:`、`fix:`、`docs:` 等）
+
+## 常见问题
+
+<details>
+<summary><b>Q: ChromaDB 启动失败怎么办？</b></summary>
+
+确保已安装 `chromadb>=0.4.0`。如果使用 Docker，检查端口 8000 是否被占用。
+```bash
+pip install --upgrade "chromadb>=0.4.0"
+```
+</details>
+
+<details>
+<summary><b>Q: 如何查看记忆数据？</b></summary>
+
+记忆数据存储在 ChromaDB 中，可通过 API 查询：
+```python
+from omnimem.providers.memory import ChromaMemoryProvider
+async with ChromaMemoryProvider(url="http://localhost:8000") as p:
+    results = await p.query("your query text")
+```
+</details>
+
+<details>
+<summary><b>Q: 支持哪些向量数据库？</b></summary>
+
+当前支持 ChromaDB（默认）。路线图中计划支持 Qdrant、Milvus、Weaviate。
+</details>
+
+<details>
+<summary><b>Q: 如何配置加密存储？</b></summary>
+
+安装加密依赖并设置环境变量：
+```bash
+pip install omnimem[crypto]
+export OMNIMEM_ENCRYPTION_KEY="your-secure-key"
+```
+</details>
+
+<details>
+<summary><b>Q: 记忆合并策略有哪些？</b></summary>
+
+支持 5 种策略：`newest`（保留最新）、`oldest`（保留最旧）、`merge_text`（合并文本）、`keep_longest`（保留最长）、`custom`（自定义函数）。
+</details>
+
 ## 贡献
 
 欢迎提交 Issue 和 Pull Request！详情请参阅 [CONTRIBUTING.md](CONTRIBUTING.md)。
@@ -482,10 +562,6 @@ pytest tests/ -v
 - 遵循 PEP 8 规范
 - 新增功能需附带测试
 - 更新相关文档和 CHANGELOG
-
-## 安全
-
-如发现安全漏洞，请查阅 [SECURITY.md](SECURITY.md) 了解如何报告。
 
 ## 致谢
 
@@ -516,6 +592,27 @@ OmniMem 的设计与实现受益于众多优秀的开源项目、学术研究和
 
 MIT License
 
+## 安全
+
+OmniMem 支持可选的加密存储（AES-256-GCM），保护敏感记忆数据。
+
+如发现安全漏洞，请通过以下方式报告（**不要**创建公开 Issue）：
+
+- **邮箱**: security@omnimem.dev
+- **响应时间**: 72 小时内确认，30 天内修复
+
+详见 [SECURITY.md](SECURITY.md)（如存在）。
+
 ---
 
 > **提示**：如果你从现有记忆系统迁移到 OmniMem，只需修改 `config.yaml` 中的 `memory.provider` 为 `omnimem`，所有现有 `memory` 工具调用将自动兼容。
+
+---
+
+<div align="center">
+
+**OmniMem** — 让 AI 智能体拥有持久、可进化、可治理的记忆
+
+[⬆ 回到顶部](#-omnimem)
+
+</div>
