@@ -29,7 +29,7 @@ class AsyncOmniMemProvider:
         result = await async_provider.prefetch("用户查询")
     """
 
-    def __init__(self, provider, max_workers: int = 4):
+    def __init__(self, provider: Any, max_workers: int = 4):
         """初始化异步包装器。
 
         Args:
@@ -65,7 +65,7 @@ class AsyncOmniMemProvider:
         self,
         tool_name: str,
         args: dict[str, Any],
-        **kwargs,
+        **kwargs: Any,
     ) -> str:
         """异步处理工具调用。"""
         loop = asyncio.get_event_loop()
@@ -97,7 +97,7 @@ class AsyncOmniMemProvider:
         self,
         turn_number: int,
         message: str,
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         """异步 turn 开始钩子。"""
         loop = asyncio.get_event_loop()
@@ -157,6 +157,6 @@ class AsyncOmniMemProvider:
         self._executor.shutdown(wait=wait)
 
     @property
-    def sync_provider(self):
+    def sync_provider(self) -> Any:
         """返回底层的同步 Provider（用于需要同步操作的场景）。"""
         return self._provider

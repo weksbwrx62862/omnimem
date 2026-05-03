@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from omnimem.core.saga import SagaStep
-from omnimem.handlers._compat import compat_scan_memory_content
+from omnimem.utils.security import SecurityValidator
 
 logger = logging.getLogger(__name__)
 
@@ -25,12 +25,12 @@ _PRIVACY_TO_SCOPE: dict[str, str] = {
 }
 
 
-def handle_memorize(provider, args: dict[str, Any]) -> str:
+def handle_memorize(provider: Any, args: dict[str, Any]) -> str:
     """处理 omni_memorize 工具调用。
 
     存储流程（安全扫描→去重→存储→索引）:
       1. 转义字符还原：将 LLM 传入的字面量 \\n/\\t/\\r 还原为实际控制字符
-      2. 安全扫描：调用 compat_scan_memory_content 检查注入攻击
+      2. 安全扫描：调用 SecurityValidator.scan_threats 检查注入攻击
       3. 反递归防护：拒绝存储系统注入内容，防止 prefetch→store→prefetch 循环
       4. privacy→scope 推导：根据 privacy 参数推导 wing 分类
       5. 精确内容去重：先检查是否有完全相同的内容
@@ -66,7 +66,7 @@ def handle_memorize(provider, args: dict[str, Any]) -> str:
     content = re.sub(r"\\r(?![a-zA-Z])", "\r", content)
 
     # ★ 安全扫描（统一入口）
-    scan_error = compat_scan_memory_content(content)
+    scan_error = SecurityValidator.scan_threats(content)
     if scan_error:
         return json.dumps({"status": "blocked", "reason": scan_error})
 
@@ -343,5 +343,13 @@ def handle_memorize(provider, args: dict[str, Any]) -> str:
             conflict_info["conflicting_with"],
             conflict_info["reason"],
         )
+
+    provider._audit_logger.log(
+        "memorize",
+        memory_id=memory_id,
+        details={"wing": wing, "room": room, "type": memory_type, "privacy": privacy},
+        result="success",
+        instance_id=getattr(provider, "_instance_id", None),
+    )
 
     return json.dumps(result, ensure_ascii=False)

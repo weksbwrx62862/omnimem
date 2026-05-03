@@ -37,11 +37,11 @@ class PrivacyManager:
     def __init__(self, default_level: str = "personal", session_id: str = ""):
         self._default_level = default_level
         self._overrides: dict[str, str] = {}
-        self._store = None  # ★ 延迟绑定存储层，用于回填
+        self._store: Any | None = None  # ★ 延迟绑定存储层，用于回填
         # OPT-1: 初始化加密器
         self._encryption = MemoryEncryption(session_seed=session_id)
 
-    def bind_store(self, store) -> None:
+    def bind_store(self, store: Any) -> None:
         """绑定存储层，用于从持久化数据回填隐私级别。"""
         self._store = store
 
@@ -62,8 +62,8 @@ class PrivacyManager:
         if self._store is not None:
             try:
                 self._store.update_privacy(memory_id, level)
-            except Exception:
-                logger.debug("Privacy persist failed for %s", memory_id)
+            except Exception as e:
+                logger.warning("Privacy persist failed for %s: %s", memory_id, e)
 
     def get(self, memory_id: str) -> str:
         """获取记忆的隐私级别。
@@ -82,9 +82,9 @@ class PrivacyManager:
                 if entry and "privacy" in entry:
                     privacy = entry["privacy"]
                     self._overrides[memory_id] = privacy  # 缓存
-                    return privacy
-            except Exception:
-                pass
+                    return str(privacy)
+            except Exception as e:
+                logger.warning("Privacy store lookback failed for %s: %s", memory_id, e)
         return self._default_level
 
     def encrypt_content(self, content: str) -> str:

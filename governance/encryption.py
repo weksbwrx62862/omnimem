@@ -10,6 +10,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import logging
+import os
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -24,7 +25,7 @@ class MemoryEncryption:
 
     Features:
       - Fernet symmetric encryption (AES-128-CBC + HMAC-SHA256)
-      - Key derived from session seed via SHA-256
+      - Key derived from session seed via PBKDF2
       - Graceful fallback if cryptography not installed
       - Thread-safe (Fernet instances are stateless)
     """
@@ -34,9 +35,19 @@ class MemoryEncryption:
 
         Args:
             session_seed: A stable per-session string (e.g., session_id).
-                          If empty, uses a default derivation (less secure,
-                          but still encrypts at rest).
+                          If empty, falls back to OMNIMEM_ENCRYPTION_KEY env var
+                          or generates a per-process random key (non-recoverable).
         """
+        if not session_seed:
+            session_seed = os.environ.get("OMNIMEM_ENCRYPTION_KEY", "")
+        if not session_seed:
+            session_seed = os.urandom(32).hex()
+            logger.warning(
+                "No session_seed or OMNIMEM_ENCRYPTION_KEY provided — "
+                "using per-process random key. Encrypted data from previous "
+                "sessions will not be decryptable after restart. Set "
+                "OMNIMEM_ENCRYPTION_KEY for persistent encryption."
+            )
         self._key = self._derive_key(session_seed)
         self._fernet: Any | None = None
         self._available: bool | None = None
@@ -44,8 +55,6 @@ class MemoryEncryption:
     @staticmethod
     def _derive_key(seed: str) -> bytes:
         """Derive a Fernet-compatible 32-byte key from seed via PBKDF2."""
-        if not seed:
-            seed = "omnimem-default-v1"
         salt = hashlib.sha256(seed.encode("utf-8")).digest()[:16]
         key = hashlib.pbkdf2_hmac(
             "sha256", seed.encode("utf-8"), salt, iterations=100_000, dklen=32
@@ -64,7 +73,7 @@ class MemoryEncryption:
             self._available = False
         return self._available
 
-    def _get_fernet(self):
+    def _get_fernet(self) -> Any | None:
         """Lazy-init Fernet instance."""
         if self._fernet is not None:
             return self._fernet
@@ -90,7 +99,7 @@ class MemoryEncryption:
             return f"{_UNENCRYPTED_PREFIX}{plaintext}"
         try:
             token = f.encrypt(plaintext.encode("utf-8"))
-            return token.decode("utf-8")
+            return str(token.decode("utf-8"))
         except Exception as e:
             logger.error("Encryption failed: %s", e)
             return f"{_UNENCRYPTED_PREFIX}{plaintext}"
@@ -106,7 +115,7 @@ class MemoryEncryption:
             logger.error("Cannot decrypt: cryptography not available")
             return _DECRYPTION_FAILED
         try:
-            return f.decrypt(ciphertext.encode("utf-8")).decode("utf-8")
+            return str(f.decrypt(ciphertext.encode("utf-8")).decode("utf-8"))
         except Exception as e:
             logger.error("Decryption failed: %s", e)
             return _DECRYPTION_FAILED

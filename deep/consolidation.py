@@ -99,7 +99,7 @@ def _extract_keywords(texts: list[str], top_k: int = 10) -> list[str]:
         "没有",
         "不是",
     }
-    word_count: Counter = Counter()
+    word_count: Counter[str] = Counter()
     for text in texts:
         # 中文分词：2-4字组合，排除停用词
         zh = [w for w in re.findall(r"[\u4e00-\u9fff]{2,4}", text) if w not in zh_stopwords]
@@ -178,9 +178,10 @@ def _generate_mental_model(observations: list[str]) -> str:
 class ConsolidationEngine:
     """Consolidation 管线：事实 → 经验 → 观察 → 心智模型。"""
 
-    def __init__(self, data_dir: Path | None = None, fact_threshold: int = 10):
+    def __init__(self, data_dir: Path | None = None, fact_threshold: int = 10, llm_client: Any | None = None):
         self._data_dir = data_dir
         self._fact_threshold = fact_threshold
+        self._llm_client = llm_client
         self._pending: list[dict[str, Any]] = []
         self._conn: sqlite3.Connection | None = None
         self._consolidation_count = 0
@@ -322,7 +323,7 @@ class ConsolidationEngine:
                         "SELECT COUNT(*) FROM consolidation_items WHERE stage = ?",
                         (stage,),
                     ).fetchone()
-                    stats[stage] = row[0] if row else 0
+                    stats[stage] = int(row[0]) if row else 0
                 except Exception:
                     stats[stage] = 0
         return stats
@@ -332,6 +333,41 @@ class ConsolidationEngine:
         return len(self._pending)
 
     # ─── 内部方法 ─────────────────────────────────────────────
+
+    def _generate_observation_with_llm(self, facts: list[dict[str, Any]]) -> str | None:
+        if self._llm_client is None:
+            return None
+        contents = [f.get("content", "") for f in facts]
+        evidence = "\n".join(f"{i + 1}. {c[:200]}" for i, c in enumerate(contents[:10]))
+        prompt = f"请从以下事实中归纳出一条观察结论（2-3句话，中文）：\n\n{evidence}"
+        system = "你是一个记忆整合引擎，从多条事实中提炼核心观察。输出必须是连贯的自然语言。"
+        try:
+            result = self._llm_client.call_sync(
+                prompt=prompt, system=system, max_tokens=400, temperature=0.4,
+            )
+            content = result.content if result else None
+            if content and content.strip():
+                return content.strip()
+        except Exception as e:
+            logger.warning("ConsolidationEngine LLM call failed: %s", e)
+        return None
+
+    def _generate_model_with_llm(self, observations: list[str]) -> str | None:
+        if self._llm_client is None:
+            return None
+        evidence = "\n".join(f"{i + 1}. {o[:200]}" for i, o in enumerate(observations[:5]))
+        prompt = f"请从以下观察中抽象出一个心智模型（1-2句话描述规律或模式，中文）：\n\n{evidence}"
+        system = "你是一个深度反思引擎，从观察中提炼抽象规律。输出必须是连贯的自然语言。"
+        try:
+            result = self._llm_client.call_sync(
+                prompt=prompt, system=system, max_tokens=400, temperature=0.4,
+            )
+            content = result.content if result else None
+            if content and content.strip():
+                return content.strip()
+        except Exception as e:
+            logger.warning("ConsolidationEngine LLM call failed: %s", e)
+        return None
 
     def _annotate_experience(self, facts: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Stage 1: 为事实添加上下文标注（经验化）。"""
@@ -364,19 +400,19 @@ class ConsolidationEngine:
     def _consolidate_observations(
         self, experience_facts: list[dict[str, Any]]
     ) -> list[dict[str, Any]]:
-        """Stage 2: 从经验事实中生成观察（跨记忆关联）。"""
         if len(experience_facts) < 2:
             return []
 
         observations: list[dict[str, Any]] = []
-        # 按主题聚类
         clusters = _cluster_by_topic(experience_facts)
 
         for topic, cluster_facts in clusters.items():
             if len(cluster_facts) < 2:
-                continue  # 至少2条相关事实才能生成观察
+                continue
 
-            obs_content = _generate_observation(cluster_facts)
+            obs_content = self._generate_observation_with_llm(cluster_facts)
+            if not obs_content:
+                obs_content = _generate_observation(cluster_facts)
             if obs_content:
                 source_ids = [f.get("item_id", "") for f in cluster_facts]
                 observations.append(
@@ -392,14 +428,14 @@ class ConsolidationEngine:
         return observations
 
     def _abstract_models(self, observations: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        """Stage 3: 从观察中抽象心智模型。"""
         if len(observations) < 2:
             return []
 
         models = []
-        # 将所有观察合并尝试生成模型
         obs_contents = [o.get("content", "") for o in observations]
-        model_content = _generate_mental_model(obs_contents)
+        model_content = self._generate_model_with_llm(obs_contents)
+        if not model_content:
+            model_content = _generate_mental_model(obs_contents)
 
         if model_content:
             source_ids = [o.get("item_id", "") for o in observations]
@@ -419,6 +455,7 @@ class ConsolidationEngine:
         """持久化 Consolidation 产出到 SQLite。"""
         if not self._conn:
             return
+        assert self._conn is not None  # narrow type for mypy
         with self._lock:
             now = datetime.now(timezone.utc).isoformat()
             for item in items:
@@ -444,6 +481,7 @@ class ConsolidationEngine:
         """从数据库查询指定阶段的 Consolidation 产出。"""
         if not self._conn:
             return []
+        assert self._conn is not None  # narrow type for mypy
         try:
             if keyword:
                 rows = self._conn.execute(

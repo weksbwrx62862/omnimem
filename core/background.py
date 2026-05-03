@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
 from typing import Any
@@ -37,8 +38,9 @@ class BackgroundTaskExecutor:
             thread_name_prefix="omnimem_bg",
         )
         self._pending_tasks = 0
+        self._lock = threading.Lock()
 
-    def submit(self, fn: Callable, *args, **kwargs) -> Future:
+    def submit(self, fn: Callable[..., Any], *args: Any, **kwargs: Any) -> Future[Any]:
         """提交任务到后台线程池。
 
         Args:
@@ -48,11 +50,12 @@ class BackgroundTaskExecutor:
         Returns:
             Future 对象，可用于获取结果或检查异常
         """
-        self._pending_tasks += 1
+        with self._lock:
+            self._pending_tasks += 1
         future = self._executor.submit(self._wrap, fn, *args, **kwargs)
         return future
 
-    def _wrap(self, fn: Callable, *args, **kwargs) -> Any:
+    def _wrap(self, fn: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
         """包装任务：捕获异常、更新计数。"""
         try:
             return fn(*args, **kwargs)
@@ -60,14 +63,18 @@ class BackgroundTaskExecutor:
             logger.error("Background task failed: %s", e, exc_info=True)
             raise
         finally:
-            self._pending_tasks -= 1
+            with self._lock:
+                self._pending_tasks -= 1
 
     def shutdown(self, wait: bool = True) -> None:
         """优雅关闭线程池。"""
-        logger.info("BackgroundTaskExecutor shutting down (pending=%d)", self._pending_tasks)
+        with self._lock:
+            pending = self._pending_tasks
+        logger.info("BackgroundTaskExecutor shutting down (pending=%d)", pending)
         self._executor.shutdown(wait=wait)
 
     @property
     def pending_tasks(self) -> int:
         """当前待执行或执行中的任务数。"""
-        return self._pending_tasks
+        with self._lock:
+            return self._pending_tasks

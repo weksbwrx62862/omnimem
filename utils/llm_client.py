@@ -50,7 +50,7 @@ class AsyncLLMClient:
         self._timeout = timeout
         self._cache_ttl = cache_ttl
         self._semaphore = asyncio.Semaphore(max_concurrent)
-        self._cache: dict[str, tuple] = {}  # key -> (LLMResponse, timestamp)
+        self._cache: dict[str, tuple[LLMResponse, float]] = {}  # key -> (LLMResponse, timestamp)
         self._client: Any | None = None
         self._closed = False
 
@@ -207,8 +207,8 @@ class AsyncLLMClient:
                     result["api_key"] = v
                 elif k == "OPENAI_BASE_URL":
                     result["base_url"] = v
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("Hermes .env credential parsing failed: %s", e)
         return result
 
     @staticmethod
@@ -228,6 +228,6 @@ class AsyncLLMClient:
                 model_cfg = cfg.get("model") or {}
                 result["base_url"] = model_cfg.get("base_url", "")
                 result["model"] = model_cfg.get("default", "")
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("Hermes config.yaml credential parsing failed: %s", e)
         return result

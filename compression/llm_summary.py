@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
@@ -71,7 +72,7 @@ Respond in JSON format with keys: goal, progress, decisions, key_info, open_issu
 """
 
 
-def llm_summarize(messages: str, llm_call_fn=None) -> StructuredSummary:
+def llm_summarize(messages: str, llm_call_fn: Callable[[str], str] | None = None) -> StructuredSummary:
     """使用 LLM 生成结构化摘要。
 
     Args:

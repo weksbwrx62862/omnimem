@@ -176,7 +176,7 @@ class WingRoomManager:
         path.mkdir(parents=True, exist_ok=True)
         return path
 
-    def list_wings(self) -> list:
+    def list_wings(self) -> list[str]:
         """列出所有 Wing。"""
         if not self._palace_dir.exists():
             return []
@@ -184,14 +184,14 @@ class WingRoomManager:
             d.name for d in self._palace_dir.iterdir() if d.is_dir() and not d.name.startswith("_")
         ]
 
-    def list_halls(self, wing: str) -> list:
+    def list_halls(self, wing: str) -> list[str]:
         """列出指定 Wing 下的所有 Hall。"""
         wing_path = self._palace_dir / wing
         if not wing_path.exists():
             return []
         return [d.name for d in wing_path.iterdir() if d.is_dir() and not d.name.startswith("_")]
 
-    def list_rooms(self, wing: str, hall: str) -> list:
+    def list_rooms(self, wing: str, hall: str) -> list[str]:
         """列出指定 Hall 下的所有 Room。"""
         hall_path = self._palace_dir / wing / hall
         if not hall_path.exists():
@@ -216,7 +216,7 @@ class WingRoomManager:
             valid = [e for e in entities if e.lower() not in _STOPWORDS and len(e) >= 2]
             if valid:
                 # 优先纯英文实体（技术术语更精确），再按长度升序
-                def _entity_priority(e: str) -> tuple:
+                def _entity_priority(e: str) -> tuple[int, int]:
                     is_pure_en = bool(re.match(r"^[A-Za-z0-9_.-]+$", e))
                     is_mixed = bool(re.search(r"[A-Za-z]", e) and re.search(r"[\u4e00-\u9fff]", e))
                     return (0 if is_pure_en else (1 if not is_mixed else 2), len(e))
@@ -225,8 +225,8 @@ class WingRoomManager:
                 best = valid[0]
                 # 纯英文实体统一小写，便于路径规范
                 if re.match(r"^[A-Za-z0-9_.-]+$", best):
-                    return best.lower()
-                return best
+                    return str(best.lower())
+                return str(best)
         except ImportError:
             pass
 
@@ -236,7 +236,7 @@ class WingRoomManager:
         tech_pattern = r"(?<![a-z])(python|java|go|rust|typescript|react|vue|docker|k8s|redis|mysql|postgresql|mongodb|neo4j|chromadb|sqlite|api|sql|rest|graphql|kubernetes|nginx|flask|django|fastapi|tensorflow|pytorch)(?![a-z])"
         tech_matches = re.findall(tech_pattern, content[:300].lower())
         if tech_matches:
-            return tech_matches[0]
+            return str(tech_matches[0])
 
         # 策略 3: CamelCase / ALLCAPS 模式
         en_pattern = r"\b[A-Z][a-z]+(?:[A-Z][a-z]+)+\b|\b[A-Z]{2,}\b"
@@ -244,7 +244,7 @@ class WingRoomManager:
         if en_matches:
             for m in en_matches:
                 if len(m) >= 3:
-                    return m.lower()
+                    return str(m.lower())
 
         # 策略 4: 中文名词短语（最宽泛，放最后）
         # ★ 优先从内容前 50 字提取，避免从长内容中间提取随机词（如"强调"）
@@ -253,12 +253,12 @@ class WingRoomManager:
         zh_matches_head = re.findall(zh_pattern, content[:50])
         for m in zh_matches_head:
             if m.lower() not in _STOPWORDS and len(m) >= 2:
-                return m
+                return str(m)
         # 回退到前 200 字
         zh_matches = re.findall(zh_pattern, content[:200])
         for m in zh_matches:
             if m.lower() not in _STOPWORDS and len(m) >= 2:
-                return m
+                return str(m)
 
         return None
 

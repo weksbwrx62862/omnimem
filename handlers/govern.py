@@ -45,7 +45,7 @@ _NEGATION_INDICATORS: tuple[str, ...] = (
 _CONFLICT_KEYWORD_RE = re.compile(r"[\u4e00-\u9fff]{2,4}|[a-zA-Z]{3,}")
 
 
-def _scan_memory_conflicts(provider) -> list[dict[str, Any]]:
+def _scan_memory_conflicts(provider: Any) -> list[dict[str, Any]]:
     """主动扫描所有记忆，检测同主题的矛盾对。
 
     策略：对所有 fact/preference/correction 类型的记忆，
@@ -107,7 +107,7 @@ def _scan_memory_conflicts(provider) -> list[dict[str, Any]]:
     return conflicts
 
 
-def handle_govern(provider, args: dict[str, Any]) -> str:
+def handle_govern(provider: Any, args: dict[str, Any]) -> str:
     """处理 omni_govern 工具调用。
 
     治理操作（通过 action 参数路由）:
@@ -269,6 +269,7 @@ def handle_govern(provider, args: dict[str, Any]) -> str:
         verify = provider._store.get(target)
         actual_privacy = verify.get("privacy", "personal") if verify else "unknown"
         actual_wing = verify.get("wing", "personal") if verify else "unknown"
+        provider._audit_logger.log("govern_set_privacy", memory_id=target, details={"privacy": actual_privacy, "wing": actual_wing}, result="success", instance_id=getattr(provider, "_instance_id", None))
         return json.dumps(
             {
                 "status": "updated",
@@ -279,9 +280,11 @@ def handle_govern(provider, args: dict[str, Any]) -> str:
         )
     elif action == "archive":
         provider._forgetting.archive(target)
+        provider._audit_logger.log("govern_archive", memory_id=target, result="success", instance_id=getattr(provider, "_instance_id", None))
         return json.dumps({"status": "archived", "memory_id": target})
     elif action == "reactivate":
         provider._forgetting.reactivate(target)
+        provider._audit_logger.log("govern_reactivate", memory_id=target, result="success", instance_id=getattr(provider, "_instance_id", None))
         return json.dumps({"status": "reactivated", "memory_id": target})
     elif action == "provenance":
         prov = provider._provenance.lookup(target)
@@ -347,5 +350,67 @@ def handle_govern(provider, args: dict[str, Any]) -> str:
             return json.dumps({"error": "Sync engine not available"})
         instances = provider._sync_engine.get_active_instances()
         return json.dumps({"status": "ok", "instances": instances})
+    elif action == "export_memories":
+        from omnimem.core.import_export import MemoryExporter
+
+        output_path = params.get("output_path", args.get("output_path", ""))
+        if not output_path:
+            return json.dumps({"error": "output_path is required for export_memories"})
+        fmt = params.get("format", args.get("format", "json"))
+        exporter = MemoryExporter(provider._store, provider._index, provider._store._meta_store)
+        try:
+            if fmt == "markdown":
+                count = exporter.export_markdown(output_path, wing=params.get("wing"))
+            else:
+                count = exporter.export_json(
+                    output_path,
+                    wing=params.get("wing"),
+                    memory_type=params.get("memory_type"),
+                )
+            return json.dumps({"status": "exported", "count": count, "path": str(output_path)})
+        except Exception as e:
+            return json.dumps({"error": f"Export failed: {e}"})
+    elif action == "import_memories":
+        from omnimem.core.import_export import MemoryImporter
+
+        input_path = params.get("input_path", args.get("input_path", ""))
+        if not input_path:
+            return json.dumps({"error": "input_path is required for import_memories"})
+        skip_dup = params.get("skip_duplicates", True)
+        resolve_conf = params.get("resolve_conflicts", True)
+        importer = MemoryImporter(
+            provider._store,
+            provider._index,
+            provider._retriever,
+            provider._dedup,
+            provider._conflict_resolver,
+            provider._forgetting,
+        )
+        try:
+            result = importer.import_json(
+                input_path,
+                skip_duplicates=skip_dup,
+                resolve_conflicts=resolve_conf,
+            )
+            return json.dumps({"status": "imported", **result})
+        except Exception as e:
+            return json.dumps({"error": f"Import failed: {e}"})
+    elif action == "audit_log":
+        operation = params.get("operation")
+        memory_id = params.get("memory_id") or target or None
+        from_time = params.get("from_time")
+        to_time = params.get("to_time")
+        limit = params.get("limit", 100)
+        try:
+            entries = provider._audit_logger.query(
+                operation=operation,
+                memory_id=memory_id,
+                from_time=from_time,
+                to_time=to_time,
+                limit=limit,
+            )
+            return json.dumps({"status": "ok", "count": len(entries), "entries": entries}, ensure_ascii=False)
+        except Exception as e:
+            return json.dumps({"error": f"Audit log query failed: {e}"})
     else:
         return json.dumps({"error": f"Unknown governance action: {action}"})

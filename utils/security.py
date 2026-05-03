@@ -146,7 +146,7 @@ class SecurityValidator:
           3. Invisible character removal
         """
         if not isinstance(text, str):
-            text = str(text)
+            text = str(text)  # type: ignore[unreachable]
         # Step 1: NFKC normalization (e.g., fullwidth → halfwidth)
         normalized = unicodedata.normalize("NFKC", text)
         # Step 2: Homoglyph substitution

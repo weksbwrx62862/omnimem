@@ -83,7 +83,7 @@ class ConflictResolver:
     def __init__(
         self,
         strategy: str = "latest",
-        semantic_check_fn: Callable | None = None,
+        semantic_check_fn: Callable[..., Any] | None = None,
         similarity_threshold: float = 0.85,
     ):
         """初始化冲突仲裁器。
@@ -227,7 +227,7 @@ class ConflictResolver:
                 return result
         return None
 
-    def _find_candidates(self, content_lower: str, memories: list[dict[str, Any]]) -> list[tuple]:
+    def _find_candidates(self, content_lower: str, memories: list[dict[str, Any]]) -> list[tuple[str, str, str, float]]:
         """从记忆列表中筛选候选记忆，计算重叠率。"""
         candidates = []
         for mem in memories:
@@ -312,7 +312,7 @@ class ConflictResolver:
     ) -> ConflictResult | None:
         """检测同主题分歧：高重叠但含否定意图或不同选项。"""
 
-        def _extract_words_for_diff(text):
+        def _extract_words_for_diff(text: str) -> set[str]:
             words = set()
             words.update(re.findall(r"[a-zA-Z]{2,}", text))
             # 数字组合（版本号、端口等）
@@ -395,6 +395,8 @@ class ConflictResolver:
 
     def _check_semantic_with_fn(self, content: str) -> ConflictResult | None:
         """用语义检索函数做冲突检测。"""
+        if self._semantic_check_fn is None:
+            return None
         try:
             similar = self._semantic_check_fn(content, self._similarity_threshold)
             if similar:
@@ -418,7 +420,7 @@ class ConflictResolver:
         """计算两段文本的词语重叠率。"""
 
         # ★ 改进分词：用2-4字滑动窗口分词，而非贪婪匹配连续中文字符
-        def _extract_words(text):
+        def _extract_words(text: str) -> set[str]:
             words = set()
             # 英文词
             words.update(re.findall(r"[a-zA-Z]{2,}", text))

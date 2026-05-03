@@ -38,26 +38,26 @@ class _ReadWriteLock:
     写者优先策略：有写者等待时，新读者排队，防止写者饥饿。
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._lock = threading.Lock()
         self._cond = threading.Condition(self._lock)
         self._readers = 0
         self._writers = 0
         self._writer_waiting = 0
 
-    def acquire_read(self):
+    def acquire_read(self) -> None:
         with self._cond:
             while self._writers > 0 or self._writer_waiting > 0:
                 self._cond.wait()
             self._readers += 1
 
-    def release_read(self):
+    def release_read(self) -> None:
         with self._cond:
             self._readers -= 1
             if self._readers == 0:
                 self._cond.notify_all()
 
-    def acquire_write(self):
+    def acquire_write(self) -> None:
         with self._cond:
             self._writer_waiting += 1
             while self._readers > 0 or self._writers > 0:
@@ -65,16 +65,16 @@ class _ReadWriteLock:
             self._writer_waiting -= 1
             self._writers += 1
 
-    def release_write(self):
+    def release_write(self) -> None:
         with self._cond:
             self._writers -= 1
             self._cond.notify_all()
 
-    def __enter__(self):
+    def __enter__(self) -> "_ReadWriteLock":
         self.acquire_write()
         return self
 
-    def __exit__(self, *args):
+    def __exit__(self, *args: object) -> None:
         self.release_write()
 
 
@@ -346,7 +346,7 @@ class HybridRetriever:
         max_tokens: int = 1500,
         mode: str = "rag",
         top_k: int = 10,
-        store=None,  # noqa: ARG002
+        store: Any = None,  # noqa: ARG002
     ) -> list[dict[str, Any]]:
         """混合检索：向量 + BM25 + RRF 融合。
 
@@ -569,8 +569,8 @@ class HybridRetriever:
     def rebuild_bm25_from_entries(self, entries: list[dict[str, Any]]) -> int:
         """从索引条目重建 BM25 检索通道（跨会话持久化恢复）。
 
-        ★ R26优化：提供公共接口，避免 provider 直接访问 _bm25 私有属性。
-        ★ OPT-6优化：若 BM25 已从磁盘缓存恢复且有数据，跳过重复重建。
+        若 BM25 已从磁盘缓存恢复且有数据，跳过重复重建。
+        否则委托给 BM25Retriever.rebuild_from_entries 进行全量重建。
 
         Args:
             entries: 索引条目列表，需含 content/summary, memory_id, type, scope 等字段
@@ -578,28 +578,13 @@ class HybridRetriever:
         Returns:
             重建的条目数
         """
-        if self._bm25.document_count > 0:
+        if self._bm25.cache_loaded and self._bm25.document_count > 0:
             logger.debug(
                 "BM25 already has %d entries from disk cache, skipping rebuild",
                 self._bm25.document_count,
             )
             return 0
-        rebuilt = 0
-        for entry in entries:
-            content = entry.get("content", "") or entry.get("summary", "")
-            memory_id = entry.get("memory_id", "")
-            if content and memory_id:
-                self._bm25.add(
-                    content,
-                    memory_id,
-                    {
-                        "memory_id": memory_id,
-                        "type": entry.get("type", "fact"),
-                        "scope": entry.get("scope", "personal"),
-                    },
-                )
-                rebuilt += 1
-        return rebuilt
+        return self._bm25.rebuild_from_entries(entries)
 
     @staticmethod
     def _is_garbage_query(query: str) -> bool:

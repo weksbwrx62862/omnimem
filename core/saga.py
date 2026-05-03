@@ -5,6 +5,7 @@
   1. 主存储（Store）作为唯一事实来源，必须先成功
   2. 索引/检索/图谱作为派生数据，允许最终一致
   3. 失败时记录到 pending queue，由后台任务重试补偿
+  4. 超过最大重试次数后丢弃，避免无限重试
 
 不实现跨服务分布式事务，而是本地 Saga 模式：
   - 正向操作：按序执行各步骤
@@ -16,6 +17,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -23,6 +25,11 @@ from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+# 重试配置
+_MAX_RETRY_COUNT = 10
+_BASE_BACKOFF_SECONDS = 1.0
+_MAX_BACKOFF_SECONDS = 300.0
 
 
 @dataclass
@@ -50,19 +57,29 @@ class SagaCoordinator:
 
     职责：
       1. 编排多步骤写入（store → index → retriever → kg）
-      2. 记录失败到 pending queue
+      2. 记录失败到 pending queue，含重试计数
       3. 提供 retry_pending() 供后台任务批量补偿
+      4. 指数退避 + 最大重试次数，超限后丢弃并告警
     """
 
-    def __init__(self, pending_path: Path | None = None):
+    def __init__(self, pending_path: Path | None = None,
+                 max_retry: int = _MAX_RETRY_COUNT,
+                 base_backoff: float = _BASE_BACKOFF_SECONDS,
+                 max_backoff: float = _MAX_BACKOFF_SECONDS):
         """初始化 Saga 协调器。
 
         Args:
             pending_path: pending 队列持久化文件路径。
-                          若提供，进程重启后可恢复未完成的任务。
+            max_retry: 最大重试次数，超限后丢弃。
+            base_backoff: 指数退避基础间隔（秒）。
+            max_backoff: 最大退避间隔（秒）。
         """
         self._pending: list[dict[str, Any]] = []
         self._pending_path = pending_path
+        self._max_retry = max_retry
+        self._base_backoff = base_backoff
+        self._max_backoff = max_backoff
+        self._total_retries = 0
         if pending_path and pending_path.exists():
             self._load_pending()
 
@@ -99,6 +116,7 @@ class SagaCoordinator:
                     "failed_step": step.name,
                     "completed_steps": completed,
                     "error": str(e),
+                    "retry_count": 0,
                     "timestamp": datetime.now(timezone.utc).isoformat(),
                 }
                 self._pending.append(record)
@@ -122,15 +140,22 @@ class SagaCoordinator:
         """获取所有待重试的 pending 记录。"""
         return list(self._pending)
 
+    def get_stats(self) -> dict[str, Any]:
+        """获取 Saga 统计信息。"""
+        return {
+            "pending_count": len(self._pending),
+            "total_retries": self._total_retries,
+            "max_retry": self._max_retry,
+        }
+
     def retry_pending(
         self,
         step_actions: dict[str, Callable[[str], Any]],
     ) -> int:
-        """批量重试 pending 任务。
+        """批量重试 pending 任务，含指数退避和最大重试次数。
 
         Args:
             step_actions: 步骤名 → (memory_id) -> Any 的映射。
-                          调用方需要提供每个失败步骤的重试逻辑。
 
         Returns:
             成功修复的条目数
@@ -140,10 +165,12 @@ class SagaCoordinator:
 
         fixed = 0
         still_pending: list[dict[str, Any]] = []
+        dropped = 0
 
         for record in self._pending:
             memory_id = record.get("memory_id", "")
             failed_step = record.get("failed_step", "")
+            retry_count = record.get("retry_count", 0)
             action = step_actions.get(failed_step)
 
             if not action:
@@ -151,13 +178,35 @@ class SagaCoordinator:
                 still_pending.append(record)
                 continue
 
+            if retry_count >= self._max_retry:
+                logger.error(
+                    "Saga record %s step '%s' exceeded max retry (%d) — dropped. Error: %s",
+                    memory_id, failed_step, self._max_retry, record.get("error", "unknown"),
+                )
+                dropped += 1
+                continue
+
+            # 指数退避
+            backoff = min(self._base_backoff * (2 ** retry_count), self._max_backoff)
+            time.sleep(backoff)
+
             try:
                 action(memory_id)
-                logger.info("Saga retry OK: %s step '%s'", memory_id, failed_step)
+                logger.info("Saga retry OK: %s step '%s' (attempt %d)", memory_id, failed_step, retry_count + 1)
+                self._total_retries += 1
                 fixed += 1
             except Exception as e:
-                logger.warning("Saga retry failed: %s step '%s': %s", memory_id, failed_step, e)
+                record["retry_count"] = retry_count + 1
+                record["last_error"] = str(e)
+                logger.warning(
+                    "Saga retry failed: %s step '%s' (attempt %d/%d): %s",
+                    memory_id, failed_step, retry_count + 1, self._max_retry, e,
+                )
+                self._total_retries += 1
                 still_pending.append(record)
+
+        if dropped > 0:
+            logger.error("Dropped %d saga records after exceeding max retry (%d)", dropped, self._max_retry)
 
         self._pending = still_pending
         self._persist_pending()
@@ -181,7 +230,7 @@ class SagaCoordinator:
             with open(self._pending_path, "w", encoding="utf-8") as f:
                 json.dump(self._pending, f, ensure_ascii=False, indent=2)
         except Exception as e:
-            logger.debug("Saga pending persist failed: %s", e)
+            logger.warning("Saga pending persist failed: %s", e)
 
     def _load_pending(self) -> None:
         """从磁盘加载 pending 队列。"""
@@ -194,4 +243,4 @@ class SagaCoordinator:
                 self._pending = data
                 logger.info("Loaded %d pending saga records", len(self._pending))
         except Exception as e:
-            logger.debug("Saga pending load failed: %s", e)
+            logger.warning("Saga pending load failed: %s", e)

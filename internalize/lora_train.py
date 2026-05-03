@@ -603,7 +603,7 @@ class LoRATrainer:
                 )
                 self._conn.commit()
             except Exception as e:
-                logger.debug("LoRA adapter persist failed: %s", e)
+                logger.warning("LoRA adapter persist failed: %s", e)
 
     def _persist_training_data(self, td: dict[str, Any]) -> None:
         """持久化训练数据。"""
@@ -626,7 +626,7 @@ class LoRATrainer:
                 )
                 self._conn.commit()
             except Exception as e:
-                logger.debug("LoRA training data persist failed: %s", e)
+                logger.warning("LoRA training data persist failed: %s", e)
 
     def _mark_data_used(self) -> None:
         """标记训练数据为已使用。"""

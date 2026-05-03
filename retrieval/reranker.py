@@ -17,13 +17,17 @@ class CrossEncoderReranker:
 
     def __init__(self, model_name: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"):
         self._model_name = model_name
-        self._model = None
+        self._model: Any = None
 
     def _ensure_model(self) -> bool:
         """延迟加载 Cross-Encoder 模型。"""
         if self._model is not None:
             return True
         try:
+            # ROCm PyTorch 兼容性
+            import torch.distributed as dist
+            if not hasattr(dist, 'is_initialized'):
+                dist.is_initialized = lambda: False
             from sentence_transformers import CrossEncoder
 
             self._model = CrossEncoder(self._model_name)

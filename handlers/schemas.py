@@ -177,6 +177,8 @@ def get_tool_schemas() -> list[dict[str, Any]]:
                             "consolidation_stats",
                             "sync_status",
                             "sync_instances",
+                            "export_memories",
+                            "import_memories",
                         ],
                         "description": "Governance action to perform",
                     },

@@ -25,10 +25,10 @@ class GovernanceAuditor:
 
     def __init__(
         self,
-        store,
-        index,
-        retriever,
-        forgetting,
+        store: Any,
+        index: Any,
+        retriever: Any,
+        forgetting: Any,
     ):
         """初始化巡检器。
 

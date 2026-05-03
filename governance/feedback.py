@@ -88,7 +88,7 @@ class FeedbackCollector:
             )
             self._conn.commit()
         except Exception as e:
-            logger.debug("Feedback click record failed: %s", e)
+            logger.warning("Feedback click record failed: %s", e)
 
     def record_shown(
         self,
@@ -117,7 +117,7 @@ class FeedbackCollector:
                 )
             self._conn.commit()
         except Exception as e:
-            logger.debug("Feedback shown record failed: %s", e)
+            logger.warning("Feedback shown record failed: %s", e)
 
     def get_source_weights(self, window: int = 100) -> dict[str, float]:
         """基于最近反馈计算各来源的权重。
@@ -172,7 +172,7 @@ class FeedbackCollector:
                 weights[src] = round(1.0 + 0.8 * (ctr - 0.3), 2)
             return weights
         except Exception as e:
-            logger.debug("Source weights calculation failed: %s", e)
+            logger.warning("Source weights calculation failed: %s", e)
             return {}
 
     def get_training_triplets(
@@ -211,7 +211,7 @@ class FeedbackCollector:
                     )
             return triplets
         except Exception as e:
-            logger.debug("Training triplets fetch failed: %s", e)
+            logger.warning("Training triplets fetch failed: %s", e)
             return []
 
     def get_stats(self) -> dict[str, Any]:
@@ -228,6 +228,6 @@ class FeedbackCollector:
                 "SELECT source_type, COUNT(*) FROM feedback_clicks GROUP BY source_type"
             ).fetchall()
             stats["sources"] = {r[0]: r[1] for r in rows}
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("Feedback stats fetch failed: %s", e)
         return stats

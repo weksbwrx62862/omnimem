@@ -72,6 +72,7 @@ class ThreeLevelIndex:
 
     def _maybe_commit(self) -> None:
         """检查待写入数是否达到阈值，达到则提交事务。"""
+        assert self._conn is not None
         self._pending_writes += 1
         if self._pending_writes >= self._BATCH_THRESHOLD:
             self._conn.commit()
@@ -94,6 +95,7 @@ class ThreeLevelIndex:
         metadata: str = "",
     ) -> None:
         """添加一条索引记录。"""
+        assert self._conn is not None
         if not stored_at:
             stored_at = datetime.now().isoformat()
         try:
@@ -124,6 +126,7 @@ class ThreeLevelIndex:
 
     def get(self, memory_id: str) -> dict[str, Any] | None:
         """根据 ID 获取索引记录。"""
+        assert self._conn is not None
         try:
             row = self._conn.execute(
                 "SELECT * FROM memory_index WHERE memory_id = ?",
@@ -137,6 +140,7 @@ class ThreeLevelIndex:
 
     def delete(self, memory_id: str) -> bool:
         """从索引中删除记录。"""
+        assert self._conn is not None
         try:
             self._conn.execute(
                 "DELETE FROM memory_index WHERE memory_id = ?",
@@ -150,6 +154,7 @@ class ThreeLevelIndex:
 
     def search_l0(self, wing: str = "", hall: str = "") -> list[str]:
         """L0 目录索引：返回匹配的 Room 列表。"""
+        assert self._conn is not None
         query = "SELECT DISTINCT room FROM memory_index WHERE 1=1"
         params = []
         if wing:
@@ -167,6 +172,7 @@ class ThreeLevelIndex:
 
     def search_l1(self, wing: str = "", type: str = "", limit: int = 50) -> list[dict[str, Any]]:
         """L1 摘要索引：返回摘要记录（含 content 用于 warm_up）。"""
+        assert self._conn is not None
         query = "SELECT memory_id, wing, hall, room, summary, type, confidence, privacy, stored_at, content FROM memory_index WHERE 1=1"
         params = []
         if wing:
@@ -206,6 +212,7 @@ class ThreeLevelIndex:
         limit: int = 20,
     ) -> list[dict[str, Any]]:
         """L2 全文索引：返回完整记录。"""
+        assert self._conn is not None
         query = "SELECT * FROM memory_index WHERE 1=1"
         params = []
         if keyword:
@@ -229,6 +236,7 @@ class ThreeLevelIndex:
 
     def search_all_for_retrieval(self, limit: int = 1000) -> list[dict[str, Any]]:
         """获取所有记录（用于检索引擎全量索引）。"""
+        assert self._conn is not None
         try:
             rows = self._conn.execute(
                 "SELECT * FROM memory_index ORDER BY stored_at DESC LIMIT ?",
@@ -241,6 +249,7 @@ class ThreeLevelIndex:
 
     def update_privacy(self, memory_id: str, privacy: str) -> bool:
         """更新隐私级别。"""
+        assert self._conn is not None
         try:
             self._conn.execute(
                 "UPDATE memory_index SET privacy = ? WHERE memory_id = ?",
@@ -252,8 +261,9 @@ class ThreeLevelIndex:
             logger.debug("Privacy update failed: %s", e)
             return False
 
-    def update_field(self, memory_id: str, **fields) -> bool:
+    def update_field(self, memory_id: str, **fields: Any) -> bool:
         """更新索引中的指定字段。"""
+        assert self._conn is not None
         if not fields:
             return False
         try:
@@ -271,6 +281,7 @@ class ThreeLevelIndex:
 
     def remove(self, memory_id: str) -> bool:
         """删除索引记录。"""
+        assert self._conn is not None
         try:
             self._conn.execute(
                 "DELETE FROM memory_index WHERE memory_id = ?",
@@ -296,9 +307,9 @@ class ThreeLevelIndex:
                 self._conn.commit()
                 self._pending_writes = 0
             except Exception as e:
-                logger.debug("Index flush failed: %s", e)
+                logger.warning("Index flush failed: %s", e)
 
-    def _row_to_dict(self, row) -> dict[str, Any]:
+    def _row_to_dict(self, row: tuple[Any, ...]) -> dict[str, Any]:
         """将数据库行转为字典。"""
         keys = [
             "memory_id",

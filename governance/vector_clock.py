@@ -12,7 +12,11 @@
 from __future__ import annotations
 
 import json
+import logging
+from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 class VectorClock:
@@ -102,6 +106,91 @@ class VectorClock:
         """序列化为 JSON 字符串。"""
         return json.dumps(self._clock)
 
+    def save(self, path: Path) -> bool:
+        """持久化向量时钟状态到文件。
+
+        Args:
+            path: 保存路径
+
+        Returns:
+            是否成功
+        """
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(self._clock, f, ensure_ascii=False)
+            return True
+        except Exception as e:
+            logger.warning("VectorClock save failed: %s", e)
+            return False
+
+    @classmethod
+    def load(cls, path: Path) -> VectorClock:
+        """从文件加载向量时钟状态。
+
+        Args:
+            path: 保存路径
+
+        Returns:
+            VectorClock 实例（加载失败时返回空时钟）
+        """
+        try:
+            if path.exists():
+                with open(path, encoding="utf-8") as f:
+                    data = json.load(f)
+                if isinstance(data, dict):
+                    return cls({k: int(v) for k, v in data.items()})
+        except Exception as e:
+            logger.warning("VectorClock load failed: %s", e)
+        return cls()
+
+    @classmethod
+    def recover_from_entries(
+        cls,
+        node_id: str,
+        entries: list[dict[str, Any]],
+    ) -> VectorClock:
+        """从已有记忆条目中恢复所有实例的计数器。
+
+        用于进程重启后恢复因果一致性。遍历所有含 VC 的记录，
+        取各节点最大值作为当前时钟状态。
+
+        Args:
+            node_id: 本实例 ID（保留参数，恢复所有节点计数器）
+            entries: 记忆条目列表（含 vc 字段）
+
+        Args:
+            node_id: 本实例的节点 ID
+            entries: 所有记忆条目列表（含 vc 字段）
+
+        Returns:
+            恢复后的 VectorClock，各节点计数器为所有记录中的最大值
+        """
+        _ = node_id  # 保留参数用于未来按节点过滤恢复
+        recovered: dict[str, int] = {}
+        for entry in entries:
+            vc_raw = entry.get("vc", {})
+            if isinstance(vc_raw, str):
+                try:
+                    vc_raw = json.loads(vc_raw)
+                except (json.JSONDecodeError, TypeError):
+                    continue
+            if not isinstance(vc_raw, dict):
+                continue
+            for nid, count in vc_raw.items():
+                try:
+                    c = int(count)
+                    recovered[nid] = max(recovered.get(nid, 0), c)
+                except (ValueError, TypeError):
+                    continue
+        if recovered:
+            logger.info(
+                "VectorClock recovered from %d entries: max counters=%s",
+                len(entries),
+                {k: v for k, v in recovered.items() if v > 0},
+            )
+        return cls(recovered)
+
     def __repr__(self) -> str:
         return f"VectorClock({self._clock})"
 
@@ -135,8 +224,8 @@ def merge_records(
 
     合并策略：
       - preference: 合并新旧值（如"喜欢猫" + "喜欢狗" → "喜欢猫、狗"）
-      - correction: 新纠正覆盖旧纠正
-      - fact: last_writer_wins（但保留两个来源的 vc）
+      - correction: 使用 VC 比较决定，远程更新则覆盖
+      - fact: 使用 VC 比较决定，远程更新则覆盖
 
     Args:
         local: 本地记忆记录
@@ -153,23 +242,23 @@ def merge_records(
         .to_dict()
     )
 
+    local_vc = VectorClock.from_dict(local.get("vc", {}))
+    remote_vc = VectorClock.from_dict(remote.get("vc", {}))
+
     if memory_type == "preference":
         # 偏好合并：保留两者内容，去重后拼接
         local_content = local.get("content", "")
         remote_content = remote.get("content", "")
         if remote_content and remote_content not in local_content:
             merged["content"] = f"{local_content}；{remote_content}"
-    elif memory_type == "correction":
-        # 纠正覆盖：取时间戳较新的
-        local_ts = local.get("stored_at", "")
-        remote_ts = remote.get("stored_at", "")
-        if remote_ts > local_ts:
+    elif memory_type == "correction" or memory_type == "fact":
+        # 使用 VC 比较决定是否覆盖
+        cmp = remote_vc.compare(local_vc)
+        if cmp == 1:
+            # 远程版本更新 → 覆盖
             merged["content"] = remote.get("content", local.get("content", ""))
-    else:
-        # fact / 其他：last_writer_wins
-        local_ts = local.get("stored_at", "")
-        remote_ts = remote.get("stored_at", "")
-        if remote_ts > local_ts:
+        elif cmp == 0:
+            # 并发冲突 → 也接受远程（concurrent merge）
             merged["content"] = remote.get("content", local.get("content", ""))
 
     return merged

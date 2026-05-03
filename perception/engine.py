@@ -178,7 +178,7 @@ class PerceptionEngine:
 
         return signals
 
-    def _check_garbage(self, user_content: str, assistant_content: str) -> tuple:
+    def _check_garbage(self, user_content: str, assistant_content: str) -> tuple[bool, bool]:
         """系统注入检测 + AI 回复 echo 防护。
 
         Returns:
@@ -318,7 +318,7 @@ class PerceptionEngine:
         # 非末尾问号：提取问号后的子问题
         questions = re.findall(r"[？?](.+)$", message, re.MULTILINE)
         if questions:
-            return questions[0].strip()
+            return str(questions[0]).strip()
 
         # 提取关键实体
         entities = self._extract_entities(message)
@@ -345,6 +345,9 @@ class PerceptionEngine:
                 memories.append(s)
 
         return memories
+
+    def close(self) -> None:
+        pass
 
     def _extract_entities(self, text: str) -> list[str]:
         """提取文本中的关键实体。"""

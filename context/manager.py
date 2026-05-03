@@ -13,10 +13,13 @@
 
 from __future__ import annotations
 
+import json
 import logging
+import os
 import re
 from dataclasses import dataclass
 from functools import lru_cache
+from collections.abc import Callable
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -60,7 +63,7 @@ class ContextManager:
     """
 
     # ★ P1方案三：结构化压缩模板 — 将常见长句模式压缩为固定格式短摘要
-    _COMPRESSION_TEMPLATES: list[tuple] = [
+    _COMPRESSION_TEMPLATES: list[tuple[str, str]] = [
         (r"用户(?:不喜欢|讨厌|反感|不爱)(.+?)(?:，|；|\.|$)", r"用户否定: \1"),
         (r"用户(?:喜欢|爱|偏好|钟爱)(.+?)(?:，|；|\.|$)", r"用户偏好: \1"),
         (r"用户(?:叫|称呼|让\s*叫)(.+?)(?:，|；|\.|$)", r"用户称呼: \1"),
@@ -72,7 +75,7 @@ class ContextManager:
     def __init__(
         self,
         budget: ContextBudget | None = None,
-        embedding_fn=None,
+        embedding_fn: Callable[[str], list[float]] | None = None,
     ):
         self._budget = budget or ContextBudget()
         # 本轮已注入的摘要指纹集合，防止重复注入
@@ -193,7 +196,7 @@ class ContextManager:
 
     # 语义等价词映射：同义表达归一化为同一个标准词
     # 同时作为分词词典：匹配时先尝试长词，再尝试短词
-    _SYNONYM_MAP: dict[str, str] = {
+    _DEFAULT_SYNONYM_MAP: dict[str, str] = {
         # 偏好类
         "喜欢": "偏好",
         "偏好": "偏好",
@@ -253,6 +256,33 @@ class ContextManager:
         "记住": "记住",
     }
 
+    # 运行时同义词映射（从外部 JSON 加载，可被用户自定义覆盖）
+    _SYNONYM_MAP: dict[str, str] = {}
+
+    @classmethod
+    def _load_synonym_map(cls) -> dict[str, str]:
+        """从外部 JSON 加载同义词映射，合并默认值与用户自定义。
+
+        加载策略：
+          1. 以 _DEFAULT_SYNONYM_MAP 为基础
+          2. 尝试从 config/synonyms.json 加载并覆盖默认值
+          3. 加载失败时回退到默认值并记录 warning
+        """
+        result = dict(cls._DEFAULT_SYNONYM_MAP)
+        config_path = os.path.join(
+            os.path.dirname(os.path.dirname(__file__)), "config", "synonyms.json"
+        )
+        try:
+            with open(config_path, "r", encoding="utf-8") as f:
+                external: dict[str, str] = json.load(f)
+            if isinstance(external, dict):
+                result.update(external)
+        except FileNotFoundError:
+            logger.debug("synonyms.json not found at %s, using defaults", config_path)
+        except Exception:
+            logger.warning("Failed to load synonyms.json from %s, using defaults", config_path)
+        return result
+
     # 分词词典：从 _SYNONYM_MAP 的 key 中提取，按长度降序排列
     # 用于基于词典的最大匹配分词
     _DICT_WORDS: list[str] | None = None
@@ -262,6 +292,8 @@ class ContextManager:
     def _get_dict_words(cls) -> list[str]:
         """获取分词词典（惰性初始化，按词长降序排列）。"""
         if cls._DICT_WORDS is None:
+            if not cls._SYNONYM_MAP:
+                cls._SYNONYM_MAP = cls._load_synonym_map()
             all_words = set(cls._SYNONYM_MAP.keys())
             # 按长度降序排列（长词优先匹配）
             cls._DICT_WORDS = sorted(all_words, key=len, reverse=True)
@@ -273,11 +305,14 @@ class ContextManager:
         """获取分词词典集合（惰性初始化，用于 O(1) 快速查找）。"""
         if cls._DICT_SET is None:
             cls._get_dict_words()
+        assert cls._DICT_SET is not None
         return cls._DICT_SET
 
     @classmethod
     def _normalize_word(cls, word: str) -> str:
         """将词归一化：先查同义映射，再返回原词。"""
+        if not cls._SYNONYM_MAP:
+            cls._SYNONYM_MAP = cls._load_synonym_map()
         return cls._SYNONYM_MAP.get(word, word)
 
     @classmethod
@@ -611,7 +646,7 @@ class ContextManager:
         norm2 = sum(b * b for b in vec2) ** 0.5
         if norm1 == 0 or norm2 == 0:
             return 0.0
-        return dot / (norm1 * norm2)
+        return float(dot / (norm1 * norm2))
 
     # ─── 核心方法 ─────────────────────────────────────────────
 

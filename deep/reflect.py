@@ -93,7 +93,7 @@ class ReflectionContext:
 # ─── Disposition 影响的反思风格模板 ────────────────────────────
 
 
-def _apply_disposition(observation: str, model: str, disposition: Disposition) -> tuple:
+def _apply_disposition(observation: str, model: str, disposition: Disposition) -> tuple[str, str]:
     """根据 Disposition 参数调整反思输出的语气和侧重。
 
     Returns:
@@ -185,10 +185,11 @@ class ReflectEngine:
     def __init__(
         self,
         data_dir: Path | None = None,
-        consolidation_engine=None,
+        consolidation_engine: Any | None = None,
         default_disposition: Disposition | None = None,
-        recall_fn: Callable | None = None,
-        llm_fn: Callable | None = None,
+        recall_fn: Callable[..., Any] | None = None,
+        llm_fn: Callable[..., Any] | None = None,
+        llm_client: Any | None = None,
     ):
         """初始化 ReflectEngine。
 
@@ -200,12 +201,14 @@ class ReflectEngine:
             llm_fn: LLM 调用函数，签名: (prompt: str, system: str, max_tokens: int) -> str
                     接收 prompt + system prompt，返回 LLM 文本响应。
                     为 None 时回退到规则归纳。
+            llm_client: LLM 客户端实例，用于直接调用 LLM
         """
         self._data_dir = data_dir
         self._consolidation = consolidation_engine
         self._default_disposition = default_disposition or Disposition()
         self._recall_fn = recall_fn
         self._llm_fn = llm_fn
+        self._llm_client = llm_client
         self._conn: sqlite3.Connection | None = None
         self._reflection_count = 0
         self._lock = threading.RLock()
@@ -345,7 +348,7 @@ class ReflectEngine:
     def _search_mental_models(self, query: str) -> list[dict[str, Any]]:
         """Step 1: 查找已有的心智模型。"""
         if self._consolidation:
-            return self._consolidation.get_mental_models(topic=query, limit=5)
+            return self._consolidation.get_mental_models(topic=query, limit=5)  # type: ignore[no-any-return]
         return []
 
     def _recall_facts(
@@ -361,13 +364,13 @@ class ReflectEngine:
             try:
                 results = self._recall_fn(query, limit=20)
                 if results:
-                    return results
+                    return results  # type: ignore[no-any-return]
             except Exception as e:
                 logger.debug("Recall function failed: %s", e)
 
         # 从 Consolidation 查询经验事实
         if self._consolidation:
-            return self._consolidation.get_observations(topic=query, limit=20)
+            return self._consolidation.get_observations(topic=query, limit=20)  # type: ignore[no-any-return]
         return []
 
     def _expand_context(self, query: str, facts: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -397,7 +400,7 @@ class ReflectEngine:
     def _search_observations(self, query: str) -> list[dict[str, Any]]:
         """Step 4: 搜索观察洞察。"""
         if self._consolidation:
-            return self._consolidation.get_observations(topic=query, limit=10)
+            return self._consolidation.get_observations(topic=query, limit=10)  # type: ignore[no-any-return]
         return []
 
     # ─── 综合生成 ─────────────────────────────────────────────
@@ -503,14 +506,14 @@ class ReflectEngine:
         contents: list[str],
         disposition: Disposition,
         max_tokens: int = 800,
-    ) -> tuple | None:
+    ) -> tuple[str, str, float] | None:
         """使用 LLM 对记忆内容进行推理归纳。
 
         Returns:
             (observation, mental_model, confidence) 或 None（LLM 不可用时）
         """
-        if not self._llm_fn:
-            logger.debug("ReflectEngine: _llm_fn is None, skipping LLM call")
+        if self._llm_client is None and self._llm_fn is None:
+            logger.debug("ReflectEngine: no LLM client available, skipping LLM call")
             return None
 
         # 构建推理 prompt
@@ -553,7 +556,14 @@ class ReflectEngine:
         max_retries = 3
         for attempt in range(max_retries):
             try:
-                raw = self._llm_fn(prompt=prompt, system=system, max_tokens=max_tokens)
+                raw = None
+                if self._llm_client is not None:
+                    result = self._llm_client.call_sync(
+                        prompt=prompt, system=system, max_tokens=max_tokens, temperature=0.5,
+                    )
+                    raw = result.content if result else None
+                elif self._llm_fn is not None:
+                    raw = self._llm_fn(prompt=prompt, system=system, max_tokens=max_tokens)
                 if not raw or not raw.strip():
                     if attempt < max_retries - 1:
                         logger.warning(
@@ -617,7 +627,7 @@ class ReflectEngine:
         return None
 
     @staticmethod
-    def _parse_llm_output(raw: str) -> tuple:
+    def _parse_llm_output(raw: str) -> tuple[str, str, float]:
         """解析 LLM 输出为 (observation, mental_model, confidence)。
 
         支持多种标记格式：【观察】/【心智模型】/【置信度】 或
@@ -865,7 +875,7 @@ class ReflectEngine:
 
     def _rule_based_synthesize(
         self, query: str, ctx: ReflectionContext, base_confidence: float
-    ) -> tuple:
+    ) -> tuple[str, str, float]:
         """规则归纳完整回退（观察 + 心智模型 + 置信度）。
 
         注意：规则归纳是 LLM 不可用时的降级方案，输出质量有限。

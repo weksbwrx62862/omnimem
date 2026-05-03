@@ -132,7 +132,7 @@ class ProvenanceTracker:
             prov = self._provenance.get(current_id)
             if prov:
                 chain.append(prov)
-                current_id = prov.get("parent_id")
+                current_id = prov.get("parent_id") or ""
             else:
                 break
 

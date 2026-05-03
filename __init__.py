@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from typing import Any  # noqa: F401
 from unittest.mock import MagicMock
 
 # 当作为独立包运行时，将项目根目录加入 sys.path
@@ -35,6 +36,6 @@ sys.modules.setdefault("agent.memory_provider", _mock_agent.memory_provider)
 from omnimem.provider import OmniMemProvider  # noqa: E402
 
 
-def register(ctx) -> None:
+def register(ctx: Any) -> None:
     """Register OmniMem as a memory provider plugin."""
     ctx.register_memory_provider(OmniMemProvider())

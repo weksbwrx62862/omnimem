@@ -279,39 +279,41 @@ class KVCacheManager:
         """持久化缓存条目。"""
         if not self._conn:
             return
-        now = datetime.now(timezone.utc).isoformat()
-        try:
-            self._conn.execute(
-                """INSERT OR REPLACE INTO kv_cache_entries
-                   (cache_key, content, metadata, access_count, preloaded_at, last_accessed, source_memory_ids)
-                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                (
-                    key,
-                    pattern.get("content", ""),
-                    json.dumps(pattern.get("metadata", {}), ensure_ascii=False),
-                    self._access_counts.get(key, 0),
-                    now,
-                    now,
-                    json.dumps(pattern.get("source_memory_ids", []), ensure_ascii=False),
-                ),
-            )
-            self._conn.commit()
-        except Exception as e:
-            logger.debug("KV Cache persist failed: %s", e)
+        with self._lock:
+            now = datetime.now(timezone.utc).isoformat()
+            try:
+                self._conn.execute(
+                    """INSERT OR REPLACE INTO kv_cache_entries
+                       (cache_key, content, metadata, access_count, preloaded_at, last_accessed, source_memory_ids)
+                       VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        key,
+                        pattern.get("content", ""),
+                        json.dumps(pattern.get("metadata", {}), ensure_ascii=False),
+                        self._access_counts.get(key, 0),
+                        now,
+                        now,
+                        json.dumps(pattern.get("source_memory_ids", []), ensure_ascii=False),
+                    ),
+                )
+                self._conn.commit()
+            except Exception as e:
+                logger.warning("KV Cache persist failed: %s", e)
 
     def _update_access_count(self, key: str) -> None:
         """更新访问计数（批量写入优化）。"""
         if not self._conn:
             return
-        try:
-            now = datetime.now(timezone.utc).isoformat()
-            self._conn.execute(
-                "UPDATE kv_cache_entries SET access_count = ?, last_accessed = ? WHERE cache_key = ?",
-                (self._access_counts.get(key, 0), now, key),
-            )
-            self._conn.commit()
-        except Exception:
-            pass
+        with self._lock:
+            try:
+                now = datetime.now(timezone.utc).isoformat()
+                self._conn.execute(
+                    "UPDATE kv_cache_entries SET access_count = ?, last_accessed = ? WHERE cache_key = ?",
+                    (self._access_counts.get(key, 0), now, key),
+                )
+                self._conn.commit()
+            except Exception as e:
+                logger.warning("KV Cache update access count failed for %s: %s", key, e)
 
     def _flush_access_counts(self) -> None:
         """批量刷新所有访问计数。"""

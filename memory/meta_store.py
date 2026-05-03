@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 import sqlite3
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -34,6 +35,7 @@ class MetaStore:
         self._db_path = self._db_dir / "meta_store.db"
         self._conn: sqlite3.Connection | None = None
         self._fts_enabled = False
+        self._lock = threading.RLock()
         self._init_db()
 
     def _init_db(self) -> None:
@@ -117,21 +119,22 @@ class MetaStore:
 
     # ─── CRUD ─────────────────────────────────────────────────
 
-    def add(self, memory_id: str, **fields) -> None:
+    def add(self, memory_id: str, **fields: Any) -> None:
         """添加或替换一条元数据记录。"""
         if not self._conn:
             return
-        cols = ["memory_id"] + [k for k in fields if k != "memory_id"]
-        vals = [memory_id] + [fields.get(k, "") for k in cols[1:]]
-        placeholders = ",".join("?" * len(cols))
-        try:
-            self._conn.execute(
-                f"INSERT OR REPLACE INTO memories ({','.join(cols)}) VALUES ({placeholders})",
-                vals,
-            )
-            self._conn.commit()
-        except Exception as e:
-            logger.debug("MetaStore add failed for %s: %s", memory_id, e)
+        with self._lock:
+            cols = ["memory_id"] + [k for k in fields if k != "memory_id"]
+            vals = [memory_id] + [fields.get(k, "") for k in cols[1:]]
+            placeholders = ",".join("?" * len(cols))
+            try:
+                self._conn.execute(
+                    f"INSERT OR REPLACE INTO memories ({','.join(cols)}) VALUES ({placeholders})",
+                    vals,
+                )
+                self._conn.commit()
+            except Exception as e:
+                logger.warning("MetaStore add failed for %s: %s", memory_id, e)
 
     def get(self, memory_id: str) -> dict[str, Any] | None:
         """根据 ID 获取元数据。"""
@@ -151,34 +154,36 @@ class MetaStore:
         """更新隐私级别和可选 wing。"""
         if not self._conn:
             return False
-        try:
-            if new_wing:
-                self._conn.execute(
-                    "UPDATE memories SET privacy = ?, wing = ? WHERE memory_id = ?",
-                    (privacy, new_wing, memory_id),
-                )
-            else:
-                self._conn.execute(
-                    "UPDATE memories SET privacy = ? WHERE memory_id = ?",
-                    (privacy, memory_id),
-                )
-            self._conn.commit()
-            return True
-        except Exception as e:
-            logger.debug("MetaStore update_privacy failed for %s: %s", memory_id, e)
-            return False
+        with self._lock:
+            try:
+                if new_wing:
+                    self._conn.execute(
+                        "UPDATE memories SET privacy = ?, wing = ? WHERE memory_id = ?",
+                        (privacy, new_wing, memory_id),
+                    )
+                else:
+                    self._conn.execute(
+                        "UPDATE memories SET privacy = ? WHERE memory_id = ?",
+                        (privacy, memory_id),
+                    )
+                self._conn.commit()
+                return True
+            except Exception as e:
+                logger.warning("MetaStore update_privacy failed for %s: %s", memory_id, e)
+                return False
 
     def delete(self, memory_id: str) -> bool:
         """删除元数据记录。"""
         if not self._conn:
             return False
-        try:
-            self._conn.execute("DELETE FROM memories WHERE memory_id = ?", (memory_id,))
-            self._conn.commit()
-            return True
-        except Exception as e:
-            logger.debug("MetaStore delete failed for %s: %s", memory_id, e)
-            return False
+        with self._lock:
+            try:
+                self._conn.execute("DELETE FROM memories WHERE memory_id = ?", (memory_id,))
+                self._conn.commit()
+                return True
+            except Exception as e:
+                logger.warning("MetaStore delete failed for %s: %s", memory_id, e)
+                return False
 
     # ─── 搜索 ─────────────────────────────────────────────────
 
@@ -278,29 +283,30 @@ class MetaStore:
         if not self._conn:
             return 0
         added = 0
-        try:
-            for entry in entries:
-                mid = entry.get("memory_id", "")
-                if not mid:
-                    continue
-                self.add(
-                    memory_id=mid,
-                    wing=entry.get("wing", ""),
-                    hall=entry.get("hall", entry.get("type", "fact")),
-                    room=entry.get("room", ""),
-                    type=entry.get("type", "fact"),
-                    confidence=entry.get("confidence", 3),
-                    privacy=entry.get("privacy", "personal"),
-                    stored_at=entry.get("stored_at", ""),
-                    summary=entry.get("summary", ""),
-                    content_preview=entry.get("content", "")[:500],
-                    vc=entry.get("vc", ""),
-                )
-                added += 1
-            self._conn.commit()
-            logger.info("MetaStore warmed up %d entries", added)
-        except Exception as e:
-            logger.debug("MetaStore warm_up failed: %s", e)
+        with self._lock:
+            try:
+                for entry in entries:
+                    mid = entry.get("memory_id", "")
+                    if not mid:
+                        continue
+                    self.add(
+                        memory_id=mid,
+                        wing=entry.get("wing", ""),
+                        hall=entry.get("hall", entry.get("type", "fact")),
+                        room=entry.get("room", ""),
+                        type=entry.get("type", "fact"),
+                        confidence=entry.get("confidence", 3),
+                        privacy=entry.get("privacy", "personal"),
+                        stored_at=entry.get("stored_at", ""),
+                        summary=entry.get("summary", ""),
+                        content_preview=entry.get("content", "")[:500],
+                        vc=entry.get("vc", ""),
+                    )
+                    added += 1
+                self._conn.commit()
+                logger.info("MetaStore warmed up %d entries", added)
+            except Exception as e:
+                logger.debug("MetaStore warm_up failed: %s", e)
         return added
 
     # ─── 内部方法 ─────────────────────────────────────────────

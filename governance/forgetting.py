@@ -39,12 +39,21 @@ class ForgettingCurve:
 
     _BATCH_THRESHOLD = 5
 
-    def __init__(self, governance_dir: Path):
+    def __init__(self, governance_dir: Path, config: Any = None):
         self._governance_dir = governance_dir
         self._governance_dir.mkdir(parents=True, exist_ok=True)
         self._db_path = self._governance_dir / "forgetting.db"
         self._conn: sqlite3.Connection | None = None
         self._pending_writes = 0
+        self._active_days = getattr(config, 'forgetting_active_days', 7) if config else 7
+        self._consolidating_days = getattr(config, 'forgetting_consolidating_days', 30) if config else 30
+        self._archived_days = getattr(config, 'forgetting_archived_days', 90) if config else 90
+        self._stages: dict[str, tuple[int, int | None]] = {
+            "active": (0, self._active_days),
+            "consolidating": (self._active_days, self._consolidating_days),
+            "archived": (self._consolidating_days, self._archived_days),
+            "forgotten": (self._archived_days, None),
+        }
         self._init_db()
 
     def _init_db(self) -> None:
@@ -66,26 +75,27 @@ class ForgettingCurve:
             self._conn.execute(
                 "ALTER TABLE forgetting_state ADD COLUMN recall_count INTEGER DEFAULT 0"
             )
-        except Exception:
-            pass  # 列已存在
+        except Exception as e:
+            logger.debug("ALTER TABLE forgetting_state failed (column may already exist): %s", e)
         self._conn.commit()
 
     def get_stage(self, memory_id: str) -> str:
         """获取记忆的当前阶段。"""
+        assert self._conn is not None
         try:
             row = self._conn.execute(
                 "SELECT stage FROM forgetting_state WHERE memory_id = ?",
                 (memory_id,),
             ).fetchone()
             if row:
-                return row[0]
+                return str(row[0])
         except Exception as e:
-            logger.debug("Forgetting stage query failed: %s", e)
+            logger.warning("Forgetting stage query failed: %s", e)
         return "active"
 
     def get_stage_by_age(self, days: int) -> str:
         """根据天数计算阶段。"""
-        for stage, (min_days, max_days) in STAGES.items():
+        for stage, (min_days, max_days) in self._stages.items():
             if max_days is None:
                 if days >= min_days:
                     return stage
@@ -108,6 +118,7 @@ class ForgettingCurve:
         self._set_stage(memory_id, "active")
         # 更新最后访问时间
         now = datetime.now(timezone.utc).isoformat()
+        assert self._conn is not None
         try:
             self._conn.execute(
                 "UPDATE forgetting_state SET last_accessed = ? WHERE memory_id = ?",
@@ -116,11 +127,12 @@ class ForgettingCurve:
             self._pending_writes += 1
             self._maybe_commit()
         except Exception as e:
-            logger.debug("Reactivate update failed: %s", e)
+            logger.warning("Reactivate update failed: %s", e)
 
     def record_access(self, memory_id: str) -> None:
         """记录记忆被访问（重置遗忘计时器 + 增加召回计数）。"""
         now = datetime.now(timezone.utc).isoformat()
+        assert self._conn is not None
         try:
             existing = self._conn.execute(
                 "SELECT recall_count FROM forgetting_state WHERE memory_id = ?",
@@ -142,7 +154,7 @@ class ForgettingCurve:
             self._pending_writes += 1
             self._maybe_commit()
         except Exception as e:
-            logger.debug("Access record failed: %s", e)
+            logger.warning("Access record failed: %s", e)
 
     def run_archive_cycle(self) -> int:
         """后台运行：将过期记忆降级。
@@ -156,11 +168,13 @@ class ForgettingCurve:
         now = datetime.now(timezone.utc)
         archived_count = 0
 
+        assert self._conn is not None
         try:
             rows = self._conn.execute(
                 "SELECT memory_id, created_at, stage, recall_count FROM forgetting_state"
             ).fetchall()
-        except Exception:
+        except Exception as e:
+            logger.warning("Archive cycle query failed: %s", e)
             return 0
 
         for memory_id, created_at, stage, recall_count in rows:
@@ -174,12 +188,11 @@ class ForgettingCurve:
 
                 # ★ 访问衰减：recall_count=0 的记忆，阈值减半
                 if recall_count is None or recall_count == 0:
-                    # 加速遗忘：active→3天, consolidating→15天, archived→45天
-                    accelerated_stages = {
-                        "active": (0, 3),
-                        "consolidating": (3, 15),
-                        "archived": (15, 45),
-                        "forgotten": (45, None),
+                    accelerated_stages: dict[str, tuple[int, int | None]] = {
+                        "active": (0, self._active_days // 2),
+                        "consolidating": (self._active_days // 2, self._consolidating_days // 2),
+                        "archived": (self._consolidating_days // 2, self._archived_days // 2),
+                        "forgotten": (self._archived_days // 2, None),
                     }
                     expected_stage = self._get_stage_by_age_custom(days, accelerated_stages)
                 else:
@@ -196,25 +209,26 @@ class ForgettingCurve:
                     self._set_stage(memory_id, expected_stage)
                     archived_count += 1
             except Exception as e:
-                logger.debug("Archive cycle failed for %s: %s", memory_id, e)
+                logger.warning("Archive cycle failed for %s: %s", memory_id, e)
 
         logger.debug("Archive cycle: %d memories archived", archived_count)
         return archived_count
 
     @staticmethod
-    def _get_stage_by_age_custom(days: int, stages: dict) -> str:
+    def _get_stage_by_age_custom(days: int, stages: dict[str, tuple[int, int | None]]) -> str:
         """根据天数和自定义阶段定义计算阶段。"""
         for stage, (min_days, max_days) in stages.items():
             if max_days is None:
                 if days >= min_days:
-                    return stage
+                    return str(stage)
             elif min_days <= days < max_days:
-                return stage
+                return str(stage)
         return "active"
 
     def get_status(self) -> dict[str, Any]:
         """获取遗忘状态概览。"""
-        counts = {"active": 0, "consolidating": 0, "archived": 0, "forgotten": 0}
+        counts: dict[str, int] = {"active": 0, "consolidating": 0, "archived": 0, "forgotten": 0}
+        assert self._conn is not None
         try:
             rows = self._conn.execute(
                 "SELECT stage, COUNT(*) FROM forgetting_state GROUP BY stage"
@@ -222,8 +236,8 @@ class ForgettingCurve:
             for stage, count in rows:
                 if stage in counts:
                     counts[stage] = count
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("Get forgetting status failed: %s", e)
         return counts
 
     def get_archived_ids(self, limit: int = 5000) -> list[str]:
@@ -235,6 +249,7 @@ class ForgettingCurve:
         Returns:
             memory_id 列表
         """
+        assert self._conn is not None
         try:
             rows = self._conn.execute(
                 "SELECT memory_id FROM forgetting_state WHERE stage IN ('archived', 'forgotten') LIMIT ?",
@@ -242,12 +257,13 @@ class ForgettingCurve:
             ).fetchall()
             return [r[0] for r in rows if r[0]]
         except Exception as e:
-            logger.debug("Get archived ids failed: %s", e)
+            logger.warning("Get archived ids failed: %s", e)
             return []
 
     def _set_stage(self, memory_id: str, stage: str) -> None:
         """设置记忆的阶段。"""
         now = datetime.now(timezone.utc).isoformat()
+        assert self._conn is not None
         try:
             self._conn.execute(
                 """INSERT OR REPLACE INTO forgetting_state
@@ -258,11 +274,12 @@ class ForgettingCurve:
             self._pending_writes += 1
             self._maybe_commit()
         except Exception as e:
-            logger.debug("Stage update failed: %s", e)
+            logger.warning("Stage update failed: %s", e)
 
     def _maybe_commit(self) -> None:
         """到达阈值时提交。"""
         if self._pending_writes >= self._BATCH_THRESHOLD:
+            assert self._conn is not None
             self._conn.commit()
             self._pending_writes = 0
 
@@ -273,7 +290,7 @@ class ForgettingCurve:
                 self._conn.commit()
                 self._pending_writes = 0
             except Exception as e:
-                logger.debug("Forgetting flush failed: %s", e)
+                logger.warning("Forgetting flush failed: %s", e)
 
     def close(self) -> None:
         """关闭数据库连接。"""

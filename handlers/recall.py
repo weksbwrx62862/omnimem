@@ -43,7 +43,7 @@ def _extract_query_keywords(query: str) -> set[str]:
     return keywords
 
 
-def handle_recall(provider, args: dict[str, Any]) -> str:
+def handle_recall(provider: Any, args: dict[str, Any]) -> str:
     """主动检索记忆 — 经 ContextManager 精炼后返回精简摘要。
 
     与 prefetch 不同，recall 是 Agent 主动调用，预算更宽松。
@@ -120,7 +120,7 @@ def handle_recall(provider, args: dict[str, Any]) -> str:
                         results.append(sr)
                 # query 无关键词时不追加
         except (TimeoutError, ConnectionError) as e:
-            logger.debug("OmniMem llm store supplement failed: %s", e)
+            logger.warning("OmniMem llm store supplement failed: %s", e)
 
     # 图谱检索通道
     if provider._knowledge_graph:
@@ -135,7 +135,7 @@ def handle_recall(provider, args: dict[str, Any]) -> str:
                     gr["confidence"] = gr.get("confidence", 0.5)
                 results.extend(graph_results[:5])
         except (RuntimeError, ValueError) as e:
-            logger.debug("OmniMem graph recall failed: %s", e)
+            logger.warning("OmniMem graph recall failed: %s", e)
 
     results = provider._temporal_decay.apply(results)
     results = provider._privacy.filter(results, session_id=provider._session_id)
@@ -234,8 +234,8 @@ def handle_recall(provider, args: dict[str, Any]) -> str:
                         existing_ids.add(sf_mid)
                         if len(results) >= 5:
                             break
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("OmniMem store supplement fallback failed: %s", e)
         if not results:
             return json.dumps(
                 {
@@ -247,6 +247,13 @@ def handle_recall(provider, args: dict[str, Any]) -> str:
 
     # ★ 经 ContextManager 精炼 — 精简摘要 + 保留原文供 detail 拉取
     refined = provider._context_manager.refine_recall_results(results, max_tokens=max_tokens)
+
+    provider._audit_logger.log(
+        "recall",
+        details={"query": query, "mode": mode, "count": len(refined)},
+        result="success",
+        instance_id=getattr(provider, "_instance_id", None),
+    )
 
     return json.dumps(
         {

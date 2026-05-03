@@ -1,0 +1,376 @@
+"""VectorStore 抽象接口与多后端适配器。"""
+
+from __future__ import annotations
+
+import hashlib
+import logging
+import threading
+from abc import ABC, abstractmethod
+from pathlib import Path
+from typing import Any
+
+logger = logging.getLogger(__name__)
+
+
+class VectorStore(ABC):
+    @abstractmethod
+    def add(self, ids: list[str], documents: list[str], metadatas: list[dict] | None = None) -> None:
+        ...
+
+    @abstractmethod
+    def query(self, query_texts: list[str], n_results: int = 10, where: dict | None = None) -> dict:
+        ...
+
+    @abstractmethod
+    def delete(self, ids: list[str]) -> None:
+        ...
+
+    @abstractmethod
+    def count(self) -> int:
+        ...
+
+    @abstractmethod
+    def reset(self) -> None:
+        ...
+
+
+class _CachedEmbeddingFunction:
+    def __init__(self, model_name: str = "all-MiniLM-L6-v2", cache_path: Path | None = None):
+        self._model_name = model_name
+        self._model = None
+        self._cache: dict[str, list[float]] = {}
+        self._max_cache = 1000
+        self._lock = threading.Lock()
+        self._cache_path = cache_path
+        self._load_cache()
+
+    def _load_cache(self) -> None:
+        if not self._cache_path or not self._cache_path.exists():
+            return
+        try:
+            import json
+
+            with open(self._cache_path, encoding="utf-8") as f:
+                data = json.load(f)
+            self._cache = {k: [float(v) for v in vec] for k, vec in data.items()}
+            logger.debug("Loaded %d entries from embedding cache", len(self._cache))
+        except Exception as e:
+            logger.debug("Embedding cache load failed: %s", e)
+            self._cache = {}
+
+    def persist(self) -> None:
+        if not self._cache_path:
+            return
+        try:
+            import json
+
+            self._cache_path.parent.mkdir(parents=True, exist_ok=True)
+            with self._lock:
+                data = dict(self._cache)
+            with open(self._cache_path, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False)
+            logger.debug("Saved %d entries to embedding cache", len(data))
+        except Exception as e:
+            logger.debug("Embedding cache persist failed: %s", e)
+
+    def _get_model(self) -> Any:
+        if self._model is None:
+            import torch.distributed as dist
+
+            if not hasattr(dist, "is_initialized"):
+                dist.is_initialized = lambda: False
+            from sentence_transformers import SentenceTransformer
+
+            self._model = SentenceTransformer(self._model_name)
+        return self._model
+
+    def __call__(self, input: list[str]) -> list[list[float]]:
+        results = []
+        to_encode = []
+        to_encode_idx = []
+
+        with self._lock:
+            for i, text in enumerate(input):
+                text_hash = hashlib.sha256(text.encode()).hexdigest()[:16]
+                if text_hash in self._cache:
+                    results.append((i, self._cache[text_hash]))
+                else:
+                    to_encode.append(text)
+                    to_encode_idx.append((i, text_hash))
+
+        if to_encode:
+            model = self._get_model()
+            embeddings = model.encode(to_encode, convert_to_numpy=True)
+            with self._lock:
+                for (orig_idx, text_hash), emb in zip(to_encode_idx, embeddings, strict=False):
+                    vec = emb.tolist()
+                    self._cache[text_hash] = vec
+                    results.append((orig_idx, vec))
+
+                if len(self._cache) > self._max_cache:
+                    items = list(self._cache.items())
+                    self._cache = dict(items[self._max_cache // 2 :])
+
+        results.sort(key=lambda x: x[0])
+        return [r[1] for r in results]
+
+
+class ChromaDBStore(VectorStore):
+    def __init__(
+        self,
+        collection_name: str = "omnimem",
+        persist_dir: str | Path = "/tmp/omnimem/retrieval/chroma",
+        embedding_fn: Any = None,
+    ):
+        self._collection_name = collection_name
+        self._persist_dir = Path(persist_dir)
+        self._embedding_fn = embedding_fn
+        self._client: Any = None
+        self._collection: Any = None
+        self._initialized = False
+
+    def _ensure_initialized(self) -> None:
+        if self._initialized:
+            return
+        self._persist_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            import chromadb
+
+            self._client = chromadb.PersistentClient(path=str(self._persist_dir))
+            if self._embedding_fn is not None:
+                self._collection = self._client.get_or_create_collection(
+                    name=self._collection_name,
+                    metadata={"hnsw:space": "cosine"},
+                    embedding_function=self._embedding_fn,
+                )
+            else:
+                self._collection = self._client.get_or_create_collection(
+                    name=self._collection_name,
+                    metadata={"hnsw:space": "cosine"},
+                )
+            logger.debug(
+                "ChromaDB collection initialized: %d documents",
+                self._collection.count() if self._collection else 0,
+            )
+        except ImportError:
+            logger.warning("chromadb not installed — vector search unavailable")
+        except Exception as e:
+            logger.warning("ChromaDB init failed: %s", e)
+        self._initialized = True
+
+    def add(self, ids: list[str], documents: list[str], metadatas: list[dict] | None = None) -> None:
+        self._ensure_initialized()
+        if self._collection is None:
+            return
+        try:
+            self._collection.upsert(ids=ids, documents=documents, metadatas=metadatas)
+            self._persist_client()
+        except Exception as e:
+            logger.warning("ChromaDBStore add failed: %s", e)
+
+    def query(self, query_texts: list[str], n_results: int = 10, where: dict | None = None) -> dict:
+        self._ensure_initialized()
+        if self._collection is None:
+            return {"ids": [[]], "documents": [[]], "metadatas": [[]], "distances": [[]]}
+        try:
+            count = self._collection.count()
+            if count == 0:
+                return {"ids": [[]], "documents": [[]], "metadatas": [[]], "distances": [[]]}
+            kwargs: dict[str, Any] = {
+                "query_texts": query_texts,
+                "n_results": min(n_results, count),
+                "include": ["documents", "metadatas", "distances"],
+            }
+            if where is not None:
+                kwargs["where"] = where
+            return self._collection.query(**kwargs)
+        except Exception as e:
+            logger.debug("ChromaDBStore query failed: %s", e)
+            return {"ids": [[]], "documents": [[]], "metadatas": [[]], "distances": [[]]}
+
+    def delete(self, ids: list[str]) -> None:
+        self._ensure_initialized()
+        if self._collection is None:
+            return
+        try:
+            self._collection.delete(ids=ids)
+            self._persist_client()
+        except Exception as e:
+            logger.warning("ChromaDBStore delete failed: %s", e)
+
+    def count(self) -> int:
+        self._ensure_initialized()
+        if self._collection is None:
+            return 0
+        try:
+            return int(self._collection.count())
+        except Exception:
+            return 0
+
+    def reset(self) -> None:
+        self._ensure_initialized()
+        if self._client is None:
+            return
+        try:
+            self._client.delete_collection(self._collection_name)
+            self._collection = self._client.get_or_create_collection(
+                name=self._collection_name,
+                metadata={"hnsw:space": "cosine"},
+                embedding_function=self._embedding_fn,
+            )
+        except Exception as e:
+            logger.warning("ChromaDBStore reset failed: %s", e)
+
+    def _persist_client(self) -> None:
+        try:
+            if self._client and hasattr(self._client, "persist"):
+                self._client.persist()
+        except Exception:
+            pass
+
+
+class QdrantStore(VectorStore):
+    def __init__(
+        self,
+        collection_name: str = "omnimem",
+        url: str | None = None,
+        api_key: str | None = None,
+    ):
+        self._collection_name = collection_name
+        self._url = url or "localhost:6333"
+        self._api_key = api_key
+        self._client: Any = None
+        self._initialized = False
+        self._point_id_counter = 0
+
+    def _ensure_initialized(self) -> None:
+        if self._initialized:
+            return
+        try:
+            from qdrant_client import QdrantClient
+            from qdrant_client.models import Distance, VectorParams
+
+            kwargs: dict[str, Any] = {"url": self._url}
+            if self._api_key:
+                kwargs["api_key"] = self._api_key
+            self._client = QdrantClient(**kwargs)
+            try:
+                self._client.get_collection(self._collection_name)
+            except Exception:
+                self._client.create_collection(
+                    collection_name=self._collection_name,
+                    vectors_config=VectorParams(size=384, distance=Distance.COSINE),
+                )
+            logger.debug("Qdrant collection initialized: %s", self._collection_name)
+        except ImportError:
+            logger.warning("qdrant-client not installed — Qdrant vector search unavailable")
+        except Exception as e:
+            logger.warning("Qdrant init failed: %s", e)
+        self._initialized = True
+
+    def add(self, ids: list[str], documents: list[str], metadatas: list[dict] | None = None) -> None:
+        self._ensure_initialized()
+        if self._client is None:
+            return
+        try:
+            from qdrant_client.models import PointStruct
+
+            metas = metadatas or [{}] * len(ids)
+            points = []
+            for pid, doc, meta in zip(ids, documents, metas, strict=False):
+                self._point_id_counter += 1
+                points.append(
+                    PointStruct(
+                        id=self._point_id_counter,
+                        vector=[0.0] * 384,
+                        payload={"_id": pid, "document": doc, **meta},
+                    )
+                )
+            self._client.upsert(collection_name=self._collection_name, points=points)
+        except Exception as e:
+            logger.warning("QdrantStore add failed: %s", e)
+
+    def query(self, query_texts: list[str], n_results: int = 10, where: dict | None = None) -> dict:
+        self._ensure_initialized()
+        if self._client is None:
+            return {"ids": [[]], "documents": [[]], "metadatas": [[]], "distances": [[]]}
+        try:
+            dummy_vector = [0.0] * 384
+            filter_obj = None
+            if where:
+                from qdrant_client.models import FieldCondition, Filter, MatchValue
+
+                conditions = []
+                for k, v in where.items():
+                    conditions.append(FieldCondition(key=k, match=MatchValue(value=v)))
+                filter_obj = Filter(must=conditions)
+
+            results = self._client.search(
+                collection_name=self._collection_name,
+                query_vector=dummy_vector,
+                limit=n_results,
+                query_filter=filter_obj,
+            )
+            ids = [[str(r.id) for r in results]]
+            documents = [[r.payload.get("document", "") for r in results]]
+            metadatas = [[{k: v for k, v in r.payload.items() if k != "document"} for r in results]]
+            distances = [[1.0 - r.score for r in results]]
+            return {
+                "ids": ids,
+                "documents": documents,
+                "metadatas": metadatas,
+                "distances": distances,
+            }
+        except Exception as e:
+            logger.debug("QdrantStore query failed: %s", e)
+            return {"ids": [[]], "documents": [[]], "metadatas": [[]], "distances": [[]]}
+
+    def delete(self, ids: list[str]) -> None:
+        self._ensure_initialized()
+        if self._client is None:
+            return
+        try:
+            from qdrant_client.models import PointIdsList
+
+            scroll_result = self._client.scroll(
+                collection_name=self._collection_name,
+                scroll_filter=None,
+                limit=10000,
+            )
+            points_to_delete = []
+            for point in scroll_result[0]:
+                if point.payload.get("_id") in ids:
+                    points_to_delete.append(point.id)
+            if points_to_delete:
+                self._client.delete(
+                    collection_name=self._collection_name,
+                    points_selector=PointIdsList(points=points_to_delete),
+                )
+        except Exception as e:
+            logger.warning("QdrantStore delete failed: %s", e)
+
+    def count(self) -> int:
+        self._ensure_initialized()
+        if self._client is None:
+            return 0
+        try:
+            info = self._client.get_collection(self._collection_name)
+            return info.points_count or 0
+        except Exception:
+            return 0
+
+    def reset(self) -> None:
+        self._ensure_initialized()
+        if self._client is None:
+            return
+        try:
+            self._client.delete_collection(self._collection_name)
+            from qdrant_client.models import Distance, VectorParams
+
+            self._client.create_collection(
+                collection_name=self._collection_name,
+                vectors_config=VectorParams(size=384, distance=Distance.COSINE),
+            )
+            self._point_id_counter = 0
+        except Exception as e:
+            logger.warning("QdrantStore reset failed: %s", e)

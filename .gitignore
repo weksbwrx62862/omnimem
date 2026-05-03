@@ -71,3 +71,20 @@ cache/
 
 # Trae agent files (local only)
 .trae/
+
+# Coverage
+.coverage
+htmlcov/
+coverage.xml
+
+# Mypy
+.mypy_cache/
+mypy_*.txt
+
+# Analysis reports (local only)
+ANALYSIS_REPORT.md
+
+# Temporary fix scripts
+_*.py
+fix_*.py
+nul

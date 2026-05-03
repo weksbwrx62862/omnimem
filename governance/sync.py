@@ -58,7 +58,7 @@ class SyncConfig:
     conflict_resolution: str = "latest_wins"  # latest_wins / manual
     changelog_path: str = ""
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not self.instance_id:
             self.instance_id = f"instance-{uuid.uuid4().hex[:8]}"
         if not self.instance_name:
@@ -108,12 +108,12 @@ class FileLockManager:
         if self._fd is None:
             self._fd = os.open(str(self._lock_file), os.O_RDWR)
 
-        lock_type = fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH  # type: ignore[attr-defined,union-attr]
+        lock_type = fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH  # type: ignore[attr-defined]
         start_time = time.monotonic()
 
         while True:
             try:
-                fcntl.flock(self._fd, lock_type | fcntl.LOCK_NB)  # type: ignore[attr-defined,union-attr]
+                fcntl.flock(self._fd, lock_type | fcntl.LOCK_NB)  # type: ignore[attr-defined]
                 self._lock_count += 1
                 return True
             except OSError:
@@ -130,9 +130,9 @@ class FileLockManager:
             return
         if self._fd is not None:
             try:
-                fcntl.flock(self._fd, fcntl.LOCK_UN)  # type: ignore[attr-defined,union-attr]
-            except OSError:
-                pass
+                fcntl.flock(self._fd, fcntl.LOCK_UN)  # type: ignore[attr-defined]
+            except OSError as e:
+                logger.warning("FileLock release failed: %s", e)
 
     def stats(self) -> dict[str, Any]:
         """获取锁统计。"""
@@ -213,7 +213,7 @@ class ChangeLog:
                                 continue
                             changes.append(entry)
             except Exception as e:
-                logger.debug("ChangeLog read failed for %s: %s", log_file, e)
+                logger.warning("ChangeLog read failed for %s: %s", log_file, e)
 
         # 按时间排序
         changes.sort(key=lambda x: x.get("ts", ""))
@@ -229,8 +229,8 @@ class ChangeLog:
                     if line:
                         entry = json.loads(line)
                         last_ts = entry.get("ts", "")
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("ChangeLog get_last_ts failed: %s", e)
         return last_ts
 
     def trim(self, keep_last_n: int = 1000) -> None:
@@ -244,7 +244,7 @@ class ChangeLog:
                     with open(self._my_log, "w", encoding="utf-8") as f:
                         f.writelines(lines[-keep_last_n:])
             except Exception as e:
-                logger.debug("ChangeLog trim failed: %s", e)
+                logger.warning("ChangeLog trim failed: %s", e)
 
 
 # ─── 同步引擎 ────────────────────────────────────────────────
@@ -283,7 +283,7 @@ class SyncEngine:
             self._config.instance_id,
         )
 
-    def write_with_lock(self, write_fn: Callable, *args, **kwargs) -> Any:
+    def write_with_lock(self, write_fn: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
         """带锁的写入操作。
 
         Args:
@@ -323,7 +323,7 @@ class SyncEngine:
 
     def sync_from_others(
         self,
-        apply_fn: Callable,
+        apply_fn: Callable[..., Any],
         since_ts: str = "",
         get_local_fn: Callable[[str], dict[str, Any] | None] | None = None,
     ) -> int:
@@ -394,7 +394,7 @@ class SyncEngine:
                 if apply_fn(change):
                     applied += 1
             except Exception as e:
-                logger.debug("SyncEngine: failed to apply change: %s", e)
+                logger.warning("SyncEngine: failed to apply change: %s", e)
 
         if applied > 0 or merged > 0 or skipped > 0:
             logger.info(
@@ -486,9 +486,10 @@ class SyncEngine:
         if path.exists():
             try:
                 with open(path, encoding="utf-8") as f:
-                    return json.load(f)
-            except Exception:
-                pass
+                    result: dict[str, Any] = json.load(f)
+                    return result
+            except Exception as e:
+                logger.warning("SyncEngine: registry read failed: %s", e)
         return {}
 
     @staticmethod
@@ -498,4 +499,4 @@ class SyncEngine:
             with open(path, "w", encoding="utf-8") as f:
                 json.dump(registry, f, ensure_ascii=False, indent=2)
         except Exception as e:
-            logger.debug("SyncEngine: registry write failed: %s", e)
+            logger.warning("SyncEngine: registry write failed: %s", e)

@@ -17,40 +17,40 @@ from omnimem.memory.drawer_closet import DrawerClosetStore
 class TestConflictResolver(unittest.TestCase):
     """ConflictResolver 测试。"""
 
-    def test_no_conflict(self):
+    def test_no_conflict(self) -> None:
         cr = ConflictResolver(strategy="latest")
         result = cr.check("普通事实内容")
         self.assertFalse(result.has_conflict)
 
-    def test_negation_without_existing(self):
+    def test_negation_without_existing(self) -> None:
         cr = ConflictResolver(strategy="latest")
         result = cr.check("纠正: 应该是Python")
         self.assertFalse(result.has_conflict)
 
-    def test_negation_with_contradiction(self):
+    def test_negation_with_contradiction(self) -> None:
         cr = ConflictResolver(strategy="latest")
         existing = [{"content": "项目使用Java开发", "memory_id": "old-1"}]
         result = cr.check("项目使用Python开发，不对，应该不是Java", existing)
         self.assertIsInstance(result, ConflictResult)
 
-    def test_mutual_exclusive(self):
+    def test_mutual_exclusive(self) -> None:
         cr = ConflictResolver(strategy="latest")
         existing = [{"content": "使用AWS部署服务", "memory_id": "old-1"}]
         result = cr.check("使用腾讯云部署", existing)
         self.assertTrue(result.has_conflict)
         self.assertEqual(result.conflict_type, "semantic_contradiction")
 
-    def test_resolve_latest(self):
+    def test_resolve_latest(self) -> None:
         cr = ConflictResolver(strategy="latest")
         conflict = ConflictResult(has_conflict=True, existing_id="old-1")
         result = cr.resolve("新内容", conflict)
         self.assertEqual(result.action, "accept")
 
-    def test_compute_overlap(self):
+    def test_compute_overlap(self) -> None:
         overlap = ConflictResolver._compute_overlap("Python编程", "Python开发")
         self.assertGreater(overlap, 0)
 
-    def test_compute_overlap_no_overlap(self):
+    def test_compute_overlap_no_overlap(self) -> None:
         overlap = ConflictResolver._compute_overlap("量子计算", "烹饪食谱")
         self.assertLess(overlap, 0.3)
 
@@ -58,7 +58,7 @@ class TestConflictResolver(unittest.TestCase):
 class TestTemporalDecay(unittest.TestCase):
     """TemporalDecay 测试。"""
 
-    def test_fact_no_decay(self):
+    def test_fact_no_decay(self) -> None:
         td = TemporalDecay()
         results = [
             {
@@ -71,7 +71,7 @@ class TestTemporalDecay(unittest.TestCase):
         decayed = td.apply(results)
         self.assertEqual(decayed[0]["score"], 1.0)
 
-    def test_event_decay(self):
+    def test_event_decay(self) -> None:
         td = TemporalDecay()
         results = [
             {
@@ -85,16 +85,16 @@ class TestTemporalDecay(unittest.TestCase):
         self.assertLess(decayed[0]["score"], 1.0)
         self.assertIn("decay_factor", decayed[0])
 
-    def test_preference_half_life(self):
+    def test_preference_half_life(self) -> None:
         td = TemporalDecay()
         half_life = td.get_half_life("preference")
         self.assertEqual(half_life, 180)
 
-    def test_custom_half_life(self):
+    def test_custom_half_life(self) -> None:
         td = TemporalDecay(custom_half_lives={"event": 30})
         self.assertEqual(td.get_half_life("event"), 30)
 
-    def test_sorted_by_score(self):
+    def test_sorted_by_score(self) -> None:
         td = TemporalDecay()
         results = [
             {
@@ -117,24 +117,24 @@ class TestTemporalDecay(unittest.TestCase):
 class TestForgettingCurve(unittest.TestCase):
     """ForgettingCurve 测试。"""
 
-    def setUp(self):
+    def setUp(self) -> None:
         self.tmpdir = tempfile.mkdtemp()
         self.fc = ForgettingCurve(Path(self.tmpdir))
 
-    def tearDown(self):
+    def tearDown(self) -> None:
         self.fc.close()
 
-    def test_default_stage(self):
+    def test_default_stage(self) -> None:
         stage = self.fc.get_stage("new-memory")
         self.assertEqual(stage, "active")
 
-    def test_archive(self):
+    def test_archive(self) -> None:
         self.fc.archive("mem-1")
         self.fc.flush()
         stage = self.fc.get_stage("mem-1")
         self.assertEqual(stage, "archived")
 
-    def test_archive_twice_to_forgotten(self):
+    def test_archive_twice_to_forgotten(self) -> None:
         self.fc.archive("mem-2")
         self.fc.flush()
         self.fc.archive("mem-2")
@@ -142,7 +142,7 @@ class TestForgettingCurve(unittest.TestCase):
         stage = self.fc.get_stage("mem-2")
         self.assertEqual(stage, "forgotten")
 
-    def test_forgotten_not_archived_again(self):
+    def test_forgotten_not_archived_again(self) -> None:
         self.fc.archive("mem-3")
         self.fc.flush()
         self.fc.archive("mem-3")
@@ -152,7 +152,7 @@ class TestForgettingCurve(unittest.TestCase):
         stage = self.fc.get_stage("mem-3")
         self.assertEqual(stage, "forgotten")
 
-    def test_reactivate(self):
+    def test_reactivate(self) -> None:
         self.fc.archive("mem-4")
         self.fc.flush()
         self.fc.reactivate("mem-4")
@@ -160,20 +160,20 @@ class TestForgettingCurve(unittest.TestCase):
         stage = self.fc.get_stage("mem-4")
         self.assertEqual(stage, "active")
 
-    def test_get_stage_by_age(self):
+    def test_get_stage_by_age(self) -> None:
         self.assertEqual(self.fc.get_stage_by_age(0), "active")
         self.assertEqual(self.fc.get_stage_by_age(5), "active")
         self.assertEqual(self.fc.get_stage_by_age(10), "consolidating")
         self.assertEqual(self.fc.get_stage_by_age(60), "archived")
         self.assertEqual(self.fc.get_stage_by_age(120), "forgotten")
 
-    def test_record_access(self):
+    def test_record_access(self) -> None:
         self.fc.record_access("mem-access")
         self.fc.flush()
         stage = self.fc.get_stage("mem-access")
         self.assertEqual(stage, "active")
 
-    def test_get_status(self):
+    def test_get_status(self) -> None:
         self.fc.archive("s-1")
         self.fc.flush()
         status = self.fc.get_status()
@@ -184,16 +184,16 @@ class TestForgettingCurve(unittest.TestCase):
 class TestPrivacyManager(unittest.TestCase):
     """PrivacyManager 测试。"""
 
-    def test_default_level(self):
+    def test_default_level(self) -> None:
         pm = PrivacyManager()
         self.assertEqual(pm.get("any-id"), "personal")
 
-    def test_set_and_get(self):
+    def test_set_and_get(self) -> None:
         pm = PrivacyManager()
         pm.set("m1", "public")
         self.assertEqual(pm.get("m1"), "public")
 
-    def test_filter_secret(self):
+    def test_filter_secret(self) -> None:
         pm = PrivacyManager()
         results = [
             {"content": "公开", "privacy": "public"},
@@ -205,7 +205,7 @@ class TestPrivacyManager(unittest.TestCase):
         self.assertEqual(filtered[1]["privacy"], "secret")
         self.assertTrue(filtered[1].get("_encrypted"))
 
-    def test_filter_by_max_privacy(self):
+    def test_filter_by_max_privacy(self) -> None:
         pm = PrivacyManager()
         results = [
             {"content": "公开", "privacy": "public"},
@@ -215,7 +215,7 @@ class TestPrivacyManager(unittest.TestCase):
         filtered = pm.filter(results, max_privacy="team")
         self.assertTrue(all(r["privacy"] in ("public", "team") for r in filtered))
 
-    def test_bind_store_and_persist(self):
+    def test_bind_store_and_persist(self) -> None:
         tmpdir = tempfile.mkdtemp()
         store = DrawerClosetStore(Path(tmpdir))
         pm = PrivacyManager()
@@ -223,9 +223,9 @@ class TestPrivacyManager(unittest.TestCase):
         mid = store.add(wing="personal", room="r", content="隐私测试", privacy="personal")
         pm.set(mid, "team")
         result = store.get(mid)
-        self.assertEqual(result["privacy"], "team")
+        self.assertEqual(result["privacy"], "team")  # type: ignore[index]
 
-    def test_invalid_level_ignored(self):
+    def test_invalid_level_ignored(self) -> None:
         pm = PrivacyManager()
         pm.set("m1", "invalid_level")
         self.assertEqual(pm.get("m1"), "personal")

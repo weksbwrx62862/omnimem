@@ -16,7 +16,7 @@ import uuid
 from collections import OrderedDict
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 from omnimem.memory.meta_store import MetaStore
 
@@ -51,10 +51,10 @@ class DrawerClosetStore:
         # 路径索引：memory_id → drawer_path，加速磁盘查找
         self._id_to_path: dict[str, Path] = {}
         # ★ 二级倒排索引：type/wing → set(memory_id)，加速分类搜索
-        self._type_index: dict[str, set] = {}
-        self._wing_index: dict[str, set] = {}
+        self._type_index: dict[str, set[str]] = {}
+        self._wing_index: dict[str, set[str]] = {}
         # OPT-1: 延迟绑定的 PrivacyManager（用于加密/解密）
-        self._privacy_manager = None
+        self._privacy_manager: Any = None
         # ★ 磁盘写入缓冲：批量 flush 减少高频 add 时的 IO 压力
         self._write_buffer: list[Any] = []
         self._pending_disk_writes = 0
@@ -64,7 +64,7 @@ class DrawerClosetStore:
         # 保留 Drawer 文件作为冷备份，元数据主查询走 SQLite
         self._meta_store = MetaStore(palace_dir / ".meta")
 
-    def bind_privacy_manager(self, privacy_manager) -> None:
+    def bind_privacy_manager(self, privacy_manager: Any) -> None:
         """OPT-1: 绑定 PrivacyManager，用于 secret 级加解密。"""
         self._privacy_manager = privacy_manager
 
@@ -79,7 +79,7 @@ class DrawerClosetStore:
         provenance: dict[str, Any] | None = None,
         vc: str = "",
         memory_id: str = "",
-        **kwargs,
+        **kwargs: Any,
     ) -> str:
         """添加一条记忆，同时写入 Drawer 和 Closet。
 
@@ -356,7 +356,7 @@ class DrawerClosetStore:
         self._meta_store.warm_up(entries)
         logger.debug("Warmed up %d entries into closet index and meta store", len(entries))
 
-    def update_privacy(self, memory_id: str, privacy: str, new_wing: str = None) -> bool:
+    def update_privacy(self, memory_id: str, privacy: str, new_wing: Optional[str] = None) -> bool:
         """更新记忆的隐私级别。可选同步更新wing。"""
         updated = False
         if memory_id in self._closet_index:
@@ -380,10 +380,10 @@ class DrawerClosetStore:
 
         # ★ P0方案一：同步更新 MetaStore
         if updated:
-            self._meta_store.update_privacy(memory_id, privacy, new_wing)
+            self._meta_store.update_privacy(memory_id, privacy, new_wing or "")
         return updated
 
-    def _update_drawer_privacy(self, memory_id: str, privacy: str, new_wing: str = None) -> None:
+    def _update_drawer_privacy(self, memory_id: str, privacy: str, new_wing: Optional[str] = None) -> None:
         """更新 Drawer 磁盘文件中的 privacy 和 wing 字段。"""
         drawer_path = self._id_to_path.get(memory_id)
         if not drawer_path or not drawer_path.exists():

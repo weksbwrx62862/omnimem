@@ -303,6 +303,7 @@ class KnowledgeGraph:
     ) -> int:
         """添加三元组。"""
         with self._lock:
+            assert self._conn is not None
             try:
                 # 冲突检测：如果已有否定关系，不再添加肯定关系
                 if not is_negation:
@@ -343,7 +344,7 @@ class KnowledgeGraph:
                 # 数据变更后清除查询缓存
                 self._invalidate_cache()
 
-                return cursor.lastrowid
+                return cursor.lastrowid if cursor.lastrowid is not None else -1
             except Exception as e:
                 logger.debug("Triple add failed: %s", e)
                 return -1
@@ -363,6 +364,7 @@ class KnowledgeGraph:
             操作结果，包含是否有冲突
         """
         with self._lock:
+            assert self._conn is not None
             # 检查内容是否包含否定
             is_negation = any(
                 neg_word in content
@@ -433,7 +435,8 @@ class KnowledgeGraph:
     def query_by_subject(self, subject: str, include_expired: bool = False) -> list[dict[str, Any]]:
         """按主语查询三元组。"""
 
-        def _fetch():
+        def _fetch() -> list[dict[str, Any]]:
+            assert self._conn is not None
             try:
                 if include_expired:
                     rows = self._conn.execute(
@@ -449,12 +452,13 @@ class KnowledgeGraph:
             except Exception:
                 return []
 
-        return self._cached(f"subj:{subject}:{include_expired}", _fetch)
+        return self._cached(f"subj:{subject}:{include_expired}", _fetch)  # type: ignore[no-any-return]
 
     def query_by_object(self, obj: str, include_expired: bool = False) -> list[dict[str, Any]]:
         """按宾语查询三元组。"""
 
-        def _fetch():
+        def _fetch() -> list[dict[str, Any]]:
+            assert self._conn is not None
             try:
                 if include_expired:
                     rows = self._conn.execute(
@@ -470,11 +474,12 @@ class KnowledgeGraph:
             except Exception:
                 return []
 
-        return self._cached(f"obj:{obj}:{include_expired}", _fetch)
+        return self._cached(f"obj:{obj}:{include_expired}", _fetch)  # type: ignore[no-any-return]
 
     def query_by_predicate(self, predicate: str, limit: int = 50) -> list[dict[str, Any]]:
         """按谓词查询三元组。"""
         try:
+            assert self._conn is not None
             rows = self._conn.execute(
                 "SELECT * FROM triples WHERE predicate = ? AND (valid_to = '' OR valid_to IS NULL) LIMIT ?",
                 (predicate, limit),
@@ -486,7 +491,7 @@ class KnowledgeGraph:
     def get_neighbors(self, entity: str, depth: int = 1) -> list[dict[str, Any]]:
         """获取实体的邻居（递归扩展查询），带 TTL 缓存。"""
 
-        def _fetch():
+        def _fetch() -> list[dict[str, Any]]:
             results = []
             visited: set[str] = set()
 
@@ -509,12 +514,13 @@ class KnowledgeGraph:
             unique_results = []
             for r in results:
                 rid = r.get("id")
-                if rid not in seen_ids:
-                    seen_ids.add(rid)
-                    unique_results.append(r)
+                if rid is not None:
+                    if rid not in seen_ids:
+                        seen_ids.add(rid)
+                        unique_results.append(r)
             return unique_results
 
-        return self._cached(f"neighbors:{entity}:{depth}", _fetch)
+        return self._cached(f"neighbors:{entity}:{depth}", _fetch)  # type: ignore[no-any-return]
 
     # ─── 从记忆中自动抽取 ─────────────────────────────────────
 
@@ -553,7 +559,7 @@ class KnowledgeGraph:
         # ★ P1方案四：增量局部推理（替代全表扫描）
         # 对新三元组的主语和宾语做 2-hop 邻居查询，仅对局部子图推理
         inferred_stored = []
-        seen_inferred: set = set()
+        seen_inferred: set[tuple[str, str, str]] = set()
         for subj, pred, obj in raw_triples:
             local_triples: list[dict[str, Any]] = []
             try:
@@ -565,6 +571,7 @@ class KnowledgeGraph:
                 continue
 
             inferred = infer_relations(local_triples)
+            assert self._conn is not None
             for isubj, ipred, iobj in inferred:
                 key = (isubj, ipred, iobj)
                 if key in seen_inferred:
@@ -608,6 +615,7 @@ class KnowledgeGraph:
         if not query_entities:
             # 尝试直接关键词匹配（转义 LIKE 通配符防止注入/误匹配）
             try:
+                assert self._conn is not None
                 escaped = query.replace("%", "\\%").replace("_", "\\_")
                 rows = self._conn.execute(
                     "SELECT * FROM triples WHERE subject LIKE ? ESCAPE '\\' OR object LIKE ? ESCAPE '\\' LIMIT ?",
@@ -629,7 +637,7 @@ class KnowledgeGraph:
         for r in all_results:
             rid = r.get("id")
             if rid not in seen_ids:
-                seen_ids.add(rid)
+                seen_ids.add(rid)  # type: ignore[arg-type]
                 unique.append(r)
 
         return unique[:limit]
@@ -639,6 +647,7 @@ class KnowledgeGraph:
     def get_entity(self, name: str) -> dict[str, Any] | None:
         """获取实体信息。"""
         try:
+            assert self._conn is not None
             row = self._conn.execute("SELECT * FROM entities WHERE name = ?", (name,)).fetchone()
             if row:
                 keys = ["name", "entity_type", "mention_count", "first_seen", "last_seen"]
@@ -650,6 +659,7 @@ class KnowledgeGraph:
     def get_all_entities(self, limit: int = 100) -> list[dict[str, Any]]:
         """获取所有实体。"""
         try:
+            assert self._conn is not None
             rows = self._conn.execute(
                 "SELECT * FROM entities ORDER BY mention_count DESC LIMIT ?",
                 (limit,),
@@ -704,8 +714,8 @@ class KnowledgeGraph:
         try:
             from collections import deque
 
-            visited: dict[str, tuple] = {start: ()}  # entity -> (prev_entity, triple_dict)
-            queue: deque = deque([start])
+            visited: dict[str, tuple[Any, ...]] = {start: ()}  # entity -> (prev_entity, triple_dict)
+            queue: deque[str] = deque([start])
             depth = 0
 
             while queue and depth < max_depth:
@@ -766,15 +776,15 @@ class KnowledgeGraph:
             ).fetchall()
             from collections import defaultdict
 
-            graph = defaultdict(set)
-            all_entities: set = set()
+            graph: defaultdict[str, set[str]] = defaultdict(set)
+            all_entities: set[str] = set()
             for subj, obj in rows:
                 graph[subj].add(obj)
                 graph[obj].add(subj)
                 all_entities.add(subj)
                 all_entities.add(obj)
 
-            visited: set = set()
+            visited: set[str] = set()
             components: list[list[str]] = []
             for entity in all_entities:
                 if entity in visited:
@@ -811,6 +821,7 @@ class KnowledgeGraph:
     def _upsert_entity_locked(self, name: str) -> None:
         """更新或插入实体（内部已持有锁时调用）。"""
         try:
+            assert self._conn is not None
             now = datetime.now(timezone.utc).isoformat()
             existing = self._conn.execute(
                 "SELECT name FROM entities WHERE name = ?", (name,)
@@ -880,6 +891,7 @@ class KnowledgeGraph:
     def _get_all_triples(self, limit: int = 5000) -> list[dict[str, Any]]:
         """获取所有有效三元组。"""
         try:
+            assert self._conn is not None
             rows = self._conn.execute(
                 "SELECT * FROM triples WHERE (valid_to = '' OR valid_to IS NULL) LIMIT ?",
                 (limit,),
@@ -888,7 +900,7 @@ class KnowledgeGraph:
         except Exception:
             return []
 
-    def _rows_to_dicts(self, rows) -> list[dict[str, Any]]:
+    def _rows_to_dicts(self, rows: list[Any]) -> list[dict[str, Any]]:
         """将行转为字典。"""
         keys = [
             "id",

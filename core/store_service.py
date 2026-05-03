@@ -13,6 +13,7 @@ Responsibilities:
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -27,9 +28,9 @@ class MemoryStoreService:
 
     def __init__(
         self,
-        store,
-        perception,
-        provenance,
+        store: Any,
+        perception: Any,
+        provenance: Any,
         session_id: str = "",
         turn_count: int = 0,
     ):
@@ -71,18 +72,18 @@ class MemoryStoreService:
 
     def extract_core_fact(self, text: str) -> str:
         """Delegate to perception engine for core fact extraction."""
-        return self._perception._extract_core_fact(text)
+        return str(self._perception._extract_core_fact(text))
 
     # ─── Signal-driven storage ───────────────────────────────
 
-    def store_correction(self, signals, user_content: str) -> str | None:
+    def store_correction(self, signals: Any, user_content: str) -> str | None:
         """存储纠错记忆 — 精炼版：只存纠正目标而非整段对话。
 
         Returns:
             memory_id if stored, None otherwise
         """
         core = signals.correction_target or self.extract_core_fact(user_content)
-        return self._store.add(
+        result = self._store.add(
             wing="personal",
             room="correction",
             content=f"纠正: {core}",
@@ -91,11 +92,12 @@ class MemoryStoreService:
             privacy="personal",
             provenance=self._provenance.track(core, source=self._session_id, method="correction"),
         )
+        return str(result) if result else None
 
-    def store_reinforcement(self, signals, user_content: str) -> str | None:
+    def store_reinforcement(self, signals: Any, user_content: str) -> str | None:
         """存储正反馈记忆 — 精炼版：只存强化目标。"""
         core = signals.reinforcement_target or self.extract_core_fact(user_content)
-        return self._store.add(
+        result = self._store.add(
             wing="personal",
             room="reinforcement",
             content=f"确认: {core}",
@@ -106,12 +108,13 @@ class MemoryStoreService:
                 core, source=self._session_id, method="reinforcement"
             ),
         )
+        return str(result) if result else None
 
-    def store_fact(self, signals, user_content: str) -> str | None:
+    def store_fact(self, signals: Any, user_content: str) -> str | None:
         """存储一般事实 — 精炼版：用感知引擎提炼的 fact_content。"""
         content = signals.fact_content or self.extract_core_fact(user_content)
         mem_type = "preference" if signals.has_preference else "fact"
-        return self._store.add(
+        result = self._store.add(
             wing="personal",
             room=mem_type,
             content=content,
@@ -120,6 +123,7 @@ class MemoryStoreService:
             privacy="personal",
             provenance=self._provenance.track(content, source=self._session_id, method="fact"),
         )
+        return str(result) if result else None
 
     # ─── Auto checkpoint ─────────────────────────────────────
 
@@ -195,9 +199,9 @@ class MemoryStoreService:
     def extract_session_memories(
         self,
         messages: list[dict[str, Any]],
-        strip_system_injections,
-        should_store,
-        memorize_fn,
+        strip_system_injections: Callable[[str], str],
+        should_store: Callable[[str], bool],
+        memorize_fn: Callable[[dict[str, Any]], None],
     ) -> int:
         """会话结束时从完整对话中提取遗漏的记忆。
 
@@ -243,7 +247,7 @@ class MemoryStoreService:
 
     def store_delegation(self, task: str, result: str, child_session_id: str = "") -> str | None:
         """存储子 Agent 委托记录。"""
-        return self._store.add(
+        mem_result = self._store.add(
             wing="delegation",
             room=child_session_id[:8] if child_session_id else "unknown",
             content=f"Delegated: {task[:200]}\nResult: {result[:300]}",
@@ -252,3 +256,4 @@ class MemoryStoreService:
             privacy="team",
             provenance=self._provenance.track(task, source=self._session_id, method="delegation"),
         )
+        return str(mem_result) if mem_result else None
