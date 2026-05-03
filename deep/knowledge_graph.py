@@ -249,6 +249,8 @@ class KnowledgeGraph:
         """初始化知识图谱数据库。"""
         self._conn = sqlite3.connect(str(self._db_path), check_same_thread=False)
         self._conn.execute("PRAGMA journal_mode=WAL")
+        self._conn.execute("PRAGMA synchronous=NORMAL")
+        self._conn.execute("PRAGMA busy_timeout=5000")
 
         # 三元组表（含时序有效性）
         self._conn.execute("""

@@ -63,6 +63,8 @@ class KVCacheManager:
         db_path = data_dir / "kv_cache.db"
         self._conn = sqlite3.connect(str(db_path), check_same_thread=False)
         self._conn.execute("PRAGMA journal_mode=WAL")
+        self._conn.execute("PRAGMA synchronous=NORMAL")
+        self._conn.execute("PRAGMA busy_timeout=5000")
         self._conn.execute("""
             CREATE TABLE IF NOT EXISTS kv_cache_entries (
                 cache_key TEXT PRIMARY KEY,

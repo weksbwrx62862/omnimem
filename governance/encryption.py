@@ -30,25 +30,31 @@ class MemoryEncryption:
       - Thread-safe (Fernet instances are stateless)
     """
 
-    def __init__(self, session_seed: str = ""):
+    def __init__(self, session_seed: str = "", kms_manager: Any = None):
         """Initialize with a session seed for deterministic key derivation.
 
         Args:
             session_seed: A stable per-session string (e.g., session_id).
                           If empty, falls back to OMNIMEM_ENCRYPTION_KEY env var
                           or generates a per-process random key (non-recoverable).
+            kms_manager: Optional KMSManager instance for key management.
+                         If provided, uses kms.get_encryption_key() for key retrieval.
         """
-        if not session_seed:
-            session_seed = os.environ.get("OMNIMEM_ENCRYPTION_KEY", "")
-        if not session_seed:
-            session_seed = os.urandom(32).hex()
-            logger.warning(
-                "No session_seed or OMNIMEM_ENCRYPTION_KEY provided — "
-                "using per-process random key. Encrypted data from previous "
-                "sessions will not be decryptable after restart. Set "
-                "OMNIMEM_ENCRYPTION_KEY for persistent encryption."
-            )
-        self._key = self._derive_key(session_seed)
+        self._kms = kms_manager
+        if kms_manager is not None:
+            self._key = kms_manager.get_encryption_key()
+        else:
+            if not session_seed:
+                session_seed = os.environ.get("OMNIMEM_ENCRYPTION_KEY", "")
+            if not session_seed:
+                session_seed = os.urandom(32).hex()
+                logger.warning(
+                    "No session_seed or OMNIMEM_ENCRYPTION_KEY provided — "
+                    "using per-process random key. Encrypted data from previous "
+                    "sessions will not be decryptable after restart. Set "
+                    "OMNIMEM_ENCRYPTION_KEY for persistent encryption."
+                )
+            self._key = self._derive_key(session_seed)
         self._fernet: Any | None = None
         self._available: bool | None = None
 

@@ -18,6 +18,8 @@ from omnimem.governance.sync import SyncConfig, SyncEngine
 from omnimem.governance.vector_clock import VectorClock
 from omnimem.governance.audit_log import AuditLogger
 from omnimem.governance.auditor import GovernanceAuditor
+from omnimem.governance.rbac import RBACManager
+from omnimem.governance.kms import KMSManager
 
 
 class GovernanceFacade:
@@ -73,6 +75,12 @@ class GovernanceFacade:
         # 操作审计日志
         self._audit_logger = AuditLogger(gov_dir)
 
+        # RBAC 访问控制
+        self._rbac = RBACManager(gov_dir)
+
+        # KMS 密钥管理
+        self._kms = KMSManager(gov_dir)
+
     @property
     def conflict_resolver(self) -> ConflictResolver:
         return self._conflict_resolver
@@ -104,6 +112,14 @@ class GovernanceFacade:
     @property
     def audit_logger(self) -> AuditLogger:
         return self._audit_logger
+
+    @property
+    def rbac(self) -> RBACManager:
+        return self._rbac
+
+    @property
+    def kms(self) -> KMSManager:
+        return self._kms
 
     @property
     def vector_clock(self) -> VectorClock:

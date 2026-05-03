@@ -194,81 +194,17 @@ class ContextManager:
 
     # ─── 去重 (Dedup) ─────────────────────────────────────────
 
-    # 语义等价词映射：同义表达归一化为同一个标准词
-    # 同时作为分词词典：匹配时先尝试长词，再尝试短词
-    _DEFAULT_SYNONYM_MAP: dict[str, str] = {
-        # 偏好类
-        "喜欢": "偏好",
-        "偏好": "偏好",
-        "习惯": "偏好",
-        "更希望": "偏好",
-        "倾向": "偏好",
-        "爱": "偏好",
-        # 称呼类
-        "称呼": "称呼",
-        "叫我": "称呼",
-        "叫": "称呼",
-        # 确认类
-        "确认": "确认",
-        "没错": "确认",
-        "正确": "确认",
-        # 纠正类
-        "纠正": "纠正",
-        "错了": "纠正",
-        "不对": "纠正",
-        "不是": "纠正",
-        # 颜色
-        "暗色": "深色",
-        "深色": "深色",
-        "黑色": "深色",
-        "dark": "深色",
-        "亮色": "浅色",
-        "浅色": "浅色",
-        "白色": "浅色",
-        "light": "浅色",
-        # 主题/风格
-        "主题": "主题",
-        "模式": "主题",
-        "风格": "主题",
-        "theme": "主题",
-        # 组合词归一化（关键：让 "暗色主题" ≡ "深色模式"）
-        "暗色主题": "深色主题",
-        "深色模式": "深色主题",
-        "暗色模式": "深色主题",
-        "深色主题": "深色主题",
-        # 编程语言
-        "python": "python",
-        "py": "python",
-        # 通用
-        "姓名": "姓名",
-        "名字": "姓名",
-        "姓": "姓名",
-        # 常见实体
-        "用户": "用户",
-        "编程": "编程",
-        "框架": "框架",
-        "数据库": "数据库",
-        "项目": "项目",
-        "老板": "老板",
-        "编程语言": "编程",
-        # 常见动词（用于分词辅助）
-        "使用": "使用",
-        "记住": "记住",
-    }
-
-    # 运行时同义词映射（从外部 JSON 加载，可被用户自定义覆盖）
     _SYNONYM_MAP: dict[str, str] = {}
 
     @classmethod
     def _load_synonym_map(cls) -> dict[str, str]:
-        """从外部 JSON 加载同义词映射，合并默认值与用户自定义。
+        """从外部 JSON 加载同义词映射。
 
         加载策略：
-          1. 以 _DEFAULT_SYNONYM_MAP 为基础
-          2. 尝试从 config/synonyms.json 加载并覆盖默认值
-          3. 加载失败时回退到默认值并记录 warning
+          1. 尝试从 config/synonyms.json 加载
+          2. 加载失败时回退到空字典并记录 warning
         """
-        result = dict(cls._DEFAULT_SYNONYM_MAP)
+        result: dict[str, str] = {}
         config_path = os.path.join(
             os.path.dirname(os.path.dirname(__file__)), "config", "synonyms.json"
         )
@@ -278,9 +214,9 @@ class ContextManager:
             if isinstance(external, dict):
                 result.update(external)
         except FileNotFoundError:
-            logger.debug("synonyms.json not found at %s, using defaults", config_path)
+            logger.debug("synonyms.json not found at %s", config_path)
         except Exception:
-            logger.warning("Failed to load synonyms.json from %s, using defaults", config_path)
+            logger.warning("Failed to load synonyms.json from %s", config_path)
         return result
 
     # 分词词典：从 _SYNONYM_MAP 的 key 中提取，按长度降序排列

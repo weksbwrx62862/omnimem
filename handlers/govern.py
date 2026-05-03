@@ -125,6 +125,9 @@ def handle_govern(provider: Any, args: dict[str, Any]) -> str:
       consolidation_stats — L3: 查看 Consolidation 统计
       sync_status      — 查看同步引擎状态
       sync_instances   — 查看活跃同步实例
+      configure_kms    — 配置 KMS 提供商（local/aws/azure/gcp）
+      rotate_key       — 轮换密钥
+      kms_status       — 查看 KMS 状态
 
     Args:
         provider: OmniMemProvider 实例，用于访问子组件
@@ -412,5 +415,57 @@ def handle_govern(provider: Any, args: dict[str, Any]) -> str:
             return json.dumps({"status": "ok", "count": len(entries), "entries": entries}, ensure_ascii=False)
         except Exception as e:
             return json.dumps({"error": f"Audit log query failed: {e}"})
+    elif action == "assign_role":
+        user_id = params.get("user_id", args.get("user_id", "default"))
+        role_name = params.get("role_name", args.get("role_name", ""))
+        if not role_name:
+            return json.dumps({"error": "role_name is required"})
+        provider._rbac.assign_role(user_id, role_name)
+        return json.dumps({"status": "assigned", "user_id": user_id, "role": role_name})
+    elif action == "revoke_role":
+        user_id = params.get("user_id", args.get("user_id", "default"))
+        role_name = params.get("role_name", args.get("role_name", ""))
+        if not role_name:
+            return json.dumps({"error": "role_name is required"})
+        provider._rbac.revoke_role(user_id, role_name)
+        return json.dumps({"status": "revoked", "user_id": user_id, "role": role_name})
+    elif action == "add_role":
+        role_name = params.get("role_name", args.get("role_name", ""))
+        permissions = params.get("permissions", args.get("permissions", []))
+        if not role_name:
+            return json.dumps({"error": "role_name is required"})
+        provider._rbac.add_role(role_name, permissions)
+        return json.dumps({"status": "created", "role": role_name, "permissions": permissions})
+    elif action == "check_permission":
+        user_id = params.get("user_id", args.get("user_id", "default"))
+        permission = params.get("permission", args.get("permission", ""))
+        if not permission:
+            return json.dumps({"error": "permission is required"})
+        allowed = provider._rbac.check_permission(user_id, permission)
+        return json.dumps({"status": "ok", "user_id": user_id, "permission": permission, "allowed": allowed})
+    elif action == "get_permissions":
+        user_id = params.get("user_id", args.get("user_id", "default"))
+        permissions = provider._rbac.get_user_permissions(user_id)
+        return json.dumps({"status": "ok", "user_id": user_id, "permissions": permissions})
+    elif action == "configure_kms":
+        provider_name = params.get("provider", "local")
+        config_kwargs = {k: v for k, v in params.items() if k != "provider"}
+        try:
+            provider._kms.configure_provider(provider_name, **config_kwargs)
+            provider._audit_logger.log("govern_configure_kms", details={"provider": provider_name}, result="success", instance_id=getattr(provider, "_instance_id", None))
+            return json.dumps({"status": "configured", "provider": provider_name})
+        except ValueError as e:
+            return json.dumps({"error": str(e)})
+    elif action == "rotate_key":
+        key_id = params.get("key_id", "default")
+        provider._kms.rotate_key(key_id)
+        provider._audit_logger.log("govern_rotate_key", details={"key_id": key_id}, result="success", instance_id=getattr(provider, "_instance_id", None))
+        return json.dumps({"status": "rotated", "key_id": key_id})
+    elif action == "kms_status":
+        return json.dumps({
+            "status": "ok",
+            "provider": provider._kms.provider,
+            "config": provider._kms._config,
+        })
     else:
         return json.dumps({"error": f"Unknown governance action: {action}"})

@@ -103,6 +103,55 @@ class VectorRetriever:
         except Exception as e:
             logger.warning("Vector add_batch failed: %s", e)
 
+    def add_batch_optimized(self, entries: list[dict[str, Any]]) -> None:
+        self._ensure_initialized()
+        if self._store is None:
+            return
+        all_ids: list[str] = []
+        all_docs: list[str] = []
+        all_metas: list[dict[str, str]] = []
+        for entry in entries:
+            content = entry.get("content", "")
+            memory_id = entry.get("memory_id", "")
+            if not content or not memory_id:
+                continue
+            meta = {
+                k: str(v)
+                for k, v in entry.items()
+                if k not in ("content", "memory_id") and v is not None
+            }
+            if len(content) > self._CHUNK_SIZE:
+                chunks = self._split_chunks(content, self._CHUNK_SIZE, self._CHUNK_OVERLAP)
+                for i, chunk in enumerate(chunks):
+                    chunk_hash = hashlib.md5(chunk.encode()).hexdigest()[:8]
+                    all_ids.append(f"{memory_id}_chunk{chunk_hash}")
+                    all_docs.append(chunk)
+                    all_metas.append(dict(meta, _parent_id=memory_id, _chunk_idx=str(i)))
+            else:
+                all_ids.append(memory_id)
+                all_docs.append(content)
+                all_metas.append(meta)
+        if not all_ids:
+            return
+        if self._embedding_fn is not None:
+            try:
+                embeddings = self._embedding_fn(all_docs)
+                if isinstance(self._store, ChromaDBStore) and self._store._collection is not None:
+                    self._store._collection.upsert(
+                        ids=all_ids,
+                        embeddings=embeddings,
+                        documents=all_docs,
+                        metadatas=all_metas,
+                    )
+                    self._store._persist_client()
+                    return
+            except Exception as e:
+                logger.warning("Vector add_batch_optimized embedding pre-compute failed: %s", e)
+        try:
+            self._store.add(ids=all_ids, documents=all_docs, metadatas=all_metas)
+        except Exception as e:
+            logger.warning("Vector add_batch_optimized fallback failed: %s", e)
+
     def _add_single(self, content: str, memory_id: str, metadata: dict[str, Any]) -> None:
         self._ensure_initialized()
         if self._store is None:

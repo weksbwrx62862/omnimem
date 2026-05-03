@@ -14,6 +14,9 @@ class AuditLogger:
 
     def _ensure_table(self) -> None:
         conn = sqlite3.connect(str(self._db_path))
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA synchronous=NORMAL")
+        conn.execute("PRAGMA busy_timeout=5000")
         conn.execute("""
             CREATE TABLE IF NOT EXISTS audit_log (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -31,6 +34,9 @@ class AuditLogger:
         conn.commit()
         conn.close()
         self._conn = sqlite3.connect(str(self._db_path), check_same_thread=False)
+        self._conn.execute("PRAGMA journal_mode=WAL")
+        self._conn.execute("PRAGMA synchronous=NORMAL")
+        self._conn.execute("PRAGMA busy_timeout=5000")
 
     def log(self, operation: str, memory_id: str | None = None, details: dict | None = None, result: str = "success", instance_id: str | None = None) -> None:
         with self._lock:

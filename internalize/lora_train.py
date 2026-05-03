@@ -147,6 +147,8 @@ class LoRATrainer:
         db_path = data_dir / "lora.db"
         self._conn = sqlite3.connect(str(db_path), check_same_thread=False)
         self._conn.execute("PRAGMA journal_mode=WAL")
+        self._conn.execute("PRAGMA synchronous=NORMAL")
+        self._conn.execute("PRAGMA busy_timeout=5000")
 
         # 适配器表
         self._conn.execute("""

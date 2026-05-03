@@ -55,6 +55,7 @@ from omnimem.handlers.memorize import handle_memorize as _handle_memorize_impl
 from omnimem.handlers.recall import handle_recall as _handle_recall_impl
 from omnimem.handlers.schemas import get_tool_schemas as _get_tool_schemas
 from omnimem.utils.security import SecurityValidator
+from omnimem.core.memory_monitor import MemoryMonitor
 from omnimem.facades import (
     StorageFacade,
     RetrievalFacade,
@@ -156,6 +157,12 @@ class OmniMemProvider(MemoryProvider):  # type: ignore[misc]
             platform,
             self._data_dir,
         )
+
+        self._memory_monitor = MemoryMonitor(
+            interval=self._config.get("memory_monitor_interval", 60.0),
+            warning_mb=self._config.get("memory_warning_mb", 500.0),
+        )
+        self._memory_monitor.start()
 
         try:
             indexed_entries = self._index.search_l1(limit=2000)
@@ -296,6 +303,8 @@ class OmniMemProvider(MemoryProvider):  # type: ignore[misc]
     def _auditor(self) -> Any: return self._governance.auditor
     @property
     def _audit_logger(self) -> Any: return self._governance.audit_logger
+    @property
+    def _rbac(self) -> Any: return self._governance.rbac
 
     # Sync
     @property
@@ -609,6 +618,8 @@ class OmniMemProvider(MemoryProvider):  # type: ignore[misc]
                   consolidation → reflect_engine → kv_cache → lora_trainer →
                   provenance → sync_engine → forgetting → executors
         """
+        if hasattr(self, "_memory_monitor") and self._memory_monitor:
+            self._memory_monitor.stop()
         # 0. 关闭线程池（先于存储关闭，避免后台任务写入已关闭的存储）
         if hasattr(self, "_prefetch_executor") and self._prefetch_executor:
             self._prefetch_executor.shutdown(wait=False)

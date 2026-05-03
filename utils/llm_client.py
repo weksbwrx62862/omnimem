@@ -43,6 +43,7 @@ class AsyncLLMClient:
         max_concurrent: int = 3,
         timeout: float = 30.0,
         cache_ttl: float = 60.0,
+        backend: Any | None = None,
     ):
         self._api_key = api_key
         self._base_url = base_url
@@ -50,9 +51,10 @@ class AsyncLLMClient:
         self._timeout = timeout
         self._cache_ttl = cache_ttl
         self._semaphore = asyncio.Semaphore(max_concurrent)
-        self._cache: dict[str, tuple[LLMResponse, float]] = {}  # key -> (LLMResponse, timestamp)
+        self._cache: dict[str, tuple[LLMResponse, float]] = {}
         self._client: Any | None = None
         self._closed = False
+        self._backend = backend
 
     # ─── Public API ──────────────────────────────────────────
 
@@ -65,6 +67,12 @@ class AsyncLLMClient:
         use_cache: bool = True,
     ) -> LLMResponse:
         """Async LLM call with concurrency control and caching."""
+        if self._backend is not None:
+            content = await asyncio.to_thread(
+                self._backend.call, prompt, system or None, max_tokens, temperature
+            )
+            return LLMResponse(content=content or "", model=self._model)
+
         cache_key = f"{self._model}|{prompt[:200]}|{system[:100]}|{max_tokens}|{temperature}"
         now = time.time()
 
@@ -101,6 +109,10 @@ class AsyncLLMClient:
         Safely handles nested event loops (e.g., when called from
         within an already-running async context).
         """
+        if self._backend is not None:
+            content = self._backend.call(prompt, system or None, max_tokens, temperature)
+            return LLMResponse(content=content or "", model=self._model)
+
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:

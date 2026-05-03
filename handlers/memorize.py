@@ -55,6 +55,9 @@ def handle_memorize(provider: Any, args: dict[str, Any]) -> str:
           rejected — 反递归防护拦截
     """
     content = args["content"]
+    user_id = args.get("user_id", "default")
+    if hasattr(provider, "_rbac") and not provider._rbac.check_permission(user_id, "write"):
+        return json.dumps({"status": "blocked", "reason": f"User '{user_id}' lacks 'write' permission"})
 
     # ★ 还原转义字符：LLM 传入的 content 可能含字面量 \\n \\t
     # 在 JSON 解析后这些变成 \n \t 字面量（两个字符），需要还原为实际控制字符

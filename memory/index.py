@@ -42,6 +42,8 @@ class ThreeLevelIndex:
         """初始化 SQLite 数据库。"""
         self._conn = sqlite3.connect(str(self._db_path), check_same_thread=False)
         self._conn.execute("PRAGMA journal_mode=WAL")
+        self._conn.execute("PRAGMA synchronous=NORMAL")
+        self._conn.execute("PRAGMA busy_timeout=5000")
         self._conn.execute("""
             CREATE TABLE IF NOT EXISTS memory_index (
                 memory_id TEXT PRIMARY KEY,

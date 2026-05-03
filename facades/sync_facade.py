@@ -1,7 +1,7 @@
 """SyncFacade — Saga 协调 + 后台任务 + 内部化记忆。
 
 封装: SagaCoordinator, BackgroundTaskExecutor, MemoryStoreService,
-      KVCacheManager, LoRATrainer
+      PluginRegistry (KVCache, LoRA)
 """
 
 from __future__ import annotations
@@ -14,6 +14,7 @@ from omnimem.core.saga import SagaCoordinator
 from omnimem.core.store_service import MemoryStoreService
 from omnimem.internalize.kv_cache import KVCacheManager
 from omnimem.internalize.lora_train import LoRATrainer
+from omnimem.internalize.plugin import KVCachePlugin, LoRAPlugin, PluginRegistry
 
 
 class SyncFacade:
@@ -46,8 +47,9 @@ class SyncFacade:
         )
 
         # L4 内化记忆（延迟初始化）
-        self._kv_cache: KVCacheManager | None = None
-        self._lora_trainer: LoRATrainer | None = None
+        self._registry = PluginRegistry()
+        self._registry.register(KVCachePlugin())
+        self._registry.register(LoRAPlugin())
         self._internalize_dir = data_dir / "internalize"
         self._config = config
         self._initialized_l4 = False
@@ -65,14 +67,16 @@ class SyncFacade:
         return self._store_service
 
     @property
-    def kv_cache(self) -> KVCacheManager:
+    def kv_cache(self) -> KVCacheManager | None:
         self.init_l4()
-        return self._kv_cache
+        plugin = self._registry.get("kv_cache")
+        return plugin._manager if plugin else None
 
     @property
-    def lora_trainer(self) -> LoRATrainer:
+    def lora_trainer(self) -> LoRATrainer | None:
         self.init_l4()
-        return self._lora_trainer
+        plugin = self._registry.get("lora")
+        return plugin._trainer if plugin else None
 
     def bind_provenance(self, provenance: Any) -> None:
         """延迟绑定溯源追踪器。"""
@@ -82,26 +86,10 @@ class SyncFacade:
         """延迟初始化 L4 内化记忆。"""
         if self._initialized_l4:
             return
-        from omnimem.internalize.kv_cache import KVCacheManager
-        from omnimem.internalize.lora_train import LoRATrainer
-
-        self._kv_cache = KVCacheManager(
-            self._internalize_dir,
-            auto_preload_threshold=self._config.get("kv_cache_threshold", 10),
-            max_cache_size=self._config.get("kv_cache_max", 100),
-        )
-        self._lora_trainer = LoRATrainer(
-            self._internalize_dir,
-            base_model=self._config.get("lora_base_model", "Qwen2.5-7B"),
-            lora_rank=self._config.get("lora_rank", 16),
-            lora_alpha=self._config.get("lora_alpha", 32),
-        )
+        self._registry.initialize_all(self._config, self._internalize_dir)
         self._initialized_l4 = True
 
     def close(self) -> None:
         """关闭同步资源。"""
         self._bg_executor.shutdown(wait=True)
-        if self._kv_cache:
-            self._kv_cache.close()
-        if self._lora_trainer:
-            self._lora_trainer.close()
+        self._registry.close_all()
