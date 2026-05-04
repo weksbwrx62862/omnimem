@@ -33,6 +33,10 @@ _mock_agent.memory_provider.MemoryProvider = object
 sys.modules.setdefault("agent", _mock_agent)
 sys.modules.setdefault("agent.memory_provider", _mock_agent.memory_provider)
 
+# Register 'omnimem' package alias so absolute imports (e.g. "from omnimem.provider import ...")
+# work regardless of how the plugin is loaded (bundled vs user-installed).
+sys.modules.setdefault("omnimem", sys.modules[__name__])
+
 from omnimem.provider import OmniMemProvider  # noqa: E402
 
 

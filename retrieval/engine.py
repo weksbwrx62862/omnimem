@@ -323,6 +323,8 @@ class HybridRetriever:
             self._query_cache.clear()
             self._vector.add(content, memory_id, metadata)
             self._bm25.add(content, memory_id, metadata)
+            # ★ R25修复Minor-3：写入后立即 flush 确保向量索引可搜
+            self._vector.flush()
         finally:
             self._rw_lock.release_write()
 
@@ -337,6 +339,32 @@ class HybridRetriever:
             self._query_cache.clear()
             self._vector.add_batch(documents)
             self._bm25.add_batch(documents)
+        finally:
+            self._rw_lock.release_write()
+
+    def update_metadata(self, memory_id: str, metadata: dict[str, Any]) -> None:
+        """更新检索索引中指定条目的 metadata（如 wing/privacy）。
+
+        通过 delete + re-add 实现，因为 ChromaDB/BM25 不支持原地更新 metadata。
+        需要同时传入 content 以便重新索引。
+
+        Args:
+            memory_id: 记忆 ID
+            metadata: 新的 metadata 字典（必须包含 content 或调用方需先获取 content）
+        """
+        self._rw_lock.acquire_write()
+        try:
+            self._query_cache.clear()
+            # 从向量索引删除旧条目
+            self._vector.delete(memory_id)
+            # 从 BM25 索引删除旧条目
+            self._bm25.delete(memory_id)
+            # 用新 metadata 重新添加
+            content = metadata.pop("_content", "")
+            if content:
+                self._vector.add(content, memory_id, metadata)
+                self._bm25.add(content, memory_id, metadata)
+                self._vector.flush()
         finally:
             self._rw_lock.release_write()
 

@@ -770,6 +770,23 @@ class OmniMemProvider(MemoryProvider):  # type: ignore[misc]
 
     def _init_llm_client(self) -> None:
         self._llm_client = init_llm_client(self._config)
+        # ★ R25修复ARCH-1：若 LLM 客户端凭证为空，尝试从 Hermes 主配置获取
+        if self._llm_client and not getattr(self._llm_client, "_api_key", "").strip():
+            try:
+                from omnimem.utils.llm_client import AsyncLLMClient
+                hermes_creds = AsyncLLMClient.load_credentials_from_hermes_config()
+                if hermes_creds.get("api_key") and hermes_creds.get("base_url"):
+                    logger.info("OmniMem: using Hermes main config LLM credentials for Reflect")
+                    self._llm_client = AsyncLLMClient(
+                        api_key=hermes_creds["api_key"],
+                        base_url=hermes_creds["base_url"],
+                        model=hermes_creds.get("model", "glm-5.1"),
+                        max_concurrent=3,
+                        timeout=30.0,
+                        cache_ttl=self._REFLECT_CACHE_TTL,
+                    )
+            except Exception as e:
+                logger.debug("OmniMem: failed to load Hermes main config LLM credentials: %s", e)
 
     def _make_llm_call_fn(self):
         return make_llm_call_fn(self._llm_client)

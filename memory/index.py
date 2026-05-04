@@ -263,8 +263,14 @@ class ThreeLevelIndex:
             logger.debug("Privacy update failed: %s", e)
             return False
 
-    def update_field(self, memory_id: str, **fields: Any) -> bool:
-        """更新索引中的指定字段。"""
+    def update_field(self, memory_id: str, immediate: bool = False, **fields: Any) -> bool:
+        """更新索引中的指定字段。
+
+        Args:
+            memory_id: 记忆 ID
+            immediate: 为 True 时直接 commit 而非走 _maybe_commit 批处理，
+                       适用于 governance 等需要跨组件一致性的场景
+        """
         assert self._conn is not None
         if not fields:
             return False
@@ -275,7 +281,11 @@ class ThreeLevelIndex:
                 f"UPDATE memory_index SET {set_clause} WHERE memory_id = ?",
                 values,
             )
-            self._maybe_commit()
+            if immediate:
+                self._conn.commit()
+                self._pending_writes = 0
+            else:
+                self._maybe_commit()
             return True
         except Exception as e:
             logger.debug("Field update failed: %s", e)

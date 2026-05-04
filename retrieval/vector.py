@@ -47,7 +47,8 @@ class VectorRetriever:
             try:
                 cache_path = self._data_dir / "embedding_cache.json"
                 self._embedding_fn = _CachedEmbeddingFunction(cache_path=cache_path)
-            except Exception:
+            except Exception as e:
+                logger.warning("Failed to create CachedEmbeddingFunction: %s, using default", e)
                 self._embedding_fn = None
             self._store = ChromaDBStore(
                 collection_name="omnimem",
@@ -174,6 +175,9 @@ class VectorRetriever:
                     documents=[content],
                     metadatas=[meta],
                 )
+            # ★ R25修复Minor-3：写入后立即 persist 确保向量索引可搜
+            if isinstance(self._store, ChromaDBStore):
+                self._store._persist_client()
         except Exception as e:
             logger.warning("Vector add failed for %s: %s", memory_id, e)
 
@@ -243,6 +247,30 @@ class VectorRetriever:
                 self._embedding_fn.persist()
             except Exception as e:
                 logger.debug("Embedding cache persist failed: %s", e)
+
+    def delete(self, memory_id: str) -> None:
+        """从向量索引中删除指定条目（包括分块）。
+
+        ChromaDB 的分块 ID 格式为 {memory_id}_chunk{hash}，
+        需要先查询所有匹配的 ID 再删除。
+        """
+        self._ensure_initialized()
+        if self._store is None:
+            return
+        try:
+            if isinstance(self._store, ChromaDBStore) and self._store._collection is not None:
+                # 查询所有以 memory_id 开头的 ID（含分块）
+                all_ids = self._store._collection.get(ids=None, include=[])["ids"]
+                ids_to_delete = [
+                    i for i in all_ids
+                    if i == memory_id or i.startswith(f"{memory_id}_chunk")
+                ]
+                if ids_to_delete:
+                    self._store.delete(ids_to_delete)
+            else:
+                self._store.delete([memory_id])
+        except Exception as e:
+            logger.debug("Vector delete failed for %s: %s", memory_id, e)
 
     def _split_chunks(self, text: str, chunk_size: int, overlap: int) -> list[str]:
         if self._encoder is not None:

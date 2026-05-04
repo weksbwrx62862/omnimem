@@ -300,6 +300,21 @@ class BM25Retriever:
             self._rebuild()
             self._dirty = True
 
+    def delete(self, memory_id: str) -> None:
+        """从 BM25 索引中删除指定条目。"""
+        with self._lock:
+            indices_to_remove = [
+                i for i, doc in enumerate(self._documents)
+                if doc.get("memory_id") == memory_id
+            ]
+            if indices_to_remove:
+                for idx in reversed(indices_to_remove):
+                    if idx < len(self._corpus):
+                        self._corpus.pop(idx)
+                    self._documents.pop(idx)
+                self._rebuild()
+                self._dirty = True
+
     def rebuild_from_entries(self, entries: list[dict[str, Any]]) -> int:
         with self._lock:
             self._corpus.clear()

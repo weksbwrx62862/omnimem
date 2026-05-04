@@ -8,21 +8,15 @@ from __future__ import annotations
 import json
 import logging
 import re
+import time
 from datetime import datetime, timezone
 from typing import Any
 
 from omnimem.core.saga import SagaStep
+from omnimem.memory.wing_room import _PRIVACY_TO_WING
 from omnimem.utils.security import SecurityValidator
 
 logger = logging.getLogger(__name__)
-
-# ★ R27优化：模块级 privacy→scope 映射，避免每次调用重建字典
-_PRIVACY_TO_SCOPE: dict[str, str] = {
-    "public": "public",
-    "team": "team",
-    "personal": "personal",
-    "secret": "secret",
-}
 
 
 def handle_memorize(provider: Any, args: dict[str, Any]) -> str:
@@ -87,17 +81,14 @@ def handle_memorize(provider: Any, args: dict[str, Any]) -> str:
     scope = args.get("scope", "personal")
     privacy = args.get("privacy", "personal")
 
-    # ★ R22修复：privacy 始终参与 wing 推导
-    # 之前仅在 scope=="personal" 时才用 privacy 推导 scope，
-    # 导致 LLM 显式传 scope 时 privacy 被忽略，wing 因 type 不同而不一致
-    # 现在改为：privacy 始终覆盖 scope，确保同一 privacy 值映射到同一 wing
-    if privacy in _PRIVACY_TO_SCOPE:
-        scope = _PRIVACY_TO_SCOPE[privacy]
+    # ★ R25修复BUG-1：直接从 privacy 映射到 wing
+    # privacy 值直接作为 wing 名称：public→public, team→team, personal→personal, secret→personal
+    wing = provider._wing_room.resolve_wing_from_privacy(privacy, memory_type)
 
-    # ★ R24修复BUG-1：preference/event + team → project scope（映射到 projects wing）
-    # 之前所有 team 都映射到 shared，但 preference 和 event 属于项目协作范畴
-    if scope == "team" and memory_type in ("preference", "event"):
-        scope = "project"
+    # scope 保留用于 index 存储等需要 scope 字段的场合
+    # scope 与 privacy 保持一致，不再做二次映射
+    if privacy in _PRIVACY_TO_WING:
+        scope = privacy
 
     # ★ 精确内容去重：在语义搜索之前，先检查是否有完全相同的内容
     # 这避免了 ChromaDB 索引延迟导致候选搜索不到的问题
@@ -137,12 +128,10 @@ def handle_memorize(provider: Any, args: dict[str, Any]) -> str:
     # 治理：冲突检测
     # ★ 合并候选：语义搜索结果 + 同 room 的记忆（捕捉主题矛盾但语义不相似的情况）
     conflict_candidates = list(candidates[:5])
-    # 预计算 wing/room 以查找同 room 记忆
-    _wing = provider._wing_room.resolve_wing(scope)
-    _room = provider._wing_room.resolve_room(content, _wing, memory_type)
-    if _wing and _room:
+    _room = provider._wing_room.resolve_room(content, wing, memory_type)
+    if wing and _room:
         try:
-            same_room = provider._store.search(wing=_wing, memory_type=memory_type, limit=10)
+            same_room = provider._store.search(wing=wing, memory_type=memory_type, limit=10)
             existing_ids = {m.get("memory_id", "") for m in conflict_candidates}
             for m in same_room:
                 if m.get("memory_id", "") not in existing_ids:
@@ -181,7 +170,6 @@ def handle_memorize(provider: Any, args: dict[str, Any]) -> str:
     )
 
     # 写入 L2 结构化记忆
-    wing = provider._wing_room.resolve_wing(scope)
     hall = provider._wing_room.resolve_hall(memory_type)
     room = provider._wing_room.resolve_room(content, wing, memory_type)
     # ★ 分布式向量时钟：为每条记忆附加逻辑时钟
@@ -264,6 +252,10 @@ def handle_memorize(provider: Any, args: dict[str, Any]) -> str:
 
     # 记录遗忘状态
     provider._forgetting.record_access(memory_id)
+
+    # ★ R25修复Minor-3：写入后短延迟确保向量索引就绪
+    # ChromaDB 的 persist 是异步的，立即搜索可能搜不到新条目
+    time.sleep(0.05)
 
     # ★ R24修复EXT-5：写入后创建 event 记录，供 omni_detail(events) 查询
     try:

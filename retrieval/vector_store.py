@@ -44,6 +44,30 @@ class _CachedEmbeddingFunction:
         self._cache_path = cache_path
         self._load_cache()
 
+    @staticmethod
+    def name() -> str:
+        """ChromaDB EmbeddingFunction 协议要求的 name 方法。"""
+        return "omnimem_cached_sentence_transformer"
+
+    @staticmethod
+    def build_from_config(config: dict[str, Any]) -> "_CachedEmbeddingFunction":
+        """ChromaDB EmbeddingFunction 协议要求的反序列化方法。"""
+        return _CachedEmbeddingFunction(
+            model_name=config.get("model_name", "all-MiniLM-L6-v2"),
+            cache_path=Path(config["cache_path"]) if config.get("cache_path") else None,
+        )
+
+    def get_config(self) -> dict[str, Any]:
+        """ChromaDB EmbeddingFunction 协议要求的序列化方法。"""
+        return {
+            "model_name": self._model_name,
+            "cache_path": str(self._cache_path) if self._cache_path else "",
+        }
+
+    @staticmethod
+    def is_legacy() -> bool:
+        return False
+
     def _load_cache(self) -> None:
         if not self._cache_path or not self._cache_path.exists():
             return
@@ -137,12 +161,38 @@ class ChromaDBStore(VectorStore):
             import chromadb
 
             self._client = chromadb.PersistentClient(path=str(self._persist_dir))
-            if self._embedding_fn is not None:
-                self._collection = self._client.get_or_create_collection(
-                    name=self._collection_name,
-                    metadata={"hnsw:space": "cosine"},
-                    embedding_function=self._embedding_fn,
-                )
+            # ★ R28修复Minor-3：embedding_fn=None 时使用 ChromaDB 默认 embedding
+            # 旧 collection 可能使用了不同的 embedding function，需要处理兼容性
+            try:
+                if self._embedding_fn is not None:
+                    self._collection = self._client.get_or_create_collection(
+                        name=self._collection_name,
+                        metadata={"hnsw:space": "cosine"},
+                        embedding_function=self._embedding_fn,
+                    )
+                else:
+                    self._collection = self._client.get_or_create_collection(
+                        name=self._collection_name,
+                        metadata={"hnsw:space": "cosine"},
+                    )
+            except Exception as e:
+                # embedding function 不兼容时，删除旧 collection 重建
+                logger.warning("ChromaDB collection incompatible: %s, recreating", e)
+                try:
+                    self._client.delete_collection(name=self._collection_name)
+                except Exception:
+                    pass
+                if self._embedding_fn is not None:
+                    self._collection = self._client.get_or_create_collection(
+                        name=self._collection_name,
+                        metadata={"hnsw:space": "cosine"},
+                        embedding_function=self._embedding_fn,
+                    )
+                else:
+                    self._collection = self._client.get_or_create_collection(
+                        name=self._collection_name,
+                        metadata={"hnsw:space": "cosine"},
+                    )
             else:
                 self._collection = self._client.get_or_create_collection(
                     name=self._collection_name,

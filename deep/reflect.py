@@ -557,13 +557,27 @@ class ReflectEngine:
         for attempt in range(max_retries):
             try:
                 raw = None
-                if self._llm_client is not None:
-                    result = self._llm_client.call_sync(
-                        prompt=prompt, system=system, max_tokens=max_tokens, temperature=0.5,
-                    )
-                    raw = result.content if result else None
-                elif self._llm_fn is not None:
-                    raw = self._llm_fn(prompt=prompt, system=system, max_tokens=max_tokens)
+                # ★ R25修复ARCH-1：优先尝试 _llm_fn（经过 provider 的凭证管理），
+                # 再尝试直接 _llm_client，确保 LLM 路径被正确调用
+                if self._llm_fn is not None:
+                    try:
+                        raw = self._llm_fn(prompt=prompt, system=system, max_tokens=max_tokens)
+                    except Exception as e:
+                        logger.warning(
+                            "ReflectEngine _llm_fn failed (attempt %d/%d): %s: %s",
+                            attempt + 1, max_retries, type(e).__name__, e,
+                        )
+                if not raw and self._llm_client is not None:
+                    try:
+                        result = self._llm_client.call_sync(
+                            prompt=prompt, system=system, max_tokens=max_tokens, temperature=0.5,
+                        )
+                        raw = result.content if result else None
+                    except Exception as e:
+                        logger.warning(
+                            "ReflectEngine _llm_client failed (attempt %d/%d): %s: %s",
+                            attempt + 1, max_retries, type(e).__name__, e,
+                        )
                 if not raw or not raw.strip():
                     if attempt < max_retries - 1:
                         logger.warning(

@@ -11,15 +11,9 @@ import logging
 import re
 from typing import Any
 
-logger = logging.getLogger(__name__)
+from omnimem.memory.wing_room import _PRIVACY_TO_WING
 
-# ★ R27优化：模块级常量，避免每次调用重建
-_PRIVACY_TO_SCOPE: dict[str, str] = {
-    "public": "public",
-    "team": "team",
-    "personal": "personal",
-    "secret": "secret",
-}
+logger = logging.getLogger(__name__)
 
 _NEGATION_INDICATORS: tuple[str, ...] = (
     "不是",
@@ -175,19 +169,37 @@ def handle_govern(provider: Any, args: dict[str, Any]) -> str:
             return json.dumps({"status": "error", "reason": f"Memory {target} not found"})
 
         target_content = target_entry.get("content", "")
-        # ★ R17修复BUG-3：直接扫描所有同类型记忆做冲突检测
-        # 不再依赖 _unified_candidate_search（数据少时可能返回空）
+        # ★ R26修复BUG-3：resolve_conflict 使用与 memorize 相同的语义搜索路径
+        # 之前用 _store.search(limit=100) 只能按 type 过滤，找不到语义相似的记忆
+        # 现在改用 _unified_candidate_search（语义搜索），与写入时一致
         try:
+            # 路径1：语义搜索候选（与 memorize 写入时一致）
+            semantic_candidates = []
+            if hasattr(provider, "_unified_candidate_search"):
+                try:
+                    semantic_candidates = provider._unified_candidate_search(target_content)
+                except Exception:
+                    semantic_candidates = []
+            # 路径2：简单搜索补充（确保覆盖语义搜索遗漏的同 type 记忆）
             all_memories = provider._store.search(limit=100)
-            candidates = [
-                {"content": m.get("content", ""), "memory_id": m.get("memory_id", "")}
-                for m in all_memories
+            simple_candidates = [
+                m for m in all_memories
                 if m.get("memory_id", "") != target
                 and m.get("type", "") in ("fact", "preference", "correction")
             ]
+            # 合并去重
+            seen_ids = set()
+            merged_candidates = []
+            for m in semantic_candidates + simple_candidates:
+                mid = m.get("memory_id", "")
+                if mid and mid != target and mid not in seen_ids:
+                    seen_ids.add(mid)
+                    merged_candidates.append(
+                        {"content": m.get("content", ""), "memory_id": mid}
+                    )
 
             conflict = provider._conflict_resolver.check(
-                target_content, existing_memories=candidates
+                target_content, existing_memories=merged_candidates
             )
 
             if conflict.has_conflict:
@@ -254,24 +266,41 @@ def handle_govern(provider: Any, args: dict[str, Any]) -> str:
             "level", params.get("privacy", args.get("privacy", args.get("level", "personal")))
         )
         provider._privacy.set(target, level)
-        # 同步更新索引
         provider._index.update_privacy(target, level)
-        # ★ 同步更新 wing：privacy 变更时 wing 也应该跟随变更
-        # 使用与 memorize 路径一致的映射逻辑：privacy→scope→resolve_wing()
-        derived_scope = _PRIVACY_TO_SCOPE.get(level, level)
-        # ★ R24修复BUG-1：preference/event + team → project scope
+        # ★ R25修复BUG-1+/Minor-4：直接从 privacy 映射到 wing，消除 scope 中间层
         existing = provider._store.get(target)
         existing_type = existing.get("type", existing.get("memory_type", "")) if existing else ""
-        if derived_scope == "team" and existing_type in ("preference", "event"):
-            derived_scope = "project"
-        new_wing = provider._wing_room.resolve_wing(derived_scope)
+        new_wing = provider._wing_room.resolve_wing_from_privacy(level, existing_type)
         provider._store.update_privacy(target, level, new_wing=new_wing)
-        provider._index.update_field(target, wing=new_wing)
-        provider._index.flush()  # ★ 强制提交，避免批量延迟
+        # ★ R25修复：使用 immediate=True 强制立即提交，避免批处理延迟
+        provider._index.update_field(target, wing=new_wing, immediate=True)
+        # ★ R28修复Minor-4回归：同步更新检索索引（向量/BM25）中的 metadata
+        # 否则 RAG 搜索返回的 wing 仍是旧值
+        if existing and hasattr(provider, "_retriever") and provider._retriever:
+            try:
+                content = existing.get("content", "")
+                if content:
+                    provider._retriever.update_metadata(
+                        target,
+                        {
+                            "_content": content,
+                            "memory_id": target,
+                            "type": existing_type,
+                            "wing": new_wing,
+                            "privacy": level,
+                        },
+                    )
+            except Exception as e:
+                logger.warning("OmniMem set_privacy retriever sync failed: %s", e)
         # ★ 验证：读回确认是否真正更新
         verify = provider._store.get(target)
         actual_privacy = verify.get("privacy", "personal") if verify else "unknown"
         actual_wing = verify.get("wing", "personal") if verify else "unknown"
+        if actual_wing != new_wing:
+            logger.warning(
+                "govern set_privacy wing mismatch: expected=%s actual=%s for %s",
+                new_wing, actual_wing, target,
+            )
         provider._audit_logger.log("govern_set_privacy", memory_id=target, details={"privacy": actual_privacy, "wing": actual_wing}, result="success", instance_id=getattr(provider, "_instance_id", None))
         return json.dumps(
             {
