@@ -272,7 +272,13 @@ def handle_govern(provider: Any, args: dict[str, Any]) -> str:
         verify = provider._store.get(target)
         actual_privacy = verify.get("privacy", "personal") if verify else "unknown"
         actual_wing = verify.get("wing", "personal") if verify else "unknown"
-        provider._audit_logger.log("govern_set_privacy", memory_id=target, details={"privacy": actual_privacy, "wing": actual_wing}, result="success", instance_id=getattr(provider, "_instance_id", None))
+        provider._audit_logger.log(
+            "govern_set_privacy",
+            memory_id=target,
+            details={"privacy": actual_privacy, "wing": actual_wing},
+            result="success",
+            instance_id=getattr(provider, "_instance_id", None),
+        )
         return json.dumps(
             {
                 "status": "updated",
@@ -283,11 +289,21 @@ def handle_govern(provider: Any, args: dict[str, Any]) -> str:
         )
     elif action == "archive":
         provider._forgetting.archive(target)
-        provider._audit_logger.log("govern_archive", memory_id=target, result="success", instance_id=getattr(provider, "_instance_id", None))
+        provider._audit_logger.log(
+            "govern_archive",
+            memory_id=target,
+            result="success",
+            instance_id=getattr(provider, "_instance_id", None),
+        )
         return json.dumps({"status": "archived", "memory_id": target})
     elif action == "reactivate":
         provider._forgetting.reactivate(target)
-        provider._audit_logger.log("govern_reactivate", memory_id=target, result="success", instance_id=getattr(provider, "_instance_id", None))
+        provider._audit_logger.log(
+            "govern_reactivate",
+            memory_id=target,
+            result="success",
+            instance_id=getattr(provider, "_instance_id", None),
+        )
         return json.dumps({"status": "reactivated", "memory_id": target})
     elif action == "provenance":
         prov = provider._provenance.lookup(target)
@@ -412,7 +428,9 @@ def handle_govern(provider: Any, args: dict[str, Any]) -> str:
                 to_time=to_time,
                 limit=limit,
             )
-            return json.dumps({"status": "ok", "count": len(entries), "entries": entries}, ensure_ascii=False)
+            return json.dumps(
+                {"status": "ok", "count": len(entries), "entries": entries}, ensure_ascii=False
+            )
         except Exception as e:
             return json.dumps({"error": f"Audit log query failed: {e}"})
     elif action == "assign_role":
@@ -442,7 +460,9 @@ def handle_govern(provider: Any, args: dict[str, Any]) -> str:
         if not permission:
             return json.dumps({"error": "permission is required"})
         allowed = provider._rbac.check_permission(user_id, permission)
-        return json.dumps({"status": "ok", "user_id": user_id, "permission": permission, "allowed": allowed})
+        return json.dumps(
+            {"status": "ok", "user_id": user_id, "permission": permission, "allowed": allowed}
+        )
     elif action == "get_permissions":
         user_id = params.get("user_id", args.get("user_id", "default"))
         permissions = provider._rbac.get_user_permissions(user_id)
@@ -452,20 +472,32 @@ def handle_govern(provider: Any, args: dict[str, Any]) -> str:
         config_kwargs = {k: v for k, v in params.items() if k != "provider"}
         try:
             provider._kms.configure_provider(provider_name, **config_kwargs)
-            provider._audit_logger.log("govern_configure_kms", details={"provider": provider_name}, result="success", instance_id=getattr(provider, "_instance_id", None))
+            provider._audit_logger.log(
+                "govern_configure_kms",
+                details={"provider": provider_name},
+                result="success",
+                instance_id=getattr(provider, "_instance_id", None),
+            )
             return json.dumps({"status": "configured", "provider": provider_name})
         except ValueError as e:
             return json.dumps({"error": str(e)})
     elif action == "rotate_key":
         key_id = params.get("key_id", "default")
         provider._kms.rotate_key(key_id)
-        provider._audit_logger.log("govern_rotate_key", details={"key_id": key_id}, result="success", instance_id=getattr(provider, "_instance_id", None))
+        provider._audit_logger.log(
+            "govern_rotate_key",
+            details={"key_id": key_id},
+            result="success",
+            instance_id=getattr(provider, "_instance_id", None),
+        )
         return json.dumps({"status": "rotated", "key_id": key_id})
     elif action == "kms_status":
-        return json.dumps({
-            "status": "ok",
-            "provider": provider._kms.provider,
-            "config": provider._kms._config,
-        })
+        return json.dumps(
+            {
+                "status": "ok",
+                "provider": provider._kms.provider,
+                "config": provider._kms._config,
+            }
+        )
     else:
         return json.dumps({"error": f"Unknown governance action: {action}"})

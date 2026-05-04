@@ -26,7 +26,8 @@ class CrossEncoderReranker:
         try:
             # ROCm PyTorch 兼容性
             import torch.distributed as dist
-            if not hasattr(dist, 'is_initialized'):
+
+            if not hasattr(dist, "is_initialized"):
                 dist.is_initialized = lambda: False
             from sentence_transformers import CrossEncoder
 

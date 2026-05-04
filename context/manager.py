@@ -17,9 +17,9 @@ import json
 import logging
 import os
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from functools import lru_cache
-from collections.abc import Callable
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -209,7 +209,7 @@ class ContextManager:
             os.path.dirname(os.path.dirname(__file__)), "config", "synonyms.json"
         )
         try:
-            with open(config_path, "r", encoding="utf-8") as f:
+            with open(config_path, encoding="utf-8") as f:
                 external: dict[str, str] = json.load(f)
             if isinstance(external, dict):
                 result.update(external)

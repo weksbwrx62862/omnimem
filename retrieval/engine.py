@@ -70,7 +70,7 @@ class _ReadWriteLock:
             self._writers -= 1
             self._cond.notify_all()
 
-    def __enter__(self) -> "_ReadWriteLock":
+    def __enter__(self) -> _ReadWriteLock:
         self.acquire_write()
         return self
 

@@ -1,6 +1,5 @@
 import json
 from pathlib import Path
-from typing import Any
 
 
 class RBACManager:
@@ -18,7 +17,17 @@ class RBACManager:
             self._users = data.get("users", {})
         else:
             self._roles = {
-                "admin": {"permissions": ["read", "write", "delete", "govern", "export", "import", "audit"]},
+                "admin": {
+                    "permissions": [
+                        "read",
+                        "write",
+                        "delete",
+                        "govern",
+                        "export",
+                        "import",
+                        "audit",
+                    ]
+                },
                 "editor": {"permissions": ["read", "write", "delete", "export"]},
                 "viewer": {"permissions": ["read", "export"]},
                 "auditor": {"permissions": ["read", "audit"]},

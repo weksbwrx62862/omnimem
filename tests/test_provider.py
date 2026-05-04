@@ -5,7 +5,7 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 from omnimem.provider import OmniMemProvider
 
@@ -58,7 +58,6 @@ class TestOmniMemProviderStatic(unittest.TestCase):
 
 
 class TestProviderErrorPaths(unittest.TestCase):
-
     def test_llm_failure_graceful_degradation(self) -> None:
         provider = OmniMemProvider()
         provider._llm_client = MagicMock()
@@ -76,6 +75,7 @@ class TestProviderErrorPaths(unittest.TestCase):
         config_path = config_dir / "config.yaml"
         config_path.write_text("{{invalid yaml: [unclosed", encoding="utf-8")
         from omnimem.config import OmniMemConfig
+
         config = OmniMemConfig(config_dir)
         self.assertEqual(config.get("save_interval"), 15)
 
@@ -83,6 +83,7 @@ class TestProviderErrorPaths(unittest.TestCase):
         tmpdir = Path(tempfile.mkdtemp()) / "nonexistent" / "deep" / "path"
         self.assertFalse(tmpdir.exists())
         from omnimem.memory.drawer_closet import DrawerClosetStore
+
         store = DrawerClosetStore(tmpdir)
         self.assertTrue(tmpdir.exists())
         mid = store.add(wing="personal", room="test", content="恢复测试")

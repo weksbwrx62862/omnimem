@@ -716,7 +716,9 @@ class KnowledgeGraph:
         try:
             from collections import deque
 
-            visited: dict[str, tuple[Any, ...]] = {start: ()}  # entity -> (prev_entity, triple_dict)
+            visited: dict[str, tuple[Any, ...]] = {
+                start: ()
+            }  # entity -> (prev_entity, triple_dict)
             queue: deque[str] = deque([start])
             depth = 0
 

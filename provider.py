@@ -23,29 +23,40 @@ from pathlib import Path
 from typing import Any
 
 from agent.memory_provider import MemoryProvider
-
 from omnimem.compression.pipeline import CompressionPipeline
 from omnimem.config import OmniMemConfig
 from omnimem.core.attachment import build_attachments
 from omnimem.core.dedup import SemanticDedupService
+from omnimem.core.memory_monitor import MemoryMonitor
 from omnimem.core.tool_router import (
     ToolRouter,
-    handle_compact,
-    handle_reflect,
-    handle_detail,
+    apply_sync_change,
     build_system_prompt,
+    call_llm_for_reflect,
+    handle_compact,
+    handle_detail,
+    handle_reflect,
+    init_llm_client,
+    l3_recall,
+    make_llm_call_fn,
+    retry_index_add,
+    retry_kg_extract,
+    retry_retriever_add,
     run_prefetch,
     run_queue_prefetch,
-    l3_recall,
-    init_llm_client,
-    make_llm_call_fn,
-    call_llm_for_reflect,
-    retry_index_add,
-    retry_retriever_add,
-    retry_kg_extract,
-    apply_sync_change,
+)
+from omnimem.core.tool_router import (
     get_config_schema as _get_config_schema_impl,
+)
+from omnimem.core.tool_router import (
     save_config as _save_config_impl,
+)
+from omnimem.facades import (
+    DeepMemoryFacade,
+    GovernanceFacade,
+    RetrievalFacade,
+    StorageFacade,
+    SyncFacade,
 )
 from omnimem.governance.vector_clock import VectorClock
 from omnimem.handlers.compat_handler import CompatHandler
@@ -55,14 +66,6 @@ from omnimem.handlers.memorize import handle_memorize as _handle_memorize_impl
 from omnimem.handlers.recall import handle_recall as _handle_recall_impl
 from omnimem.handlers.schemas import get_tool_schemas as _get_tool_schemas
 from omnimem.utils.security import SecurityValidator
-from omnimem.core.memory_monitor import MemoryMonitor
-from omnimem.facades import (
-    StorageFacade,
-    RetrievalFacade,
-    GovernanceFacade,
-    DeepMemoryFacade,
-    SyncFacade,
-)
 
 logger = logging.getLogger(__name__)
 
@@ -189,12 +192,18 @@ class OmniMemProvider(MemoryProvider):  # type: ignore[misc]
 
     def _init_governance_sync_services(self) -> None:
         self._governance = GovernanceFacade(
-            self._data_dir, self._config, self._session_id,
-            self._storage, self._retrieval.retriever,
+            self._data_dir,
+            self._config,
+            self._session_id,
+            self._storage,
+            self._retrieval.retriever,
         )
         self._sync = SyncFacade(
-            self._data_dir, self._config, self._session_id,
-            self._storage, self._retrieval,
+            self._data_dir,
+            self._config,
+            self._session_id,
+            self._storage,
+            self._retrieval,
         )
         self._sync.bind_provenance(self._governance.provenance)
 
@@ -228,7 +237,8 @@ class OmniMemProvider(MemoryProvider):  # type: ignore[misc]
 
     def _init_reflect(self) -> None:
         self._deep = DeepMemoryFacade(
-            self._data_dir, self._config,
+            self._data_dir,
+            self._config,
             recall_fn=self._l3_recall,
             llm_fn=self._call_llm_for_reflect,
             llm_client=self._llm_client,
@@ -242,89 +252,157 @@ class OmniMemProvider(MemoryProvider):  # type: ignore[misc]
 
     # Storage
     @property
-    def _soul(self) -> Any: return self._storage.soul
+    def _soul(self) -> Any:
+        return self._storage.soul
+
     @property
-    def _core_block(self) -> Any: return self._storage.core_block
+    def _core_block(self) -> Any:
+        return self._storage.core_block
+
     @property
-    def _budget(self) -> Any: return self._storage.budget
+    def _budget(self) -> Any:
+        return self._storage.budget
+
     @property
-    def _attachments(self) -> Any: return self._storage.attachments
+    def _attachments(self) -> Any:
+        return self._storage.attachments
+
     @_attachments.setter
-    def _attachments(self, val: Any) -> None: self._storage.attachments = val
+    def _attachments(self, val: Any) -> None:
+        self._storage.attachments = val
+
     @property
-    def _wing_room(self) -> Any: return self._storage.wing_room
+    def _wing_room(self) -> Any:
+        return self._storage.wing_room
+
     @property
-    def _store(self) -> Any: return self._storage.store
+    def _store(self) -> Any:
+        return self._storage.store
+
     @property
-    def _index(self) -> Any: return self._storage.index
+    def _index(self) -> Any:
+        return self._storage.index
+
     @property
-    def _md_store(self) -> Any: return self._storage.md_store
+    def _md_store(self) -> Any:
+        return self._storage.md_store
 
     # Retrieval
     @property
-    def _retriever(self) -> Any: return self._retrieval.retriever
+    def _retriever(self) -> Any:
+        return self._retrieval.retriever
+
     @property
-    def _context_manager(self) -> Any: return self._retrieval.context_manager
+    def _context_manager(self) -> Any:
+        return self._retrieval.context_manager
+
     @property
-    def _perception(self) -> Any: return self._retrieval.perception
+    def _perception(self) -> Any:
+        return self._retrieval.perception
+
     @property
-    def _feedback(self) -> Any: return self._retrieval.feedback
+    def _feedback(self) -> Any:
+        return self._retrieval.feedback
+
     @property
-    def _prefetch_cache(self) -> Any: return self._retrieval.prefetch_cache
+    def _prefetch_cache(self) -> Any:
+        return self._retrieval.prefetch_cache
+
     @_prefetch_cache.setter
-    def _prefetch_cache(self, val: Any) -> None: self._retrieval.prefetch_cache = val
+    def _prefetch_cache(self, val: Any) -> None:
+        self._retrieval.prefetch_cache = val
+
     @property
-    def _prefetch_lock(self) -> Any: return self._retrieval.prefetch_lock
+    def _prefetch_lock(self) -> Any:
+        return self._retrieval.prefetch_lock
+
     @property
-    def _reflect_cache(self) -> Any: return self._retrieval._reflect_cache
+    def _reflect_cache(self) -> Any:
+        return self._retrieval._reflect_cache
+
     @property
-    def _prefetch_executor(self) -> Any: return self._retrieval._prefetch_executor
+    def _prefetch_executor(self) -> Any:
+        return self._retrieval._prefetch_executor
 
     # Dedup
     @property
-    def _dedup(self) -> Any: return self._dedup_service
+    def _dedup(self) -> Any:
+        return self._dedup_service
 
     # Governance
     @property
-    def _conflict_resolver(self) -> Any: return self._governance.conflict_resolver
+    def _conflict_resolver(self) -> Any:
+        return self._governance.conflict_resolver
+
     @property
-    def _temporal_decay(self) -> Any: return self._governance.temporal_decay
+    def _temporal_decay(self) -> Any:
+        return self._governance.temporal_decay
+
     @property
-    def _forgetting(self) -> Any: return self._governance.forgetting
+    def _forgetting(self) -> Any:
+        return self._governance.forgetting
+
     @property
-    def _privacy(self) -> Any: return self._governance.privacy
+    def _privacy(self) -> Any:
+        return self._governance.privacy
+
     @property
-    def _provenance(self) -> Any: return self._governance.provenance
+    def _provenance(self) -> Any:
+        return self._governance.provenance
+
     @property
-    def _sync_engine(self) -> Any: return self._governance.sync_engine
+    def _sync_engine(self) -> Any:
+        return self._governance.sync_engine
+
     @property
-    def _vector_clock(self) -> Any: return self._governance.vector_clock
+    def _vector_clock(self) -> Any:
+        return self._governance.vector_clock
+
     @property
-    def _auditor(self) -> Any: return self._governance.auditor
+    def _auditor(self) -> Any:
+        return self._governance.auditor
+
     @property
-    def _audit_logger(self) -> Any: return self._governance.audit_logger
+    def _audit_logger(self) -> Any:
+        return self._governance.audit_logger
+
     @property
-    def _rbac(self) -> Any: return self._governance.rbac
+    def _rbac(self) -> Any:
+        return self._governance.rbac
 
     # Sync
     @property
-    def _saga(self) -> Any: return self._sync.saga
+    def _saga(self) -> Any:
+        return self._sync.saga
+
     @property
-    def _bg_executor(self) -> Any: return self._sync.bg_executor
+    def _bg_executor(self) -> Any:
+        return self._sync.bg_executor
+
     @property
-    def _store_service(self) -> Any: return self._sync.store_service
+    def _store_service(self) -> Any:
+        return self._sync.store_service
+
     @property
-    def _kv_cache(self) -> Any: return self._sync.kv_cache
+    def _kv_cache(self) -> Any:
+        return self._sync.kv_cache
+
     @property
-    def _lora_trainer(self) -> Any: return self._sync.lora_trainer
+    def _lora_trainer(self) -> Any:
+        return self._sync.lora_trainer
 
     # Deep
     @property
-    def _consolidation(self) -> Any: return self._deep.consolidation
+    def _consolidation(self) -> Any:
+        return self._deep.consolidation
+
     @property
-    def _knowledge_graph(self) -> Any: return self._deep.knowledge_graph
+    def _knowledge_graph(self) -> Any:
+        return self._deep.knowledge_graph
+
     @property
-    def _reflect_engine(self) -> Any: return self._deep.reflect_engine
+    def _reflect_engine(self) -> Any:
+        return self._deep.reflect_engine
 
     # ─── 异步接口（P2方案五） ───────────────────────────────────
 
@@ -661,7 +739,9 @@ class OmniMemProvider(MemoryProvider):  # type: ignore[misc]
         return self._vector_clock  # type: ignore[no-any-return]
 
     def _apply_sync_change(self, change: dict[str, Any]) -> bool:
-        return apply_sync_change(change, self._store, self._index, self._retriever, self._forgetting)
+        return apply_sync_change(
+            change, self._store, self._index, self._retriever, self._forgetting
+        )
 
     def _handle_memorize(self, args: dict[str, Any]) -> str:
         """委托到 handlers/memorize.py。"""
@@ -776,7 +856,8 @@ class OmniMemProvider(MemoryProvider):  # type: ignore[misc]
 
     def _call_llm_for_reflect(self, prompt: str, system: str, max_tokens: int = 800) -> str | None:
         return call_llm_for_reflect(
-            prompt, system,
+            prompt,
+            system,
             llm_client=self._llm_client if hasattr(self, "_llm_client") else None,
             reflect_cache=self._reflect_cache,
             max_tokens=max_tokens,

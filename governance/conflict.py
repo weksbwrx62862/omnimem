@@ -227,7 +227,9 @@ class ConflictResolver:
                 return result
         return None
 
-    def _find_candidates(self, content_lower: str, memories: list[dict[str, Any]]) -> list[tuple[str, str, str, float]]:
+    def _find_candidates(
+        self, content_lower: str, memories: list[dict[str, Any]]
+    ) -> list[tuple[str, str, str, float]]:
         """从记忆列表中筛选候选记忆，计算重叠率。"""
         candidates = []
         for mem in memories:

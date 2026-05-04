@@ -57,7 +57,9 @@ def handle_memorize(provider: Any, args: dict[str, Any]) -> str:
     content = args["content"]
     user_id = args.get("user_id", "default")
     if hasattr(provider, "_rbac") and not provider._rbac.check_permission(user_id, "write"):
-        return json.dumps({"status": "blocked", "reason": f"User '{user_id}' lacks 'write' permission"})
+        return json.dumps(
+            {"status": "blocked", "reason": f"User '{user_id}' lacks 'write' permission"}
+        )
 
     # ★ 还原转义字符：LLM 传入的 content 可能含字面量 \\n \\t
     # 在 JSON 解析后这些变成 \n \t 字面量（两个字符），需要还原为实际控制字符
@@ -242,11 +244,13 @@ def handle_memorize(provider: Any, args: dict[str, Any]) -> str:
             ),
             SagaStep(
                 "knowledge_graph",
-                lambda: provider._knowledge_graph.extract_and_store(
-                    content, memory_id=memory_id, confidence=confidence / 5.0
-                )
-                if provider._knowledge_graph
-                else None,
+                lambda: (
+                    provider._knowledge_graph.extract_and_store(
+                        content, memory_id=memory_id, confidence=confidence / 5.0
+                    )
+                    if provider._knowledge_graph
+                    else None
+                ),
             ),
         ],
     )

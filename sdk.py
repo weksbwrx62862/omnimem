@@ -20,7 +20,6 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from omnimem.config import OmniMemConfig
 from omnimem.provider import OmniMemProvider
 
 
@@ -137,9 +136,7 @@ class OmniMemSDK:
 
         return result
 
-    def export_memories(
-        self, output_path: str, format: str = "json", **kwargs: Any
-    ) -> dict:
+    def export_memories(self, output_path: str, format: str = "json", **kwargs: Any) -> dict:
         from omnimem.core.import_export import MemoryExporter
 
         exporter = MemoryExporter(

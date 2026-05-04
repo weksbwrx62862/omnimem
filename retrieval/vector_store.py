@@ -14,24 +14,23 @@ logger = logging.getLogger(__name__)
 
 class VectorStore(ABC):
     @abstractmethod
-    def add(self, ids: list[str], documents: list[str], metadatas: list[dict] | None = None) -> None:
-        ...
+    def add(
+        self, ids: list[str], documents: list[str], metadatas: list[dict] | None = None
+    ) -> None: ...
 
     @abstractmethod
-    def query(self, query_texts: list[str], n_results: int = 10, where: dict | None = None) -> dict:
-        ...
+    def query(
+        self, query_texts: list[str], n_results: int = 10, where: dict | None = None
+    ) -> dict: ...
 
     @abstractmethod
-    def delete(self, ids: list[str]) -> None:
-        ...
+    def delete(self, ids: list[str]) -> None: ...
 
     @abstractmethod
-    def count(self) -> int:
-        ...
+    def count(self) -> int: ...
 
     @abstractmethod
-    def reset(self) -> None:
-        ...
+    def reset(self) -> None: ...
 
 
 class _CachedEmbeddingFunction:
@@ -158,7 +157,9 @@ class ChromaDBStore(VectorStore):
             logger.warning("ChromaDB init failed: %s", e)
         self._initialized = True
 
-    def add(self, ids: list[str], documents: list[str], metadatas: list[dict] | None = None) -> None:
+    def add(
+        self, ids: list[str], documents: list[str], metadatas: list[dict] | None = None
+    ) -> None:
         self._ensure_initialized()
         if self._collection is None:
             return
@@ -268,7 +269,9 @@ class QdrantStore(VectorStore):
             logger.warning("Qdrant init failed: %s", e)
         self._initialized = True
 
-    def add(self, ids: list[str], documents: list[str], metadatas: list[dict] | None = None) -> None:
+    def add(
+        self, ids: list[str], documents: list[str], metadatas: list[dict] | None = None
+    ) -> None:
         self._ensure_initialized()
         if self._client is None:
             return

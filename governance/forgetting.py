@@ -45,9 +45,11 @@ class ForgettingCurve:
         self._db_path = self._governance_dir / "forgetting.db"
         self._conn: sqlite3.Connection | None = None
         self._pending_writes = 0
-        self._active_days = getattr(config, 'forgetting_active_days', 7) if config else 7
-        self._consolidating_days = getattr(config, 'forgetting_consolidating_days', 30) if config else 30
-        self._archived_days = getattr(config, 'forgetting_archived_days', 90) if config else 90
+        self._active_days = getattr(config, "forgetting_active_days", 7) if config else 7
+        self._consolidating_days = (
+            getattr(config, "forgetting_consolidating_days", 30) if config else 30
+        )
+        self._archived_days = getattr(config, "forgetting_archived_days", 90) if config else 90
         self._stages: dict[str, tuple[int, int | None]] = {
             "active": (0, self._active_days),
             "consolidating": (self._active_days, self._consolidating_days),

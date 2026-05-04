@@ -16,7 +16,7 @@ import uuid
 from collections import OrderedDict
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from omnimem.memory.meta_store import MetaStore
 
@@ -356,7 +356,7 @@ class DrawerClosetStore:
         self._meta_store.warm_up(entries)
         logger.debug("Warmed up %d entries into closet index and meta store", len(entries))
 
-    def update_privacy(self, memory_id: str, privacy: str, new_wing: Optional[str] = None) -> bool:
+    def update_privacy(self, memory_id: str, privacy: str, new_wing: str | None = None) -> bool:
         """更新记忆的隐私级别。可选同步更新wing。"""
         updated = False
         if memory_id in self._closet_index:
@@ -383,7 +383,9 @@ class DrawerClosetStore:
             self._meta_store.update_privacy(memory_id, privacy, new_wing or "")
         return updated
 
-    def _update_drawer_privacy(self, memory_id: str, privacy: str, new_wing: Optional[str] = None) -> None:
+    def _update_drawer_privacy(
+        self, memory_id: str, privacy: str, new_wing: str | None = None
+    ) -> None:
         """更新 Drawer 磁盘文件中的 privacy 和 wing 字段。"""
         drawer_path = self._id_to_path.get(memory_id)
         if not drawer_path or not drawer_path.exists():

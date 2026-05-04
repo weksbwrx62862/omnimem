@@ -559,7 +559,10 @@ class ReflectEngine:
                 raw = None
                 if self._llm_client is not None:
                     result = self._llm_client.call_sync(
-                        prompt=prompt, system=system, max_tokens=max_tokens, temperature=0.5,
+                        prompt=prompt,
+                        system=system,
+                        max_tokens=max_tokens,
+                        temperature=0.5,
                     )
                     raw = result.content if result else None
                 elif self._llm_fn is not None:
