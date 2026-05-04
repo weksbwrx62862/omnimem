@@ -10,11 +10,11 @@ import unittest
 from pathlib import Path
 from typing import Any
 
-from omnimem.retrieval.rrf import RRFFusion
-from omnimem.retrieval.reranker import CrossEncoderReranker
-from omnimem.retrieval.vector import VectorRetriever, _CachedEmbeddingFunction
 from omnimem.retrieval.bm25 import BM25Retriever
 from omnimem.retrieval.engine import HybridRetriever
+from omnimem.retrieval.reranker import CrossEncoderReranker
+from omnimem.retrieval.rrf import RRFFusion
+from omnimem.retrieval.vector import VectorRetriever, _CachedEmbeddingFunction
 
 
 def _has_vector_model() -> bool:
@@ -22,9 +22,11 @@ def _has_vector_model() -> bool:
     try:
         # ROCm PyTorch 兼容性
         import torch.distributed as dist
-        if not hasattr(dist, 'is_initialized'):
+
+        if not hasattr(dist, "is_initialized"):
             dist.is_initialized = lambda: False
         from sentence_transformers import SentenceTransformer
+
         m = SentenceTransformer("all-MiniLM-L6-v2")
         _ = m.encode(["test"])
         return True
@@ -414,8 +416,18 @@ class TestHybridRetriever(unittest.TestCase):
     def test_rebuild_bm25_from_entries(self) -> None:
         """从索引条目重建 BM25。"""
         entries = [
-            {"content": "深度学习使用神经网络", "memory_id": "re-1", "type": "fact", "scope": "personal"},
-            {"content": "机器学习是AI的子领域", "memory_id": "re-2", "type": "fact", "scope": "personal"},
+            {
+                "content": "深度学习使用神经网络",
+                "memory_id": "re-1",
+                "type": "fact",
+                "scope": "personal",
+            },
+            {
+                "content": "机器学习是AI的子领域",
+                "memory_id": "re-2",
+                "type": "fact",
+                "scope": "personal",
+            },
         ]
         count = self.hybrid.rebuild_bm25_from_entries(entries)
         self.assertEqual(count, 2)
@@ -467,7 +479,6 @@ class TestHybridRetrieverStatic(unittest.TestCase):
 
 
 class TestHybridRetrieverEdgeCases(unittest.TestCase):
-
     def setUp(self) -> None:
         self.tmpdir = tempfile.mkdtemp()
         self.hybrid = HybridRetriever(data_dir=Path(self.tmpdir))

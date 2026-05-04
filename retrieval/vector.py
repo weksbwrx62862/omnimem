@@ -12,12 +12,12 @@ import logging
 from pathlib import Path
 from typing import Any
 
+from omnimem.retrieval.vector_factory import create_vector_store
 from omnimem.retrieval.vector_store import (
     ChromaDBStore,
     VectorStore,
     _CachedEmbeddingFunction,
 )
-from omnimem.retrieval.vector_factory import create_vector_store
 
 logger = logging.getLogger(__name__)
 
@@ -333,9 +333,7 @@ class VectorRetriever:
                 else 0
             )
             has_star_chunk = (
-                len(chunks) >= 2
-                and best_score > avg_score + score_std
-                and best_score > 0.6
+                len(chunks) >= 2 and best_score > avg_score + score_std and best_score > 0.6
             )
 
             if has_star_chunk:

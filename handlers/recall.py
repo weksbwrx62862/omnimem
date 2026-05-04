@@ -81,7 +81,9 @@ def handle_recall(provider: Any, args: dict[str, Any]) -> str:
     max_tokens = args.get("max_tokens", 1500)
     user_id = args.get("user_id", "default")
     if hasattr(provider, "_rbac") and not provider._rbac.check_permission(user_id, "read"):
-        return json.dumps({"status": "blocked", "reason": f"User '{user_id}' lacks 'read' permission"})
+        return json.dumps(
+            {"status": "blocked", "reason": f"User '{user_id}' lacks 'read' permission"}
+        )
 
     # ★ R27优化：预提取查询关键词，避免同一函数内4次重复正则匹配与CJK切分
     _query_keywords = _extract_query_keywords(query)

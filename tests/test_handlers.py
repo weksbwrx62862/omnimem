@@ -10,11 +10,10 @@ import unittest
 from typing import Any
 from unittest.mock import MagicMock, patch
 
-from omnimem.handlers.schemas import get_tool_schemas
-from omnimem.handlers.memorize import handle_memorize
-from omnimem.handlers.recall import handle_recall, _extract_query_keywords
 from omnimem.handlers.govern import handle_govern
-
+from omnimem.handlers.memorize import handle_memorize
+from omnimem.handlers.recall import _extract_query_keywords, handle_recall
+from omnimem.handlers.schemas import get_tool_schemas
 
 # ──────────────────────────────────────────────
 # Mock Provider Helper
@@ -383,7 +382,14 @@ class TestHandleRecall(unittest.TestCase):
 
     def test_recall_store_supplement_fastpath(self) -> None:
         """_source=store_supplement 的结果跳过关键词验证。"""
-        results = [{"memory_id": "s-001", "content": "无关内容", "score": 0.40, "_source": "store_supplement"}]
+        results = [
+            {
+                "memory_id": "s-001",
+                "content": "无关内容",
+                "score": 0.40,
+                "_source": "store_supplement",
+            }
+        ]
         mp = _mock_provider(
             _retriever=MagicMock(search=MagicMock(return_value=results)),
             _store=MagicMock(
@@ -402,7 +408,13 @@ class TestHandleRecall(unittest.TestCase):
     def test_recall_graph_triple_filtered(self) -> None:
         """type=graph_triple 且内容不匹配查询关键词 → 被过滤。"""
         results = [
-            {"memory_id": "g-001", "content": "Jane knows Bob", "score": 0.60, "_source": "", "type": "graph_triple"},
+            {
+                "memory_id": "g-001",
+                "content": "Jane knows Bob",
+                "score": 0.60,
+                "_source": "",
+                "type": "graph_triple",
+            },
         ]
         mp = _mock_provider(
             _retriever=MagicMock(search=MagicMock(return_value=results)),
@@ -421,7 +433,13 @@ class TestHandleRecall(unittest.TestCase):
     def test_recall_graph_triple_passes(self) -> None:
         """type=graph_triple 且内容匹配查询关键词 → 通过。"""
         results = [
-            {"memory_id": "g-002", "content": "Python used for ML", "score": 0.60, "_source": "", "type": "graph_triple"},
+            {
+                "memory_id": "g-002",
+                "content": "Python used for ML",
+                "score": 0.60,
+                "_source": "",
+                "type": "graph_triple",
+            },
         ]
         mp = _mock_provider(
             _retriever=MagicMock(search=MagicMock(return_value=results)),
@@ -439,7 +457,9 @@ class TestHandleRecall(unittest.TestCase):
 
     def test_recall_low_rrf_score_filtered(self) -> None:
         """RRF score < 0.025 且无关键词重叠 → 被过滤。"""
-        results = [{"memory_id": "lr-001", "content": "无关的垃圾内容", "score": 0.015, "_source": ""}]
+        results = [
+            {"memory_id": "lr-001", "content": "无关的垃圾内容", "score": 0.015, "_source": ""}
+        ]
         mp = _mock_provider(
             _retriever=MagicMock(search=MagicMock(return_value=results)),
             _store=MagicMock(
@@ -460,9 +480,11 @@ class TestHandleRecall(unittest.TestCase):
             _retriever=MagicMock(search=MagicMock(return_value=[])),
             _store=MagicMock(
                 get=MagicMock(return_value={"memory_id": "fb-001", "content": "test"}),
-                search=MagicMock(return_value=[
-                    {"memory_id": "fb-001", "content": "Python 编程入门教程"},
-                ]),
+                search=MagicMock(
+                    return_value=[
+                        {"memory_id": "fb-001", "content": "Python 编程入门教程"},
+                    ]
+                ),
                 search_by_content=MagicMock(return_value=[]),
                 add=MagicMock(),
                 update_privacy=MagicMock(),
@@ -475,14 +497,18 @@ class TestHandleRecall(unittest.TestCase):
 
     def test_recall_low_count_supplement(self) -> None:
         """结果数 < 3 → 从 store 补充。"""
-        results = [{"memory_id": "lc-001", "content": "Python 是门好语言", "score": 0.80, "_source": ""}]
+        results = [
+            {"memory_id": "lc-001", "content": "Python 是门好语言", "score": 0.80, "_source": ""}
+        ]
         mp = _mock_provider(
             _retriever=MagicMock(search=MagicMock(return_value=results)),
             _store=MagicMock(
                 get=MagicMock(return_value={"memory_id": "lc-001", "content": "test"}),
-                search=MagicMock(return_value=[
-                    {"memory_id": "lc-002", "content": "Python 编程学习路线"},
-                ]),
+                search=MagicMock(
+                    return_value=[
+                        {"memory_id": "lc-002", "content": "Python 编程学习路线"},
+                    ]
+                ),
                 search_by_content=MagicMock(return_value=[]),
                 add=MagicMock(),
                 update_privacy=MagicMock(),
@@ -518,15 +544,19 @@ class TestHandleRecall(unittest.TestCase):
     def test_recall_llm_synonym_expansion(self) -> None:
         """llm 模式下同义词扩展 → 查询被展开。"""
         # "宠物" 在 _SYNONYM_MAP 中有同义词列表
-        results = [{"memory_id": "sy-001", "content": "用户有一只橘猫", "score": 0.80, "_source": ""}]
+        results = [
+            {"memory_id": "sy-001", "content": "用户有一只橘猫", "score": 0.80, "_source": ""}
+        ]
         mp = _mock_provider(
             _retriever=MagicMock(search=MagicMock(return_value=results)),
             _store=MagicMock(
                 get=MagicMock(return_value={"memory_id": "sy-001", "content": "test"}),
                 search=MagicMock(return_value=[]),
-                search_by_content=MagicMock(return_value=[
-                    {"memory_id": "sy-002", "content": "用户喜欢猫咪"},
-                ]),
+                search_by_content=MagicMock(
+                    return_value=[
+                        {"memory_id": "sy-002", "content": "用户喜欢猫咪"},
+                    ]
+                ),
                 add=MagicMock(),
                 update_privacy=MagicMock(),
             ),
@@ -656,7 +686,9 @@ class TestHandleGovern(unittest.TestCase):
             {"memory_id": "a1", "content": "我不用 Python 开发", "type": "fact"},
             {"memory_id": "a2", "content": "我喜欢 Python 开发", "type": "fact"},
         ]
-        with patch("omnimem.governance.conflict.ConflictResolver._compute_overlap", return_value=0.5):
+        with patch(
+            "omnimem.governance.conflict.ConflictResolver._compute_overlap", return_value=0.5
+        ):
             result = _scan_memory_conflicts(self.provider)
         self.assertEqual(len(result), 1)
         self.assertIn("overlap", result[0])
@@ -720,7 +752,11 @@ class TestHandleGovern(unittest.TestCase):
 
     def test_resolve_conflict_with_target_has_conflict(self) -> None:
         """指定目标存在且检测到语义冲突 → 归档旧条目。"""
-        self.provider._store.get.return_value = {"memory_id": "e1", "content": "test", "type": "fact"}
+        self.provider._store.get.return_value = {
+            "memory_id": "e1",
+            "content": "test",
+            "type": "fact",
+        }
         self.provider._store.search.return_value = [
             {"memory_id": "e2", "content": "other", "type": "fact"},
         ]
@@ -732,39 +768,43 @@ class TestHandleGovern(unittest.TestCase):
         self.provider._conflict_resolver.resolve.return_value = MagicMock(
             action="archive_old", reason="negation detected"
         )
-        result = handle_govern(
-            self.provider, {"action": "resolve_conflict", "target": "e1"}
-        )
+        result = handle_govern(self.provider, {"action": "resolve_conflict", "target": "e1"})
         data = json.loads(result)
         self.assertEqual(data["status"], "resolved")
         self.assertEqual(data["conflicting_with"], "e2")
 
     def test_resolve_conflict_with_target_fallback(self) -> None:
         """语义检测失败 → fallback 到否定词扫描。"""
-        self.provider._store.get.return_value = {"memory_id": "f1", "content": "test", "type": "fact"}
+        self.provider._store.get.return_value = {
+            "memory_id": "f1",
+            "content": "test",
+            "type": "fact",
+        }
         self.provider._store.search.return_value = [
             {"memory_id": "f1", "content": "我不再用 Python", "type": "fact"},
             {"memory_id": "f2", "content": "Python 很好用", "type": "fact"},
         ]
         # conflict resolver 抛出异常 → 走 fallback
         self.provider._conflict_resolver.check.side_effect = ValueError("mock error")
-        with patch("omnimem.governance.conflict.ConflictResolver._compute_overlap", return_value=0.5):
-            result = handle_govern(
-                self.provider, {"action": "resolve_conflict", "target": "f1"}
-            )
+        with patch(
+            "omnimem.governance.conflict.ConflictResolver._compute_overlap", return_value=0.5
+        ):
+            result = handle_govern(self.provider, {"action": "resolve_conflict", "target": "f1"})
         data = json.loads(result)
         self.assertEqual(data["status"], "conflicts_found")
 
     def test_resolve_conflict_with_target_no_conflict(self) -> None:
         """指定目标无冲突 → 返回 no_conflict。"""
-        self.provider._store.get.return_value = {"memory_id": "g1", "content": "test", "type": "fact"}
+        self.provider._store.get.return_value = {
+            "memory_id": "g1",
+            "content": "test",
+            "type": "fact",
+        }
         self.provider._store.search.return_value = []
         conflict_mock = MagicMock()
         conflict_mock.has_conflict = False
         self.provider._conflict_resolver.check.return_value = conflict_mock
-        result = handle_govern(
-            self.provider, {"action": "resolve_conflict", "target": "g1"}
-        )
+        result = handle_govern(self.provider, {"action": "resolve_conflict", "target": "g1"})
         data = json.loads(result)
         self.assertEqual(data["status"], "no_conflict")
 
@@ -785,9 +825,15 @@ class TestHandleGovern(unittest.TestCase):
 
     def test_set_privacy_team_downgrades_to_project(self) -> None:
         """team + preference downgrades to project, verify resolve_wing('project') called."""
-        self.provider._store.get.return_value = {"memory_id": "i1", "type": "preference", "wing": "project"}
+        self.provider._store.get.return_value = {
+            "memory_id": "i1",
+            "type": "preference",
+            "wing": "project",
+        }
         self.provider._wing_room.resolve_wing = MagicMock(return_value="project")
-        result = handle_govern(self.provider, {"action": "set_privacy", "target": "i1", "params": {"level": "team"}})
+        result = handle_govern(
+            self.provider, {"action": "set_privacy", "target": "i1", "params": {"level": "team"}}
+        )
         data = json.loads(result)
         self.assertEqual(data["status"], "updated")
         self.provider._wing_room.resolve_wing.assert_called_with("project")

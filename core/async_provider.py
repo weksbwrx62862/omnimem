@@ -134,9 +134,11 @@ class AsyncOmniMemProvider:
         loop = asyncio.get_event_loop()
         return await loop.run_in_executor(
             self._executor,
-            lambda: self._provider._auditor.run_full_audit(limit=1000)
-            if hasattr(self._provider, "_auditor") and self._provider._auditor
-            else {"error": "auditor not available"},
+            lambda: (
+                self._provider._auditor.run_full_audit(limit=1000)
+                if hasattr(self._provider, "_auditor") and self._provider._auditor
+                else {"error": "auditor not available"}
+            ),
         )
 
     async def get_health_status(self) -> dict[str, Any]:
@@ -144,9 +146,11 @@ class AsyncOmniMemProvider:
         loop = asyncio.get_event_loop()
         return await loop.run_in_executor(
             self._executor,
-            lambda: self._provider._auditor.quick_health_check()
-            if hasattr(self._provider, "_auditor") and self._provider._auditor
-            else {"error": "auditor not available"},
+            lambda: (
+                self._provider._auditor.quick_health_check()
+                if hasattr(self._provider, "_auditor") and self._provider._auditor
+                else {"error": "auditor not available"}
+            ),
         )
 
     # ─── 生命周期 ─────────────────────────────────────────────

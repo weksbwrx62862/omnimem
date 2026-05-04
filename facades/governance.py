@@ -9,17 +9,17 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from omnimem.governance.audit_log import AuditLogger
+from omnimem.governance.auditor import GovernanceAuditor
 from omnimem.governance.conflict import ConflictResolver
 from omnimem.governance.decay import TemporalDecay
 from omnimem.governance.forgetting import ForgettingCurve
+from omnimem.governance.kms import KMSManager
 from omnimem.governance.privacy import PrivacyManager
 from omnimem.governance.provenance import ProvenanceTracker
+from omnimem.governance.rbac import RBACManager
 from omnimem.governance.sync import SyncConfig, SyncEngine
 from omnimem.governance.vector_clock import VectorClock
-from omnimem.governance.audit_log import AuditLogger
-from omnimem.governance.auditor import GovernanceAuditor
-from omnimem.governance.rbac import RBACManager
-from omnimem.governance.kms import KMSManager
 
 
 class GovernanceFacade:

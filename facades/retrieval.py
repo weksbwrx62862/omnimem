@@ -12,10 +12,9 @@ from pathlib import Path
 from typing import Any
 
 from omnimem.context.manager import ContextBudget, ContextManager
+from omnimem.governance.feedback import FeedbackCollector
 from omnimem.perception.engine import PerceptionEngine
 from omnimem.retrieval.engine import HybridRetriever
-from omnimem.governance.feedback import FeedbackCollector
-from omnimem.utils.llm_client import AsyncLLMClient
 
 
 class RetrievalFacade:
