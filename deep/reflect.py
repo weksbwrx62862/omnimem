@@ -557,13 +557,27 @@ class ReflectEngine:
         for attempt in range(max_retries):
             try:
                 raw = None
-                if self._llm_client is not None:
-                    result = self._llm_client.call_sync(
-                        prompt=prompt, system=system, max_tokens=max_tokens, temperature=0.5,
-                    )
-                    raw = result.content if result else None
-                elif self._llm_fn is not None:
-                    raw = self._llm_fn(prompt=prompt, system=system, max_tokens=max_tokens)
+                # ★ R25修复ARCH-1：优先尝试 _llm_fn（经过 provider 的凭证管理），
+                # 再尝试直接 _llm_client，确保 LLM 路径被正确调用
+                if self._llm_fn is not None:
+                    try:
+                        raw = self._llm_fn(prompt=prompt, system=system, max_tokens=max_tokens)
+                    except Exception as e:
+                        logger.warning(
+                            "ReflectEngine _llm_fn failed (attempt %d/%d): %s: %s",
+                            attempt + 1, max_retries, type(e).__name__, e,
+                        )
+                if not raw and self._llm_client is not None:
+                    try:
+                        result = self._llm_client.call_sync(
+                            prompt=prompt, system=system, max_tokens=max_tokens, temperature=0.5,
+                        )
+                        raw = result.content if result else None
+                    except Exception as e:
+                        logger.warning(
+                            "ReflectEngine _llm_client failed (attempt %d/%d): %s: %s",
+                            attempt + 1, max_retries, type(e).__name__, e,
+                        )
                 if not raw or not raw.strip():
                     if attempt < max_retries - 1:
                         logger.warning(
@@ -630,12 +644,36 @@ class ReflectEngine:
     def _parse_llm_output(raw: str) -> tuple[str, str, float]:
         """解析 LLM 输出为 (observation, mental_model, confidence)。
 
-        支持多种标记格式：【观察】/【心智模型】/【置信度】 或
-        observation:/mental_model:/confidence: 等。
+        支持多种标记格式：
+        1. 中文标记：【观察】/【心智模型】/【置信度】
+        2. 英文标记：observation:/mental_model:/confidence:
+        3. ★ R33修复ARCH-1：JSON 格式 {"observation": "...", "mental_model": "...", "confidence": 0.8}
         """
         observation = ""
         mental_model = ""
-        confidence = None  # None = 未解析到，0.0 = 显式返回
+        confidence = None
+
+        # ★ R33修复ARCH-1：先尝试 JSON 格式解析
+        # 某些 LLM 会忽略中文标记格式要求，返回 JSON 格式
+        stripped = raw.strip()
+        if stripped.startswith("{") and stripped.endswith("}"):
+            try:
+                parsed = json.loads(stripped)
+                if isinstance(parsed, dict):
+                    observation = parsed.get("observation", parsed.get("obs", ""))
+                    mental_model = parsed.get("mental_model", parsed.get("model", ""))
+                    conf_val = parsed.get("confidence", parsed.get("conf", None))
+                    if conf_val is not None:
+                        try:
+                            confidence = max(0.0, min(1.0, float(conf_val)))
+                        except (ValueError, TypeError):
+                            confidence = 0.5
+                    if observation or mental_model:
+                        if confidence is None:
+                            confidence = 0.5
+                        return (str(observation), str(mental_model), confidence)
+            except (json.JSONDecodeError, ValueError):
+                pass
 
         # 尝试中文标记解析
         obs_match = re.search(

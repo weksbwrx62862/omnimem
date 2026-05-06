@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import time
 from pathlib import Path
 from typing import Any
 
@@ -25,13 +26,14 @@ logger = logging.getLogger(__name__)
 class VectorRetriever:
     """向量检索，委托 VectorStore 抽象接口。"""
 
-    def __init__(self, backend: str = "chromadb", data_dir: Path | None = None):
+    def __init__(self, backend: str = "chromadb", data_dir: Path | None = None, embedding_model_path: str = ""):
         self._backend = backend
         self._data_dir = data_dir or Path("/tmp/omnimem/retrieval")
         self._store: VectorStore | None = None
         self._initialized = False
         self._embedding_fn: Any = None
         self._encoder = None
+        self._embedding_model_path = embedding_model_path
         try:
             import tiktoken
 
@@ -46,8 +48,9 @@ class VectorRetriever:
         if self._backend == "chromadb":
             try:
                 cache_path = self._data_dir / "embedding_cache.json"
-                self._embedding_fn = _CachedEmbeddingFunction(cache_path=cache_path)
-            except Exception:
+                self._embedding_fn = _CachedEmbeddingFunction(cache_path=cache_path, model_path=self._embedding_model_path)
+            except Exception as e:
+                logger.warning("Failed to create CachedEmbeddingFunction: %s, using default", e)
                 self._embedding_fn = None
             self._store = ChromaDBStore(
                 collection_name="omnimem",
@@ -174,6 +177,9 @@ class VectorRetriever:
                     documents=[content],
                     metadatas=[meta],
                 )
+            # ★ R25修复Minor-3：写入后立即 persist 确保向量索引可搜
+            if isinstance(self._store, ChromaDBStore):
+                self._store._persist_client()
         except Exception as e:
             logger.warning("Vector add failed for %s: %s", memory_id, e)
 
@@ -199,7 +205,15 @@ class VectorRetriever:
                     entry = dict(meta) if meta else {}
                     entry["content"] = doc
                     sim = 1.0 - dist
-                    if sim < 0.25:
+                    # ★ R29修复Minor-3：按类型动态调整相似度阈值
+                    # secret/skill/procedural 内容与自然语言查询语义距离大，
+                    # 使用统一阈值会导致这些类型零命中
+                    # ★ BUG FIX: ChromaDB cosine 距离范围为 [0,2]，sim 通常在 [0, 0.5]
+                    # 原阈值 0.25 太高，降到 0.05
+                    mem_type = entry.get("type", "fact")
+                    type_thresholds = {"secret": 0.03, "skill": 0.05, "procedural": 0.05}
+                    threshold = type_thresholds.get(mem_type, 0.05)
+                    if sim < threshold:
                         continue
                     entry["score"] = sim
                     if "memory_id" not in entry and doc_id:
@@ -220,6 +234,21 @@ class VectorRetriever:
             return self._store.count()
         except Exception:
             return 0
+
+    def warmup(self) -> None:
+        """预热：启动时预加载模型和初始化 ChromaDB，避免首次搜索延迟。"""
+        logger.info("VectorRetriever warmup: initializing...")
+        t0 = time.time()
+        try:
+            self._ensure_initialized()
+            if self._embedding_fn is not None:
+                self._embedding_fn(["warmup"])
+                logger.info("SentenceTransformer model loaded in %.1fs", time.time() - t0)
+            if self._store is not None:
+                self._store.count()
+                logger.info("ChromaDB initialized in %.1fs, docs=%d", time.time() - t0, self._store.count())
+        except Exception as e:
+            logger.warning("VectorRetriever warmup failed (non-fatal): %s", e)
 
     def embed_text(self, text: str) -> list[float]:
         self._ensure_initialized()
@@ -243,6 +272,30 @@ class VectorRetriever:
                 self._embedding_fn.persist()
             except Exception as e:
                 logger.debug("Embedding cache persist failed: %s", e)
+
+    def delete(self, memory_id: str) -> None:
+        """从向量索引中删除指定条目（包括分块）。
+
+        ChromaDB 的分块 ID 格式为 {memory_id}_chunk{hash}，
+        需要先查询所有匹配的 ID 再删除。
+        """
+        self._ensure_initialized()
+        if self._store is None:
+            return
+        try:
+            if isinstance(self._store, ChromaDBStore) and self._store._collection is not None:
+                # 查询所有以 memory_id 开头的 ID（含分块）
+                all_ids = self._store._collection.get(ids=None, include=[])["ids"]
+                ids_to_delete = [
+                    i for i in all_ids
+                    if i == memory_id or i.startswith(f"{memory_id}_chunk")
+                ]
+                if ids_to_delete:
+                    self._store.delete(ids_to_delete)
+            else:
+                self._store.delete([memory_id])
+        except Exception as e:
+            logger.debug("Vector delete failed for %s: %s", memory_id, e)
 
     def _split_chunks(self, text: str, chunk_size: int, overlap: int) -> list[str]:
         if self._encoder is not None:

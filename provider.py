@@ -18,6 +18,21 @@ from __future__ import annotations
 
 import json
 import logging
+
+# ★ 抑制 ChromaDB 0.6.x telemetry PostHog capture() 签名不兼容的噪音日志
+class _ChromaDBTelemetryFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        msg = record.getMessage()
+        if "Failed to send telemetry event" in msg:
+            return False
+        if record.name.startswith("chromadb.telemetry"):
+            return False
+        return True
+
+_tf = _ChromaDBTelemetryFilter()
+for _ln in ("chromadb.telemetry.product.posthog", "chromadb.telemetry"):
+    logging.getLogger(_ln).addFilter(_tf)
+    logging.getLogger(_ln).setLevel(logging.WARNING)
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
@@ -98,14 +113,28 @@ class OmniMemProvider(MemoryProvider):  # type: ignore[misc]
 
     def is_available(self) -> bool:
         """检查核心依赖是否就绪。无需 API Key，本地零依赖模式始终可用。"""
-        try:
-            import chromadb  # noqa: F401
-            import rank_bm25  # noqa: F401
+        core_deps = [
+            ("chromadb", "chromadb>=0.4.0,<0.7.0"),
+            ("rank_bm25", "rank-bm25>=0.2.0,<0.3.0"),
+            ("tiktoken", "tiktoken>=0.7.0"),
+            ("yaml", "pyyaml>=6.0"),
+            ("sentence_transformers", "sentence-transformers>=2.2.0"),
+        ]
+        missing = []
+        for import_name, pip_spec in core_deps:
+            try:
+                __import__(import_name)
+            except ImportError:
+                missing.append(pip_spec)
 
-            return True
-        except ImportError:
-            logger.warning("OmniMem: 缺少依赖。运行: pip install chromadb rank-bm25")
+        if missing:
+            logger.warning("OmniMem: 缺少核心依赖:")
+            for dep in missing:
+                logger.warning("  - %s", dep)
+            logger.warning("安装命令: pip install %s", " ".join(missing))
+            logger.warning("或运行: hermes memory setup omnimem")
             return False
+        return True
 
     def initialize(self, session_id: str, **kwargs: Any) -> None:
         hermes_home = kwargs.get("hermes_home", str(Path.home() / ".hermes"))
@@ -177,6 +206,13 @@ class OmniMemProvider(MemoryProvider):  # type: ignore[misc]
                     )
         except Exception as e:
             logger.debug("OmniMem warm-up/BM25 rebuild failed (non-fatal): %s", e)
+
+        # ★ 预热检索引擎（预加载 SentenceTransformer 模型和 ChromaDB）
+        try:
+            self._retrieval.warmup()
+            logger.info("OmniMem: retrieval engine warmup complete")
+        except Exception as e:
+            logger.warning("OmniMem retrieval warmup failed (non-fatal): %s", e)
 
     def _init_l1(self) -> None:
         self._storage = StorageFacade(self._data_dir, self._config)
@@ -356,20 +392,56 @@ class OmniMemProvider(MemoryProvider):  # type: ignore[misc]
         return result
 
     def prefetch(self, query: str, *, session_id: str = "") -> str:
+        """非阻塞 prefetch：优先返回缓存，超时则返回空字符串。
+
+        优化策略：
+        1. enable_prefetch=false → 立即返回空字符串（0ms）
+        2. 有缓存 → 立即返回缓存（0ms）
+        3. 无缓存 → 带超时搜索（默认5秒，可配置）
+        4. 超时/异常 → 返回空字符串，不阻塞对话
+        5. 同时触发后台 queue_prefetch 预取下一次查询
+        """
+        if not self._config.get("enable_prefetch", True):
+            return ""
+
         self._last_query = query
-        result, new_cache = run_prefetch(
-            query=query,
-            session_id=session_id,
-            config=self._config,
-            retriever=self._retriever,
-            context_manager=self._context_manager,
-            kv_cache=self._kv_cache,
-            knowledge_graph=self._knowledge_graph,
-            temporal_decay=self._temporal_decay,
-            privacy=self._privacy,
-            prefetch_cache=self._prefetch_cache,
-            prefetch_lock=self._prefetch_lock,
-        )
+
+        with self._prefetch_lock:
+            cached = self._prefetch_cache
+            if cached:
+                return cached
+            self._prefetch_cache = ""
+
+        prefetch_timeout = self._config.get("prefetch_timeout", 5)
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(
+                run_prefetch,
+                query=query,
+                session_id=session_id,
+                config=self._config,
+                retriever=self._retriever,
+                context_manager=self._context_manager,
+                kv_cache=self._kv_cache,
+                knowledge_graph=self._knowledge_graph,
+                temporal_decay=self._temporal_decay,
+                privacy=self._privacy,
+                prefetch_cache="",
+                prefetch_lock=self._prefetch_lock,
+            )
+            try:
+                result, new_cache = future.result(timeout=prefetch_timeout)
+            except TimeoutError:
+                logger.warning(
+                    "OmniMem prefetch timed out after %ds", prefetch_timeout
+                )
+                return ""
+            except Exception as e:
+                logger.debug(
+                    "OmniMem prefetch failed (non-blocking): %s", e
+                )
+                self.queue_prefetch(query, session_id=session_id)
+                return ""
+
         with self._prefetch_lock:
             self._prefetch_cache = new_cache
         return result
@@ -770,6 +842,23 @@ class OmniMemProvider(MemoryProvider):  # type: ignore[misc]
 
     def _init_llm_client(self) -> None:
         self._llm_client = init_llm_client(self._config)
+        # ★ R25修复ARCH-1：若 LLM 客户端凭证为空，尝试从 Hermes 主配置获取
+        if self._llm_client and not getattr(self._llm_client, "_api_key", "").strip():
+            try:
+                from omnimem.utils.llm_client import AsyncLLMClient
+                hermes_creds = AsyncLLMClient.load_credentials_from_hermes_config()
+                if hermes_creds.get("api_key") and hermes_creds.get("base_url"):
+                    logger.info("OmniMem: using Hermes main config LLM credentials for Reflect")
+                    self._llm_client = AsyncLLMClient(
+                        api_key=hermes_creds["api_key"],
+                        base_url=hermes_creds["base_url"],
+                        model=hermes_creds.get("model", "glm-5.1"),
+                        max_concurrent=3,
+                        timeout=30.0,
+                        cache_ttl=self._REFLECT_CACHE_TTL,
+                    )
+            except Exception as e:
+                logger.debug("OmniMem: failed to load Hermes main config LLM credentials: %s", e)
 
     def _make_llm_call_fn(self):
         return make_llm_call_fn(self._llm_client)

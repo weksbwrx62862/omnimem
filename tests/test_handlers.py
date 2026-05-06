@@ -38,6 +38,7 @@ def _mock_provider(**overrides: Any) -> MagicMock:
 
     # wing_room
     mp._wing_room.resolve_wing = MagicMock(return_value="personal")
+    mp._wing_room.resolve_wing_from_privacy = MagicMock(return_value="personal")
     mp._wing_room.resolve_room = MagicMock(return_value="python")
     mp._wing_room.resolve_hall = MagicMock(return_value="facts")
 
@@ -783,14 +784,14 @@ class TestHandleGovern(unittest.TestCase):
 
     # ─── set_privacy edge case ─────────────────
 
-    def test_set_privacy_team_downgrades_to_project(self) -> None:
-        """team + preference downgrades to project, verify resolve_wing('project') called."""
-        self.provider._store.get.return_value = {"memory_id": "i1", "type": "preference", "wing": "project"}
-        self.provider._wing_room.resolve_wing = MagicMock(return_value="project")
+    def test_set_privacy_team_maps_to_team_wing(self) -> None:
+        """team privacy → team wing via resolve_wing_from_privacy."""
+        self.provider._store.get.return_value = {"memory_id": "i1", "type": "preference", "wing": "personal"}
+        self.provider._wing_room.resolve_wing_from_privacy = MagicMock(return_value="team")
         result = handle_govern(self.provider, {"action": "set_privacy", "target": "i1", "params": {"level": "team"}})
         data = json.loads(result)
         self.assertEqual(data["status"], "updated")
-        self.provider._wing_room.resolve_wing.assert_called_with("project")
+        self.provider._wing_room.resolve_wing_from_privacy.assert_called_with("team", "preference")
 
     # ─── additional action tests ───────────────
 

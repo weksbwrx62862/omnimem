@@ -292,6 +292,8 @@ class HybridRetriever:
         vector_backend: str = "chromadb",
         data_dir: Path | None = None,
         enable_reranker: bool = False,
+        embedding_model_path: str = "",
+        reranker_model_path: str = "",
     ):
         """初始化混合检索引擎。
 
@@ -299,12 +301,14 @@ class HybridRetriever:
             vector_backend: 向量存储后端 (chromadb/qdrant/pgvector)
             data_dir: 检索数据存储目录
             enable_reranker: 是否启用 Cross-Encoder 重排序
+            embedding_model_path: 嵌入模型本地路径
+            reranker_model_path: 重排序模型本地路径
         """
         self._data_dir = data_dir or Path("/tmp/omnimem/retrieval")
-        self._vector = VectorRetriever(backend=vector_backend, data_dir=self._data_dir)
+        self._vector = VectorRetriever(backend=vector_backend, data_dir=self._data_dir, embedding_model_path=embedding_model_path)
         self._bm25 = BM25Retriever(data_dir=self._data_dir)
         self._rrf = RRFFusion(k=60, min_rrf=0.035)
-        self._reranker = CrossEncoderReranker() if enable_reranker else None
+        self._reranker = CrossEncoderReranker(model_path=reranker_model_path) if enable_reranker else None
         # ★ 读写锁替代全局互斥锁
         self._rw_lock = _ReadWriteLock()
         # ★ 查询结果缓存：key → (results, timestamp)
@@ -316,6 +320,17 @@ class HybridRetriever:
         """Embed text using the vector retriever."""
         return self._vector.embed_text(text)
 
+    def warmup(self) -> None:
+        """预热：启动时预加载模型、ChromaDB 和 BM25 索引。"""
+        logger.info("HybridRetriever warmup: starting...")
+        t0 = time.time()
+        try:
+            self._vector.warmup()
+            self._bm25.warmup() if hasattr(self._bm25, "warmup") else None
+            logger.info("HybridRetriever warmup complete in %.1fs", time.time() - t0)
+        except Exception as e:
+            logger.warning("HybridRetriever warmup failed (non-fatal): %s", e)
+
     def add(self, content: str, memory_id: str, metadata: dict[str, Any]) -> None:
         """添加文档到所有检索通道。"""
         self._rw_lock.acquire_write()
@@ -323,6 +338,8 @@ class HybridRetriever:
             self._query_cache.clear()
             self._vector.add(content, memory_id, metadata)
             self._bm25.add(content, memory_id, metadata)
+            # ★ R25修复Minor-3：写入后立即 flush 确保向量索引可搜
+            self._vector.flush()
         finally:
             self._rw_lock.release_write()
 
@@ -337,6 +354,32 @@ class HybridRetriever:
             self._query_cache.clear()
             self._vector.add_batch(documents)
             self._bm25.add_batch(documents)
+        finally:
+            self._rw_lock.release_write()
+
+    def update_metadata(self, memory_id: str, metadata: dict[str, Any]) -> None:
+        """更新检索索引中指定条目的 metadata（如 wing/privacy）。
+
+        通过 delete + re-add 实现，因为 ChromaDB/BM25 不支持原地更新 metadata。
+        需要同时传入 content 以便重新索引。
+
+        Args:
+            memory_id: 记忆 ID
+            metadata: 新的 metadata 字典（必须包含 content 或调用方需先获取 content）
+        """
+        self._rw_lock.acquire_write()
+        try:
+            self._query_cache.clear()
+            # 从向量索引删除旧条目
+            self._vector.delete(memory_id)
+            # 从 BM25 索引删除旧条目
+            self._bm25.delete(memory_id)
+            # 用新 metadata 重新添加
+            content = metadata.pop("_content", "")
+            if content:
+                self._vector.add(content, memory_id, metadata)
+                self._bm25.add(content, memory_id, metadata)
+                self._vector.flush()
         finally:
             self._rw_lock.release_write()
 
@@ -374,7 +417,7 @@ class HybridRetriever:
         Returns:
             检索结果列表，每项包含 content/memory_id/score/metadata 等字段
         """
-        is_garbage = self._is_garbage_query(query)
+        is_garbage = _is_garbage_query(query)
 
         try:
             doc_count = self._vector.count()
@@ -419,6 +462,9 @@ class HybridRetriever:
                 top_k=top_k,
                 max_tokens=max_tokens,
             )
+            # ★ 过滤 sync_turn 条目（对话片段不应污染记忆检索结果）
+            results = [r for r in results if r.get("source") != "sync_turn"]
+
             # ★ 缓存搜索结果
             self._query_cache[cache_key] = (results, now)
             return results
@@ -479,11 +525,10 @@ class HybridRetriever:
             adaptive_min_rrf = 0.01
         # ★ 单通道降权：当某通道返回空结果时，降低 min_rrf 阈值
         # 避免单通道结果因 RRF 分数不足被全部过滤
-        # ★ R26修复：之前的条件 adaptive_min_rrf > 0.035 永远为 False
-        # （只有 doc_count >= 50 时 adaptive_min_rrf 才会 >= 0.04，但此时不应降权）
-        # 修正：当仅单通道有结果时，在非大语料场景下降权
+        # ★ R29修复Minor-3：放宽 doc_count 条件到 200
+        # 语料增长后 doc_count 容易超过 50，导致 BM25-only 结果被过滤
         single_channel = (not vector_results) or (not bm25_results)
-        if single_channel and doc_count < 50 and adaptive_min_rrf > 0.01:
+        if single_channel and doc_count < 200 and adaptive_min_rrf > 0.01:
             adaptive_min_rrf = 0.01
         # ★ P1方案四：应用动态来源权重（基于 FeedbackCollector 的 CTR 统计）
         base_weights = [3.0, 1.0]
@@ -509,7 +554,7 @@ class HybridRetriever:
             fused = self._reranker.rerank(query, fused, top_k=top_k)
 
         # Token 预算裁剪
-        return self._trim_to_budget(fused, max_tokens)
+        return _trim_to_budget(fused, max_tokens)
 
     def index_update(self, user_content: str, assistant_content: str) -> None:  # noqa: ARG002
         """后台异步索引更新（从 sync_turn 调用）。
@@ -586,90 +631,151 @@ class HybridRetriever:
             return 0
         return self._bm25.rebuild_from_entries(entries)
 
-    @staticmethod
-    def _is_garbage_query(query: str) -> bool:
-        """检测查询是否为无意义/垃圾输入（QUAL-1修复）。
+    def rebuild_all_from_entries(self, entries: list[dict[str, Any]]) -> dict[str, int]:
+        """全量重建向量+BM25检索索引（解决历史向量退化问题）。
 
-        以下情况判定为垃圾查询：
-        1. 纯随机字符串（连续5+非词典字符且无中文/常见英文单词）
-        2. 极短查询（<2字符）且无中文
-        3. 纯数字/纯符号串
-        4. 包含少量常见词但主体为随机字符（如 zzzzzxyz123test）
+        ★ P1修复QUAL-2：历史向量索引随时间衰减（ChromaDB 内部优化/碎片化），
+        定期全量重建可恢复召回率。
+
+        Args:
+            entries: 索引条目列表，需含 content/memory_id/type/wing/privacy 等字段
 
         Returns:
-            True 表示应限制返回结果数量
+            重建统计 {"vector": count, "bm25": count}
         """
-        import re
+        self._rw_lock.acquire_write()
+        try:
+            self._query_cache.clear()
+            vec_count = 0
+            bm25_count = 0
+            for entry in entries:
+                mid = entry.get("memory_id", "")
+                content = entry.get("content", "")
+                if not mid or not content:
+                    continue
+                metadata = {
+                    "memory_id": mid,
+                    "type": entry.get("type", "fact"),
+                    "wing": entry.get("wing", ""),
+                    "privacy": entry.get("privacy", "personal"),
+                    "confidence": entry.get("confidence", 3),
+                }
+                mem_type = entry.get("type", "fact")
+                room = entry.get("room", "")
+                # ★ R34修复Minor-3：重建时也为 secret/skill/procedural 附加可搜索描述
+                enriched = _enrich_for_rebuild(content, mem_type, room)
+                try:
+                    self._vector.delete(mid)
+                except Exception:
+                    pass
+                try:
+                    self._bm25.delete(mid)
+                except Exception:
+                    pass
+                try:
+                    self._vector.add(enriched, mid, metadata)
+                    vec_count += 1
+                except Exception as e:
+                    logger.debug("rebuild vector add failed for %s: %s", mid, e)
+                try:
+                    self._bm25.add(enriched, mid, metadata)
+                    bm25_count += 1
+                except Exception as e:
+                    logger.debug("rebuild bm25 add failed for %s: %s", mid, e)
+            self._vector.flush()
+            logger.info(
+                "HybridRetriever rebuild: vector=%d, bm25=%d from %d entries",
+                vec_count, bm25_count, len(entries),
+            )
+            return {"vector": vec_count, "bm25": bm25_count}
+        finally:
+            self._rw_lock.release_write()
 
-        q = query.strip()
-        if not q or len(q) < 2:
-            return True
 
-        # 有中文字符 → 不是垃圾
-        if re.search(r"[\u4e00-\u9fff]", q):
+def _enrich_for_rebuild(content: str, mem_type: str, room: str = "") -> str:
+    """★ R34修复Minor-3：重建索引时为 secret/skill/procedural 附加可搜索描述。"""
+    if mem_type == "secret":
+        return f"[加密信息/密钥/凭证] {room} {content}"
+    elif mem_type == "skill":
+        return f"[技能/步骤/教程] {room} {content}"
+    elif mem_type == "procedural":
+        return f"[流程/操作/指南] {room} {content}"
+    return content
+
+
+def _is_garbage_query(query: str) -> bool:
+    """检测查询是否为无意义/垃圾输入（QUAL-1修复）。
+
+    以下情况判定为垃圾查询：
+    1. 纯随机字符串（连续5+非词典字符且无中文/常见英文单词）
+    2. 极短查询（<2字符）且无中文
+    3. 纯数字/纯符号串
+    4. 包含少量常见词但主体为随机字符（如 zzzzzxyz123test）
+
+    Returns:
+        True 表示应限制返回结果数量
+    """
+    import re
+
+    q = query.strip()
+    if not q or len(q) < 2:
+        return True
+
+    if re.search(r"[\u4e00-\u9fff]", q):
+        return False
+
+    words = re.findall(r"[a-zA-Z]{3,}", q.lower())
+    word_set = set(words)
+    matched_common = word_set & _GARBAGE_COMMON_WORDS
+
+    if len(matched_common) >= 2:
+        common_char_len = sum(len(w) for w in words if w in matched_common)
+        if common_char_len / len(q) > 0.4 and len(word_set) <= len(matched_common) + 2:
             return False
 
-        words = re.findall(r"[a-zA-Z]{3,}", q.lower())
-        word_set = set(words)
-        matched_common = word_set & HybridRetriever._GARBAGE_COMMON_WORDS
+    if matched_common and len(q) > 8:
+        non_word_chars = re.sub(r"[a-zA-Z]{3,}", "", q)
+        noise_ratio = len(non_word_chars) / len(q)
+        if noise_ratio > 0.5:
+            return True
 
-        # 规则A: 多个(≥2)常见词构成有意义句子 → 非垃圾
-        # 但要求常见词覆盖的总字符占比>40%，防止随机串中嵌入少量词典词
-        if len(matched_common) >= 2:
-            common_char_len = sum(len(w) for w in words if w in matched_common)
-            if common_char_len / len(q) > 0.4 and len(word_set) <= len(matched_common) + 2:
-                return False
+    random_chars = re.sub(r"[a-zA-Z0-9\s]", "", q)
+    if len(random_chars) > len(q) * 0.6:
+        return True
 
-        # 规则B: 单个常见词但周围全是随机字符 → 垃圾
-        # 如 "zzzzzxyz123qual1test": 只有test/qual匹配，其余是噪声
-        if matched_common and len(q) > 8:
-            non_word_chars = re.sub(r"[a-zA-Z]{3,}", "", q)
-            noise_ratio = len(non_word_chars) / len(q)
-            if noise_ratio > 0.5:
+    if re.match(r"^[\d\s]+$", q):
+        return True
+
+    alpha_seq = re.findall(r"[a-zA-Z]{5,}", q)
+    for seq in alpha_seq:
+        seq_lower = seq.lower()
+        if seq_lower not in _GARBAGE_COMMON_WORDS:
+            vowel_count = sum(1 for c in seq_lower if c in "aeiou")
+            unique_chars = len(set(seq_lower))
+            if vowel_count == 0 or unique_chars <= 2:
                 return True
 
-        # 规则C: 连续随机字符比例 > 60%
-        random_chars = re.sub(r"[a-zA-Z0-9\s]", "", q)
-        if len(random_chars) > len(q) * 0.6:
-            return True
+    if len(matched_common) == 1 and len(q) < 6 and len(word_set) <= 1:
+        return True
 
-        # 规则D: 纯数字串
-        if re.match(r"^[\d\s]+$", q):
-            return True
+    return not matched_common and re.match(r"^[a-zA-Z0-9]+$", q) is not None and len(q) > 8
 
-        # 规则E: 连续5+无元音或高重复字母序列
-        alpha_seq = re.findall(r"[a-zA-Z]{5,}", q)
-        for seq in alpha_seq:
-            seq_lower = seq.lower()
-            if seq_lower not in HybridRetriever._GARBAGE_COMMON_WORDS:
-                vowel_count = sum(1 for c in seq_lower if c in "aeiou")
-                unique_chars = len(set(seq_lower))
-                if vowel_count == 0 or unique_chars <= 2:
-                    return True
 
-        # 规则F: 仅1个短常见词且总长<5 → 垃圾（如 "test", "info"）
-        if len(matched_common) == 1 and len(q) < 6 and len(word_set) <= 1:
-            return True
+_GARBAGE_COMMON_WORDS = HybridRetriever._GARBAGE_COMMON_WORDS
 
-        # 规则G: 纯字母数字长串(>8)且无任何常见词匹配 → 垃圾
-        # 如 "abcdefg123456", "asdfghjkl123"
-        return not matched_common and re.match(r"^[a-zA-Z0-9]+$", q) is not None and len(q) > 8
 
-    @staticmethod
-    def _trim_to_budget(results: list[dict[str, Any]], max_tokens: int) -> list[dict[str, Any]]:
-        """裁剪结果到 Token 预算内。"""
-        budget = max_tokens
-        chars_per_token = 4
-        trimmed = []
-        used = 0
-        for r in results:
-            content = r.get("content", "")
-            est_tokens = max(1, len(content) // chars_per_token)
-            if used + est_tokens <= budget:
-                trimmed.append(r)
-                used += est_tokens
-            else:
-                # ★ 超预算但不是break — 跳过超大条目继续看后面的
-                # 之前的break会导致排在前面的超大条目吃掉整个预算
-                continue
-        return trimmed
+def _trim_to_budget(results: list[dict[str, Any]], max_tokens: int) -> list[dict[str, Any]]:
+    """裁剪结果到 Token 预算内。"""
+    budget = max_tokens
+    chars_per_token = 4
+    trimmed = []
+    used = 0
+    for r in results:
+        content = r.get("content", "")
+        est_tokens = max(1, len(content) // chars_per_token)
+        if used + est_tokens <= budget:
+            trimmed.append(r)
+            used += est_tokens
+        else:
+            continue
+    return trimmed

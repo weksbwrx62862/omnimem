@@ -20,6 +20,22 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+_DB_RETRY_COUNT = 3
+_DB_RETRY_DELAY = 0.1
+
+
+def _retry_db_op(fn, *args, **kwargs):
+    """★ P2修复Minor-4：SQLite 操作重试，解决并发锁超时问题。"""
+    for attempt in range(_DB_RETRY_COUNT):
+        try:
+            return fn(*args, **kwargs)
+        except sqlite3.OperationalError as e:
+            if "locked" in str(e).lower() and attempt < _DB_RETRY_COUNT - 1:
+                import time
+                time.sleep(_DB_RETRY_DELAY * (attempt + 1))
+                continue
+            raise
+
 
 class MetaStore:
     """SQLite 元数据存储引擎。
@@ -70,6 +86,14 @@ class MetaStore:
         except sqlite3.OperationalError:
             self._conn.execute("ALTER TABLE memories ADD COLUMN vc TEXT")
             logger.info("MetaStore migrated: added vc column")
+
+        # ★ R28v2修复BUG-3：添加冲突信息列迁移
+        for col in ("conflicting_with", "conflict_type"):
+            try:
+                self._conn.execute(f"SELECT {col} FROM memories LIMIT 1")
+            except sqlite3.OperationalError:
+                self._conn.execute(f"ALTER TABLE memories ADD COLUMN {col} TEXT")
+                logger.info("MetaStore migrated: added %s column", col)
 
         # 单列索引
         self._conn.execute("CREATE INDEX IF NOT EXISTS idx_mem_type ON memories(type)")
@@ -129,11 +153,12 @@ class MetaStore:
             vals = [memory_id] + [fields.get(k, "") for k in cols[1:]]
             placeholders = ",".join("?" * len(cols))
             try:
-                self._conn.execute(
+                _retry_db_op(
+                    self._conn.execute,
                     f"INSERT OR REPLACE INTO memories ({','.join(cols)}) VALUES ({placeholders})",
                     vals,
                 )
-                self._conn.commit()
+                _retry_db_op(self._conn.commit)
             except Exception as e:
                 logger.warning("MetaStore add failed for %s: %s", memory_id, e)
 
@@ -158,19 +183,40 @@ class MetaStore:
         with self._lock:
             try:
                 if new_wing:
-                    self._conn.execute(
+                    _retry_db_op(
+                        self._conn.execute,
                         "UPDATE memories SET privacy = ?, wing = ? WHERE memory_id = ?",
                         (privacy, new_wing, memory_id),
                     )
                 else:
-                    self._conn.execute(
+                    _retry_db_op(
+                        self._conn.execute,
                         "UPDATE memories SET privacy = ? WHERE memory_id = ?",
                         (privacy, memory_id),
                     )
-                self._conn.commit()
+                _retry_db_op(self._conn.commit)
                 return True
             except Exception as e:
                 logger.warning("MetaStore update_privacy failed for %s: %s", memory_id, e)
+                return False
+
+    def update_field(self, memory_id: str, **fields: Any) -> bool:
+        """更新指定字段。"""
+        if not self._conn or not fields:
+            return False
+        with self._lock:
+            try:
+                set_clause = ", ".join(f"{k} = ?" for k in fields)
+                values = list(fields.values()) + [memory_id]
+                _retry_db_op(
+                    self._conn.execute,
+                    f"UPDATE memories SET {set_clause} WHERE memory_id = ?",
+                    values,
+                )
+                _retry_db_op(self._conn.commit)
+                return True
+            except Exception as e:
+                logger.debug("MetaStore update_field failed for %s: %s", memory_id, e)
                 return False
 
     def delete(self, memory_id: str) -> bool:
@@ -328,6 +374,8 @@ class MetaStore:
             "drawer_path",
             "vc",
             "created_at",
+            "conflicting_with",
+            "conflict_type",
         ]
         return {k: row[i] for i, k in enumerate(keys) if i < len(row)}
 

@@ -41,6 +41,7 @@ dependencies = [
     "rank-bm25>=0.2.0,<0.3.0",
     "tiktoken>=0.7.0",
     "pyyaml>=6.0",
+    "sentence-transformers>=2.2.0",
 ]
 
 [project.scripts]
@@ -50,9 +51,6 @@ omnimem-api = "omnimem.rest_api:run_api"
 [project.optional-dependencies]
 crypto = [
     "cryptography>=42.0.0",
-]
-embeddings = [
-    "sentence-transformers>=2.2.0",
 ]
 lora = [
     "peft>=0.8.0",
@@ -74,7 +72,7 @@ dev = [
     "pre-commit>=3.0.0",
 ]
 all = [
-    "omnimem[crypto,embeddings,lora,mcp,langchain,dev]",
+    "omnimem[crypto,lora,mcp,langchain,dev]",
 ]
 
 [project.urls]

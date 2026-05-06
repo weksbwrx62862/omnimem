@@ -15,8 +15,9 @@ logger = logging.getLogger(__name__)
 class CrossEncoderReranker:
     """Cross-Encoder 重排。"""
 
-    def __init__(self, model_name: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"):
+    def __init__(self, model_name: str = "cross-encoder/ms-marco-MiniLM-L-6-v2", model_path: str = ""):
         self._model_name = model_name
+        self._model_path = model_path
         self._model: Any = None
 
     def _ensure_model(self) -> bool:
@@ -30,7 +31,8 @@ class CrossEncoderReranker:
                 dist.is_initialized = lambda: False
             from sentence_transformers import CrossEncoder
 
-            self._model = CrossEncoder(self._model_name)
+            model_path = self._model_path or self._model_name
+            self._model = CrossEncoder(model_path)
             return True
         except ImportError:
             logger.debug("sentence_transformers not installed — reranking disabled")

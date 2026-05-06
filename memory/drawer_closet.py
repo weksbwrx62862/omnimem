@@ -383,6 +383,28 @@ class DrawerClosetStore:
             self._meta_store.update_privacy(memory_id, privacy, new_wing or "")
         return updated
 
+    def update_field(self, memory_id: str, **fields: Any) -> bool:
+        """更新内存索引和 MetaStore 中的指定字段。
+
+        ★ R28v2修复BUG-3：供 memorize.py 写入 conflicting_with/conflict_type 等字段。
+        """
+        updated = False
+        if memory_id in self._closet_index:
+            for k, v in fields.items():
+                self._closet_index[memory_id][k] = v
+            updated = True
+        else:
+            result = self._find_on_disk(memory_id)
+            if result:
+                self._closet_index[memory_id] = result
+                for k, v in fields.items():
+                    self._closet_index[memory_id][k] = v
+                self._touch(memory_id)
+                updated = True
+        if updated:
+            self._meta_store.update_field(memory_id, **fields)
+        return updated
+
     def _update_drawer_privacy(self, memory_id: str, privacy: str, new_wing: Optional[str] = None) -> None:
         """更新 Drawer 磁盘文件中的 privacy 和 wing 字段。"""
         drawer_path = self._id_to_path.get(memory_id)

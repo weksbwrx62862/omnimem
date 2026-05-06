@@ -8,7 +8,7 @@ logger = logging.getLogger(__name__)
 
 
 class MemoryMonitor:
-    def __init__(self, interval: float = 60.0, warning_mb: float = 500.0):
+    def __init__(self, interval: float = 60.0, warning_mb: float = 1200.0):
         self._interval = interval
         self._warning_mb = warning_mb
         self._timer: threading.Timer | None = None

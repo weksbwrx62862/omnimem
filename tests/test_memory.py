@@ -21,7 +21,7 @@ class TestWingRoomManager(unittest.TestCase):
     def test_resolve_wing(self) -> None:
         self.assertEqual(self.wrm.resolve_wing("personal"), "personal")
         self.assertEqual(self.wrm.resolve_wing("project"), "projects")
-        self.assertEqual(self.wrm.resolve_wing("team"), "shared")
+        self.assertEqual(self.wrm.resolve_wing("team"), "team")
         self.assertEqual(self.wrm.resolve_wing("secret"), "personal")
 
     def test_resolve_hall(self) -> None:

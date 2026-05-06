@@ -134,7 +134,15 @@ def _tokenize(text: str) -> list[str]:
                 i += 1
 
     # 过滤单字（中文单字对 BM25 噪音大，保留英文和≥2字的中文词）
-    return [t for t in raw_tokens if len(t) >= 2 or not re.match(r"[\u4e00-\u9fff]", t)]
+    filtered = [t for t in raw_tokens if len(t) >= 2 or not re.match(r"[\u4e00-\u9fff]", t)]
+
+    # ★ Fallback: 如果过滤后为空，回退到不过滤单字的版本（排除纯虚词停用词）
+    # 修复短查询如 "我是谁"、"小兰" 被完全过滤的问题
+    if not filtered and raw_tokens:
+        _stop_chars = {"的", "了", "是", "在", "和", "就", "也", "很", "到", "说", "要", "去", "不"}
+        filtered = [t for t in raw_tokens if t not in _stop_chars]
+
+    return filtered
 
 
 class BM25Retriever:
@@ -189,6 +197,12 @@ class BM25Retriever:
                 self._buffer.append(entry)
             self._dirty = True
             self._flush_buffer()
+
+    def warmup(self) -> None:
+        """预热：刷新缓冲区确保 BM25 索引就绪。"""
+        with self._lock:
+            if self._buffer:
+                self._flush_buffer()
 
     def search(self, query: str, top_k: int = 10) -> list[dict[str, Any]]:
         """BM25 关键词检索。搜索前同步刷新缓冲区，确保新写入条目可被检索。"""
@@ -299,6 +313,21 @@ class BM25Retriever:
             self._documents.append({"memory_id": doc_id, "content": text})
             self._rebuild()
             self._dirty = True
+
+    def delete(self, memory_id: str) -> None:
+        """从 BM25 索引中删除指定条目。"""
+        with self._lock:
+            indices_to_remove = [
+                i for i, doc in enumerate(self._documents)
+                if doc.get("memory_id") == memory_id
+            ]
+            if indices_to_remove:
+                for idx in reversed(indices_to_remove):
+                    if idx < len(self._corpus):
+                        self._corpus.pop(idx)
+                    self._documents.pop(idx)
+                self._rebuild()
+                self._dirty = True
 
     def rebuild_from_entries(self, entries: list[dict[str, Any]]) -> int:
         with self._lock:

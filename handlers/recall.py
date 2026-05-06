@@ -197,23 +197,36 @@ def handle_recall(provider: Any, args: dict[str, Any]) -> str:
 
     if not results:
         # ★ R17修复QUAL-2：向量+BM25均无结果时，fallback到store关键词匹配
-        # 解决长文本语义稀释问题（similarity=0.2998 被阈值0.3过滤的边界情况）
-        # 注意：不用 search_by_content（精确子串），而是搜索后做关键词级匹配
+        # ★ R34优化：优先使用 search_by_content（FTS5全文搜索），回退到 store.search + 关键词匹配
         query_keywords = _query_keywords
         if query_keywords:
-            store_all = provider._store.search(limit=50)
-            for sf in store_all:
-                sf_mid = sf.get("memory_id", "")
-                if sf_mid in {r.get("memory_id", "") for r in results}:
-                    continue
-                sf_content = sf.get("content", "").lower()
-                keyword_hits = sum(1 for kw in query_keywords if kw in sf_content)
-                if keyword_hits >= 1:
-                    sf["_source"] = "store_fallback"
-                    sf["score"] = min(0.15 + keyword_hits * 0.05, 0.35)
+            # 优先路径：FTS5 全文搜索
+            try:
+                fts_results = provider._store.search_by_content(query, limit=10)
+                for sf in fts_results:
+                    sf_mid = sf.get("memory_id", "")
+                    sf["_source"] = "store_fts_fallback"
+                    sf["score"] = sf.get("score", 0) or 0.2
                     results.append(sf)
                     if len(results) >= 5:
                         break
+            except Exception as e:
+                logger.debug("OmniMem FTS fallback failed: %s", e)
+            # 补充路径：store.search + 关键词匹配
+            if len(results) < 3:
+                store_all = provider._store.search(limit=50)
+                for sf in store_all:
+                    sf_mid = sf.get("memory_id", "")
+                    if sf_mid in {r.get("memory_id", "") for r in results}:
+                        continue
+                    sf_content = sf.get("content", "").lower()
+                    keyword_hits = sum(1 for kw in query_keywords if kw in sf_content)
+                    if keyword_hits >= 1:
+                        sf["_source"] = "store_fallback"
+                        sf["score"] = min(0.15 + keyword_hits * 0.05, 0.35)
+                        results.append(sf)
+                        if len(results) >= 5:
+                            break
 
     # ★ R25优化：结果不足时补充 store 关键词匹配
     # 解决中英混合查询时语义检索遗漏问题（如 "基础设施管理" 搜不到 "Terraform"）

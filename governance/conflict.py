@@ -254,6 +254,16 @@ class ConflictResolver:
         )
         if result:
             return result
+        # ★ R29修复BUG-3：否定词检测独立于 overlap 阈值
+        # 之前否定词检测在 _check_topic_divergence 内部，被 overlap>0.3 门控
+        # 导致低重叠的矛盾对（如"我喜欢Python" vs "我不再喜欢Python，改用Go了"）漏检
+        # 修复：先检查否定词矛盾（只要 overlap>0 即有主题关联），再走高重叠分歧检测
+        if overlap > 0:
+            negation_result = self._check_negation_conflict(
+                content_lower, mem_content, mem_content_lower, mem_id, overlap
+            )
+            if negation_result:
+                return negation_result
         if overlap > 0.3:
             return self._check_topic_divergence(
                 content_lower, mem_content, mem_content_lower, mem_id, overlap
@@ -302,6 +312,37 @@ class ConflictResolver:
                 )
         return None
 
+    def _check_negation_conflict(
+        self,
+        content_lower: str,
+        mem_content: str,
+        mem_content_lower: str,
+        mem_id: str,
+        overlap: float,
+    ) -> ConflictResult | None:
+        """★ R29修复BUG-3：否定词矛盾检测，独立于 overlap 阈值。
+
+        只要两条记忆有主题关联（overlap>0）且新内容含否定词，
+        即判定为语义矛盾。之前此逻辑在 _check_topic_divergence 内部
+        被 overlap>0.3 门控，导致低重叠矛盾对漏检。
+        """
+        negation_indicators = [
+            "不是", "不对", "并非", "不再", "改为", "而不是",
+            "不用", "改用", "不要", "无法", "没能",
+            "not", "no longer", "instead of", "rather than",
+        ]
+        for ni in negation_indicators:
+            if ni in content_lower:
+                return ConflictResult(
+                    has_conflict=True,
+                    existing_memory=mem_content[:200],
+                    existing_id=mem_id,
+                    conflict_type="semantic_contradiction",
+                    action=self._resolve_strategy(),
+                    reason=f"Semantic conflict: new content contradicts existing memory (overlap={overlap:.0%})",
+                )
+        return None
+
     def _check_topic_divergence(
         self,
         content_lower: str,
@@ -315,7 +356,6 @@ class ConflictResolver:
         def _extract_words_for_diff(text: str) -> set[str]:
             words = set()
             words.update(re.findall(r"[a-zA-Z]{2,}", text))
-            # 数字组合（版本号、端口等）
             words.update(re.findall(r"\d+[.]\d+|\d+", text))
             zh_chars = re.findall(r"[\u4e00-\u9fff]", text)
             zh_str = "".join(zh_chars)
@@ -328,33 +368,6 @@ class ConflictResolver:
         words_b = _extract_words_for_diff(mem_content_lower)
         diff_a = words_a - words_b
         diff_b = words_b - words_a
-        negation_indicators = [
-            "不是",
-            "不对",
-            "并非",
-            "不再",
-            "改为",
-            "而不是",
-            "不用",
-            "改用",
-            "不要",
-            "无法",
-            "没能",
-            "not",
-            "no longer",
-            "instead of",
-            "rather than",
-        ]
-        for ni in negation_indicators:
-            if ni in content_lower:
-                return ConflictResult(
-                    has_conflict=True,
-                    existing_memory=mem_content[:200],
-                    existing_id=mem_id,
-                    conflict_type="semantic_contradiction",
-                    action=self._resolve_strategy(),
-                    reason=f"Semantic conflict: new content contradicts existing memory (overlap={overlap:.0%})",
-                )
         if overlap > 0.3 and diff_a and diff_b:
             nums_a = set(re.findall(r"\d+", content_lower))
             nums_b = set(re.findall(r"\d+", mem_content_lower))
@@ -390,6 +403,18 @@ class ConflictResolver:
                     conflict_type="semantic_contradiction",
                     action=self._resolve_strategy(),
                     reason=f"Same topic but different choices detected (overlap={overlap:.0%})",
+                )
+            # ★ R31修复BUG-3：高重叠+有差异但无明确选项模式时，
+            # 仍判定为潜在冲突（同主题不同实体，如"橘猫"vs"蓝猫"）
+            # 条件：overlap > 0.5 且双方差异词各≥2个
+            if overlap > 0.5 and len(diff_a) >= 2 and len(diff_b) >= 2:
+                return ConflictResult(
+                    has_conflict=True,
+                    existing_memory=mem_content[:200],
+                    existing_id=mem_id,
+                    conflict_type="update",
+                    action=self._resolve_strategy(),
+                    reason=f"Same topic but different details detected (overlap={overlap:.0%})",
                 )
         return None
 

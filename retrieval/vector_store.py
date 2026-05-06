@@ -4,10 +4,28 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import os
 import threading
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any
+
+# ★ 抑制 ChromaDB 0.6.x telemetry PostHog capture() 签名不兼容的噪音日志
+#    这是 ChromaDB 内部问题，不影响功能，无需暴露给用户
+class _ChromaDBTelemetryFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        msg = record.getMessage()
+        # 过滤 PostHog telemetry 失败消息和 chromadb telemetry DEBUG 噪音
+        if "Failed to send telemetry event" in msg:
+            return False
+        if record.name.startswith("chromadb.telemetry"):
+            return False
+        return True
+
+_telemetry_filter = _ChromaDBTelemetryFilter()
+for _logger_name in ("chromadb.telemetry.product.posthog", "chromadb.telemetry"):
+    logging.getLogger(_logger_name).addFilter(_telemetry_filter)
+    logging.getLogger(_logger_name).setLevel(logging.WARNING)
 
 logger = logging.getLogger(__name__)
 
@@ -35,14 +53,39 @@ class VectorStore(ABC):
 
 
 class _CachedEmbeddingFunction:
-    def __init__(self, model_name: str = "all-MiniLM-L6-v2", cache_path: Path | None = None):
+    def __init__(self, model_name: str = "all-MiniLM-L6-v2", cache_path: Path | None = None, model_path: str = ""):
         self._model_name = model_name
+        self._model_path = model_path
         self._model = None
         self._cache: dict[str, list[float]] = {}
         self._max_cache = 1000
         self._lock = threading.Lock()
         self._cache_path = cache_path
         self._load_cache()
+
+    @staticmethod
+    def name() -> str:
+        """ChromaDB EmbeddingFunction 协议要求的 name 方法。"""
+        return "omnimem_cached_sentence_transformer"
+
+    @staticmethod
+    def build_from_config(config: dict[str, Any]) -> "_CachedEmbeddingFunction":
+        """ChromaDB EmbeddingFunction 协议要求的反序列化方法。"""
+        return _CachedEmbeddingFunction(
+            model_name=config.get("model_name", "all-MiniLM-L6-v2"),
+            cache_path=Path(config["cache_path"]) if config.get("cache_path") else None,
+        )
+
+    def get_config(self) -> dict[str, Any]:
+        """ChromaDB EmbeddingFunction 协议要求的序列化方法。"""
+        return {
+            "model_name": self._model_name,
+            "cache_path": str(self._cache_path) if self._cache_path else "",
+        }
+
+    @staticmethod
+    def is_legacy() -> bool:
+        return False
 
     def _load_cache(self) -> None:
         if not self._cache_path or not self._cache_path.exists():
@@ -81,10 +124,14 @@ class _CachedEmbeddingFunction:
                 dist.is_initialized = lambda: False
             from sentence_transformers import SentenceTransformer
 
-            self._model = SentenceTransformer(self._model_name)
+            model_path = self._model_path or self._model_name
+            self._model = SentenceTransformer(model_path)
         return self._model
 
     def __call__(self, input: list[str]) -> list[list[float]]:
+        return self.embed_query(input)
+
+    def embed_query(self, input: list[str]) -> list[list[float]]:
         results = []
         to_encode = []
         to_encode_idx = []
@@ -137,17 +184,40 @@ class ChromaDBStore(VectorStore):
             import chromadb
 
             self._client = chromadb.PersistentClient(path=str(self._persist_dir))
-            if self._embedding_fn is not None:
-                self._collection = self._client.get_or_create_collection(
-                    name=self._collection_name,
-                    metadata={"hnsw:space": "cosine"},
-                    embedding_function=self._embedding_fn,
-                )
-            else:
-                self._collection = self._client.get_or_create_collection(
-                    name=self._collection_name,
-                    metadata={"hnsw:space": "cosine"},
-                )
+            # ★ R32修复QUAL-2：ChromaDB 0.6.x 升级后 config_json_str 缺少 _type 字段
+            # 旧版 ChromaDB 创建的 collection 配置为 {}，新版期望 {"_type": "CollectionConfigurationInternal"}
+            # 在获取 collection 前自动修复
+            self._fix_chromadb_config_type()
+            try:
+                if self._embedding_fn is not None:
+                    self._collection = self._client.get_or_create_collection(
+                        name=self._collection_name,
+                        metadata={"hnsw:space": "cosine"},
+                        embedding_function=self._embedding_fn,
+                    )
+                else:
+                    self._collection = self._client.get_or_create_collection(
+                        name=self._collection_name,
+                        metadata={"hnsw:space": "cosine"},
+                    )
+            except Exception as e:
+                # embedding function 不兼容时，删除旧 collection 重建
+                logger.warning("ChromaDB collection incompatible: %s, recreating", e)
+                try:
+                    self._client.delete_collection(name=self._collection_name)
+                except Exception:
+                    pass
+                if self._embedding_fn is not None:
+                    self._collection = self._client.get_or_create_collection(
+                        name=self._collection_name,
+                        metadata={"hnsw:space": "cosine"},
+                        embedding_function=self._embedding_fn,
+                    )
+                else:
+                    self._collection = self._client.get_or_create_collection(
+                        name=self._collection_name,
+                        metadata={"hnsw:space": "cosine"},
+                    )
             logger.debug(
                 "ChromaDB collection initialized: %d documents",
                 self._collection.count() if self._collection else 0,
@@ -157,6 +227,49 @@ class ChromaDBStore(VectorStore):
         except Exception as e:
             logger.warning("ChromaDB init failed: %s", e)
         self._initialized = True
+
+    def _fix_chromadb_config_type(self) -> None:
+        """★ R32修复QUAL-2：修复 ChromaDB 0.6.x 升级后 config_json_str 缺少 _type 字段的问题。
+
+        ChromaDB 0.6.x 的 CollectionConfigurationInternal.from_json() 要求
+        config_json_str 中包含 "_type" 字段，但旧版创建的 collection
+        config_json_str 为 {}，导致 KeyError: '_type'。
+        """
+        try:
+            import sqlite3
+
+            chroma_db_path = self._persist_dir / "chroma.sqlite3"
+            if not chroma_db_path.exists():
+                return
+            conn = sqlite3.connect(str(chroma_db_path))
+            try:
+                rows = conn.execute(
+                    "SELECT name, config_json_str FROM collections"
+                ).fetchall()
+                for name, config_str in rows:
+                    if not config_str:
+                        continue
+                    try:
+                        import json
+
+                        config = json.loads(config_str)
+                        if "_type" not in config:
+                            config["_type"] = "CollectionConfigurationInternal"
+                            conn.execute(
+                                "UPDATE collections SET config_json_str = ? WHERE name = ?",
+                                (json.dumps(config), name),
+                            )
+                            logger.info(
+                                "ChromaDB config migrated: added _type to collection %s",
+                                name,
+                            )
+                    except (json.JSONDecodeError, Exception):
+                        pass
+                conn.commit()
+            finally:
+                conn.close()
+        except Exception as e:
+            logger.debug("ChromaDB config migration skipped: %s", e)
 
     def add(self, ids: list[str], documents: list[str], metadatas: list[dict] | None = None) -> None:
         self._ensure_initialized()

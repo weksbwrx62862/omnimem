@@ -20,6 +20,22 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+_DB_RETRY_COUNT = 3
+_DB_RETRY_DELAY = 0.1
+
+
+def _retry_db_op(fn, *args, **kwargs):
+    """★ P2修复Minor-4：SQLite 操作重试，解决并发锁超时问题。"""
+    for attempt in range(_DB_RETRY_COUNT):
+        try:
+            return fn(*args, **kwargs)
+        except sqlite3.OperationalError as e:
+            if "locked" in str(e).lower() and attempt < _DB_RETRY_COUNT - 1:
+                import time
+                time.sleep(_DB_RETRY_DELAY * (attempt + 1))
+                continue
+            raise
+
 
 class ThreeLevelIndex:
     """三层索引 L0/L1/L2。
@@ -70,6 +86,15 @@ class ThreeLevelIndex:
         self._conn.execute("""
             CREATE INDEX IF NOT EXISTS idx_stored_at ON memory_index(stored_at)
         """)
+
+        # ★ R28v2修复BUG-3：添加冲突信息列迁移
+        for col in ("conflicting_with", "conflict_type"):
+            try:
+                self._conn.execute(f"SELECT {col} FROM memory_index LIMIT 1")
+            except sqlite3.OperationalError:
+                self._conn.execute(f"ALTER TABLE memory_index ADD COLUMN {col} TEXT")
+                logger.info("Index migrated: added %s column", col)
+
         self._conn.commit()
 
     def _maybe_commit(self) -> None:
@@ -77,7 +102,7 @@ class ThreeLevelIndex:
         assert self._conn is not None
         self._pending_writes += 1
         if self._pending_writes >= self._BATCH_THRESHOLD:
-            self._conn.commit()
+            _retry_db_op(self._conn.commit)
             self._pending_writes = 0
 
     def add(
@@ -101,7 +126,8 @@ class ThreeLevelIndex:
         if not stored_at:
             stored_at = datetime.now().isoformat()
         try:
-            self._conn.execute(
+            _retry_db_op(
+                self._conn.execute,
                 """INSERT OR REPLACE INTO memory_index
                    (memory_id, wing, hall, room, content, summary, type,
                     confidence, privacy, scope, stored_at, provenance, metadata)
@@ -175,7 +201,7 @@ class ThreeLevelIndex:
     def search_l1(self, wing: str = "", type: str = "", limit: int = 50) -> list[dict[str, Any]]:
         """L1 摘要索引：返回摘要记录（含 content 用于 warm_up）。"""
         assert self._conn is not None
-        query = "SELECT memory_id, wing, hall, room, summary, type, confidence, privacy, stored_at, content FROM memory_index WHERE 1=1"
+        query = "SELECT memory_id, wing, hall, room, summary, type, confidence, privacy, stored_at, content, conflicting_with, conflict_type FROM memory_index WHERE 1=1"
         params = []
         if wing:
             query += " AND wing = ?"
@@ -199,6 +225,8 @@ class ThreeLevelIndex:
                     "privacy": r[7],
                     "stored_at": r[8],
                     "content": r[9] if len(r) > 9 else "",
+                    "conflicting_with": r[10] if len(r) > 10 else "",
+                    "conflict_type": r[11] if len(r) > 11 else "",
                 }
                 for r in rows
             ]
@@ -263,19 +291,30 @@ class ThreeLevelIndex:
             logger.debug("Privacy update failed: %s", e)
             return False
 
-    def update_field(self, memory_id: str, **fields: Any) -> bool:
-        """更新索引中的指定字段。"""
+    def update_field(self, memory_id: str, immediate: bool = False, **fields: Any) -> bool:
+        """更新索引中的指定字段。
+
+        Args:
+            memory_id: 记忆 ID
+            immediate: 为 True 时直接 commit 而非走 _maybe_commit 批处理，
+                       适用于 governance 等需要跨组件一致性的场景
+        """
         assert self._conn is not None
         if not fields:
             return False
         try:
             set_clause = ", ".join(f"{k} = ?" for k in fields)
             values = list(fields.values()) + [memory_id]
-            self._conn.execute(
+            _retry_db_op(
+                self._conn.execute,
                 f"UPDATE memory_index SET {set_clause} WHERE memory_id = ?",
                 values,
             )
-            self._maybe_commit()
+            if immediate:
+                _retry_db_op(self._conn.commit)
+                self._pending_writes = 0
+            else:
+                self._maybe_commit()
             return True
         except Exception as e:
             logger.debug("Field update failed: %s", e)
@@ -306,7 +345,7 @@ class ThreeLevelIndex:
         """显式提交所有待写入。"""
         if self._conn and self._pending_writes > 0:
             try:
-                self._conn.commit()
+                _retry_db_op(self._conn.commit)
                 self._pending_writes = 0
             except Exception as e:
                 logger.warning("Index flush failed: %s", e)
@@ -327,6 +366,8 @@ class ThreeLevelIndex:
             "stored_at",
             "provenance",
             "metadata",
+            "conflicting_with",
+            "conflict_type",
         ]
         result = {}
         for i, key in enumerate(keys):

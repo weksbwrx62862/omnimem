@@ -1,7 +1,7 @@
 """WingRoomManager — 宫殿导航：Wing(人/项目) > Hall(类型) > Room(话题)。
 
 参考 MemPalace 的 Wing/Room/Hall 三级结构，实现记忆的空间组织。
-Wing: 顶层分类（personal/projects/shared）
+Wing: 顶层分类（按 privacy 值直接命名：personal/team/public/secret）
 Hall: 中层分类（facts/events/preferences/skills/corrections）
 Room: 底层话题（根据内容自动检测或手动指定）
 
@@ -17,19 +17,26 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-# Wing 映射
-# ★ R22修复：补充 team/public/private/secret 映射
-# privacy="team"/"public" → wing="shared"（共享空间）
-# privacy="personal"/"private" → wing="personal"（个人空间）
-# privacy="secret" → wing="personal"（私密归入个人空间）
+# Wing 映射（scope → wing，保留向后兼容）
 _SCOPE_TO_WING = {
     "personal": "personal",
     "private": "personal",
     "project": "projects",
     "shared": "shared",
-    "team": "shared",
-    "public": "shared",
+    "team": "team",
+    "public": "public",
     "secret": "personal",
+}
+
+# ★ R25修复BUG-1：Privacy→Wing 单层直接映射
+# privacy 值直接作为 wing 名称，保持语义一致性
+# public→public, team→team, personal→personal, secret→personal(私密归入个人空间)
+_PRIVACY_TO_WING = {
+    "personal": "personal",
+    "private": "personal",
+    "secret": "personal",
+    "team": "team",
+    "public": "public",
 }
 
 # Hall 映射
@@ -127,6 +134,24 @@ class WingRoomManager:
     def resolve_wing(self, scope: str) -> str:
         """将 scope 映射为 Wing 名称。"""
         return _SCOPE_TO_WING.get(scope, scope)
+
+    def resolve_wing_from_privacy(self, privacy: str, memory_type: str = "") -> str:
+        """直接从 privacy 值映射到 wing。
+
+        映射规则：privacy 值直接作为 wing 名称
+          - personal/private → personal
+          - public → public
+          - team → team
+          - secret → personal（私密归入个人空间）
+
+        Args:
+            privacy: 隐私级别 (personal/private/secret/team/public)
+            memory_type: 记忆类型（保留参数，当前不参与映射）
+
+        Returns:
+            wing 名称
+        """
+        return _PRIVACY_TO_WING.get(privacy, "personal")
 
     def resolve_hall(self, memory_type: str) -> str:
         """将 memory_type 映射为 Hall 名称。"""

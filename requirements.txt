@@ -12,3 +12,6 @@ tiktoken>=0.7.0
 
 # YAML 配置解析
 pyyaml>=6.0
+
+# 语义嵌入生成（向量检索必需）
+sentence-transformers>=2.2.0

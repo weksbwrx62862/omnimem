@@ -225,10 +225,14 @@ class AsyncLLMClient:
 
     @staticmethod
     def load_credentials_from_hermes_config() -> dict[str, str]:
-        """Load API credentials from ~/.hermes/config.yaml."""
+        """Load API credentials from ~/.hermes/config.yaml.
+
+        优先从 providers 节点读取 api_key/base_url/models，
+        再从 model 节点读取 base_url/default model 作为补充。
+        """
         from pathlib import Path
 
-        result = {"api_key": "", "base_url": "", "model": ""}
+        result = {"api_key": "", "base_url": "", "model": "", "models": []}
         config_file = Path.home() / ".hermes" / "config.yaml"
         if not config_file.exists():
             return result
@@ -237,8 +241,22 @@ class AsyncLLMClient:
 
             cfg = yaml.safe_load(config_file.read_text(encoding="utf-8"))
             if cfg and isinstance(cfg, dict):
+                # ★ R25修复ARCH-1：从 providers 节点读取凭证和可用模型
+                providers_cfg = cfg.get("providers") or {}
+                for _pname, pval in providers_cfg.items():
+                    if isinstance(pval, dict):
+                        if not result["api_key"]:
+                            result["api_key"] = pval.get("api_key", "")
+                        if not result["base_url"]:
+                            result["base_url"] = pval.get("base_url", "")
+                        if not result["models"] and isinstance(pval.get("models"), list):
+                            result["models"] = pval["models"]
+                        if result["api_key"] and result["base_url"]:
+                            break
+                # model 节点补充 base_url 和 default model
                 model_cfg = cfg.get("model") or {}
-                result["base_url"] = model_cfg.get("base_url", "")
+                if not result["base_url"]:
+                    result["base_url"] = model_cfg.get("base_url", "")
                 result["model"] = model_cfg.get("default", "")
         except Exception as e:
             logger.warning("Hermes config.yaml credential parsing failed: %s", e)

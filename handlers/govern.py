@@ -11,15 +11,10 @@ import logging
 import re
 from typing import Any
 
-logger = logging.getLogger(__name__)
+from omnimem.governance.conflict import ConflictResolver
+from omnimem.memory.wing_room import _PRIVACY_TO_WING
 
-# ★ R27优化：模块级常量，避免每次调用重建
-_PRIVACY_TO_SCOPE: dict[str, str] = {
-    "public": "public",
-    "team": "team",
-    "personal": "personal",
-    "secret": "secret",
-}
+logger = logging.getLogger(__name__)
 
 _NEGATION_INDICATORS: tuple[str, ...] = (
     "不是",
@@ -73,6 +68,7 @@ def _scan_memory_conflicts(provider: Any) -> list[dict[str, Any]]:
 
     # 在同组内检测矛盾对
     conflicts = []
+    resolver = ConflictResolver(strategy="latest")
     for key, group in groups.items():
         if len(group) < 2:
             continue
@@ -81,27 +77,35 @@ def _scan_memory_conflicts(provider: Any) -> list[dict[str, Any]]:
                 a, b = group[i], group[j]
                 ca = a.get("content", "").lower()
                 cb = b.get("content", "").lower()
-                # 检查：两条记忆是否有否定词且内容有重叠
-                from omnimem.governance.conflict import ConflictResolver
-
-                overlap = ConflictResolver._compute_overlap(ca, cb)
-                a_has_neg = any(ni in ca for ni in _NEGATION_INDICATORS)
-                b_has_neg = any(ni in cb for ni in _NEGATION_INDICATORS)
-                if overlap > 0.3 and (a_has_neg or b_has_neg):
+                # ★ R31修复BUG-3：使用 ConflictResolver 统一检测逻辑
+                # 之前硬编码 overlap > 0.3 导致低重叠矛盾对漏检
+                # 现在委托给 ConflictResolver.check()，它会：
+                # 1. 检测否定词 + overlap > 0（_check_negation_conflict）
+                # 2. 检测互斥选项（_check_mutual_exclusive）
+                # 3. 检测高重叠分歧（_check_topic_divergence, overlap > 0.3）
+                result = resolver.check(
+                    ca,
+                    existing_memories=[{"content": cb, "memory_id": b.get("memory_id", "")}],
+                )
+                if result.has_conflict:
+                    a_has_neg = any(ni in ca for ni in _NEGATION_INDICATORS)
+                    b_has_neg = any(ni in cb for ni in _NEGATION_INDICATORS)
+                    overlap = ConflictResolver._compute_overlap(ca, cb)
                     conflicts.append(
                         {
                             "memory_a": {
-                                "id": a.get("memory_id", ""),
+                                "memory_id": a.get("memory_id", ""),
                                 "content": a.get("content", "")[:100],
                                 "type": a.get("type", ""),
                             },
                             "memory_b": {
-                                "id": b.get("memory_id", ""),
+                                "memory_id": b.get("memory_id", ""),
                                 "content": b.get("content", "")[:100],
                                 "type": b.get("type", ""),
                             },
                             "overlap": round(overlap, 2),
                             "negation_in": "a" if a_has_neg else "b",
+                            "conflict_type": result.conflict_type,
                         }
                     )
     return conflicts
@@ -128,6 +132,8 @@ def handle_govern(provider: Any, args: dict[str, Any]) -> str:
       configure_kms    — 配置 KMS 提供商（local/aws/azure/gcp）
       rotate_key       — 轮换密钥
       kms_status       — 查看 KMS 状态
+      rebuild_index    — 全量重建向量+BM25检索索引（修复历史向量退化）
+      purge_test_data  — 清理测试残留数据（恢复RAG精度）
 
     Args:
         provider: OmniMemProvider 实例，用于访问子组件
@@ -137,7 +143,9 @@ def handle_govern(provider: Any, args: dict[str, Any]) -> str:
         JSON 字符串，包含 status 和对应操作的结果数据
     """
     action = args["action"]
-    target = args.get("target", "")
+    # ★ R31修复BUG-3：兼容 target 和 target_id 两种参数名
+    # LLM 调用传 target，测试脚本可能传 target_id
+    target = args.get("target", "") or args.get("target_id", "")
     params = args.get("params", {})
 
     if action == "resolve_conflict":
@@ -148,8 +156,8 @@ def handle_govern(provider: Any, args: dict[str, Any]) -> str:
                 # ★ R24修复BUG-3：全局扫描时归档每对冲突中较旧的条目
                 archived_ids = []
                 for pair in scan_results[:5]:
-                    old_id = pair.get("memory_b", {}).get("id") or pair.get("memory_a", {}).get(
-                        "id"
+                    old_id = pair.get("memory_b", {}).get("memory_id") or pair.get("memory_a", {}).get(
+                        "memory_id"
                     )
                     if old_id:
                         provider._forgetting.archive(old_id)
@@ -175,19 +183,67 @@ def handle_govern(provider: Any, args: dict[str, Any]) -> str:
             return json.dumps({"status": "error", "reason": f"Memory {target} not found"})
 
         target_content = target_entry.get("content", "")
-        # ★ R17修复BUG-3：直接扫描所有同类型记忆做冲突检测
-        # 不再依赖 _unified_candidate_search（数据少时可能返回空）
+
+        # ★ R28v2修复BUG-3：优先使用 conflict_warning 中记录的冲突对
+        # 写入时 memorize.py 会记录 conflict_info.conflicting_with（冲突的 memory_id），
+        # resolve_conflict 应直接使用这个信息，而不是重新搜索（重新搜索可能因范围不同而找不到）
+        # 查找顺序：store → index（双源保障）
+        conflict_with_id = target_entry.get("conflicting_with", "") or ""
+        if not conflict_with_id:
+            index_entry = provider._index.get(target)
+            if index_entry and isinstance(index_entry, dict):
+                conflict_with_id = index_entry.get("conflicting_with", "") or ""
+        if conflict_with_id:
+            conflict_entry = provider._store.get(conflict_with_id)
+            if conflict_entry:
+                conflict = provider._conflict_resolver.check(
+                    target_content,
+                    existing_memories=[
+                        {"content": conflict_entry.get("content", ""), "memory_id": conflict_with_id}
+                    ],
+                )
+                if conflict.has_conflict:
+                    resolution = provider._conflict_resolver.resolve(target_content, conflict)
+                    old_id = conflict.existing_id
+                    if old_id and old_id != target:
+                        provider._forgetting.archive(old_id)
+                    return json.dumps(
+                        {
+                            "status": "resolved",
+                            "action_taken": resolution.action,
+                            "reason": resolution.reason,
+                            "target": target,
+                            "conflicting_with": old_id,
+                            "source": "conflict_warning_direct",
+                        }
+                    )
+
+        # Fallback：conflict_warning 无记录时，走语义搜索路径
         try:
+            semantic_candidates = []
+            if hasattr(provider, "_unified_candidate_search"):
+                try:
+                    semantic_candidates = provider._unified_candidate_search(target_content)
+                except Exception:
+                    semantic_candidates = []
             all_memories = provider._store.search(limit=100)
-            candidates = [
-                {"content": m.get("content", ""), "memory_id": m.get("memory_id", "")}
-                for m in all_memories
+            simple_candidates = [
+                m for m in all_memories
                 if m.get("memory_id", "") != target
                 and m.get("type", "") in ("fact", "preference", "correction")
             ]
+            seen_ids = set()
+            merged_candidates = []
+            for m in semantic_candidates + simple_candidates:
+                mid = m.get("memory_id", "")
+                if mid and mid != target and mid not in seen_ids:
+                    seen_ids.add(mid)
+                    merged_candidates.append(
+                        {"content": m.get("content", ""), "memory_id": mid}
+                    )
 
             conflict = provider._conflict_resolver.check(
-                target_content, existing_memories=candidates
+                target_content, existing_memories=merged_candidates
             )
 
             if conflict.has_conflict:
@@ -216,8 +272,8 @@ def handle_govern(provider: Any, args: dict[str, Any]) -> str:
         target_conflicts = [
             c
             for c in scan_results
-            if c.get("memory_a", {}).get("id") == target
-            or c.get("memory_b", {}).get("id") == target
+            if c.get("memory_a", {}).get("memory_id") == target
+            or c.get("memory_b", {}).get("memory_id") == target
         ]
         if target_conflicts:
             return json.dumps(
@@ -253,25 +309,42 @@ def handle_govern(provider: Any, args: dict[str, Any]) -> str:
         level = params.get(
             "level", params.get("privacy", args.get("privacy", args.get("level", "personal")))
         )
-        provider._privacy.set(target, level)
-        # 同步更新索引
-        provider._index.update_privacy(target, level)
-        # ★ 同步更新 wing：privacy 变更时 wing 也应该跟随变更
-        # 使用与 memorize 路径一致的映射逻辑：privacy→scope→resolve_wing()
-        derived_scope = _PRIVACY_TO_SCOPE.get(level, level)
-        # ★ R24修复BUG-1：preference/event + team → project scope
+        # ★ R33修复Minor-4：先计算 new_wing，再传给所有更新操作
+        # 之前 _privacy.set() 不传 new_wing，导致 store.update_privacy 只更新 privacy 不更新 wing
         existing = provider._store.get(target)
         existing_type = existing.get("type", existing.get("memory_type", "")) if existing else ""
-        if derived_scope == "team" and existing_type in ("preference", "event"):
-            derived_scope = "project"
-        new_wing = provider._wing_room.resolve_wing(derived_scope)
+        new_wing = provider._wing_room.resolve_wing_from_privacy(level, existing_type)
+        provider._privacy.set(target, level, new_wing=new_wing)
+        provider._index.update_privacy(target, level)
         provider._store.update_privacy(target, level, new_wing=new_wing)
-        provider._index.update_field(target, wing=new_wing)
-        provider._index.flush()  # ★ 强制提交，避免批量延迟
+        provider._index.update_field(target, wing=new_wing, immediate=True)
+        # ★ R28修复Minor-4回归：同步更新检索索引（向量/BM25）中的 metadata
+        # 否则 RAG 搜索返回的 wing 仍是旧值
+        if existing and hasattr(provider, "_retriever") and provider._retriever:
+            try:
+                content = existing.get("content", "")
+                if content:
+                    provider._retriever.update_metadata(
+                        target,
+                        {
+                            "_content": content,
+                            "memory_id": target,
+                            "type": existing_type,
+                            "wing": new_wing,
+                            "privacy": level,
+                        },
+                    )
+            except Exception as e:
+                logger.warning("OmniMem set_privacy retriever sync failed: %s", e)
         # ★ 验证：读回确认是否真正更新
         verify = provider._store.get(target)
         actual_privacy = verify.get("privacy", "personal") if verify else "unknown"
         actual_wing = verify.get("wing", "personal") if verify else "unknown"
+        if actual_wing != new_wing:
+            logger.warning(
+                "govern set_privacy wing mismatch: expected=%s actual=%s for %s",
+                new_wing, actual_wing, target,
+            )
         provider._audit_logger.log("govern_set_privacy", memory_id=target, details={"privacy": actual_privacy, "wing": actual_wing}, result="success", instance_id=getattr(provider, "_instance_id", None))
         return json.dumps(
             {
@@ -308,24 +381,23 @@ def handle_govern(provider: Any, args: dict[str, Any]) -> str:
             return json.dumps({"status": "error", "reason": f"LoRA train failed: {e}"})
     elif action == "shade_switch":
         if not provider._lora_trainer:
-            return json.dumps({"error": "LoRA trainer not available"})
+            return json.dumps({"status": "error", "reason": "LoRA trainer not available"})
         try:
-            # ★ R18修复NEW-1：shade名称从target参数获取（工具调用时target传入shade名）
-            # 之前只从params["shade"]取，但omni_govern工具的shade名称走target参数
             shade_name = params.get("shade") or target or "default"
-            # ★ R17/R24修复NEW-1：未知 shade 时自动创建再切换
             available_shades = [s["name"] for s in provider._lora_trainer.get_shades()]
             if shade_name not in available_shades:
                 provider._lora_trainer.register_shade(shade_name, f"自定义模式：{shade_name}")
             result = provider._lora_trainer.switch_shade(shade_name)
-            # 验证切换是否生效
+            # ★ R34修复：switch_shade 可能返回 None
+            if result is None:
+                result = {"status": "switched", "shade": shade_name}
             verify_shade = provider._lora_trainer.active_shade
             result["verified_active"] = verify_shade
             if verify_shade != shade_name:
                 result["status"] = "error"
                 result["message"] = f"Switch failed: expected {shade_name}, got {verify_shade}"
             return json.dumps(result)
-        except (RuntimeError, AttributeError) as e:
+        except Exception as e:
             logger.debug("OmniMem shade_switch failed: %s", e)
             return json.dumps({"status": "error", "reason": f"Shade switch failed: {e}"})
     elif action == "shade_list":
@@ -467,5 +539,50 @@ def handle_govern(provider: Any, args: dict[str, Any]) -> str:
             "provider": provider._kms.provider,
             "config": provider._kms._config,
         })
+    elif action == "rebuild_index":
+        # ★ P1修复QUAL-2：全量重建向量+BM25检索索引
+        # 解决历史向量索引退化导致RAG召回率下降的问题
+        try:
+            entries = provider._index.search_all_for_retrieval(limit=5000)
+            if not entries:
+                return json.dumps({"status": "no_data", "reason": "No entries in index to rebuild"})
+            stats = provider._retriever.rebuild_all_from_entries(entries)
+            return json.dumps({
+                "status": "rebuilt",
+                "entries_processed": len(entries),
+                "vector_rebuilt": stats.get("vector", 0),
+                "bm25_rebuilt": stats.get("bm25", 0),
+            })
+        except Exception as e:
+            logger.warning("OmniMem rebuild_index failed: %s", e)
+            return json.dumps({"status": "error", "reason": str(e)})
+    elif action == "purge_test_data":
+        # ★ P3：清理测试残留数据，恢复RAG精度
+        # 删除 content 包含测试标记的条目（如 "test_"、"QUAL-"、"BUG-" 等前缀）
+        dry_run = params.get("dry_run", True)
+        test_patterns = params.get("patterns", ["test_", "QUAL-", "BUG-", "zzzzz", "mock"])
+        purged = []
+        all_entries = provider._index.search_all_for_retrieval(limit=5000)
+        for entry in all_entries:
+            content = entry.get("content", "")
+            memory_id = entry.get("memory_id", "")
+            if any(p in content for p in test_patterns):
+                purged.append({"memory_id": memory_id, "content_preview": content[:80]})
+                if not dry_run:
+                    try:
+                        provider._forgetting.archive(memory_id)
+                        provider._index.delete(memory_id)
+                        if hasattr(provider, "_retriever") and provider._retriever:
+                            provider._retriever.update_metadata(
+                                memory_id, {"_content": "", "memory_id": memory_id}
+                            )
+                    except Exception as e:
+                        logger.debug("purge_test_data delete failed for %s: %s", memory_id, e)
+        return json.dumps({
+            "status": "dry_run" if dry_run else "purged",
+            "test_entries_found": len(purged),
+            "entries": purged[:20],
+            "hint": "Set dry_run=false to actually delete" if dry_run else None,
+        }, ensure_ascii=False)
     else:
         return json.dumps({"error": f"Unknown governance action: {action}"})

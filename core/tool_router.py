@@ -427,7 +427,29 @@ def init_llm_client(config: Any) -> Any:
     config_creds = AsyncLLMClient.load_credentials_from_hermes_config()
     if not creds.get("base_url"):
         creds["base_url"] = config_creds.get("base_url", "")
-    model = config_creds.get("model") or config.get("default", "glm-5.1")
+    if not creds.get("api_key"):
+        creds["api_key"] = config_creds.get("api_key", "")
+    # ★ R25修复ARCH-1：model 选择策略
+    # 优先使用 provider 支持的 models 列表中的第一个（与 base_url 匹配），
+    # 而非 model.default（可能与 provider 不匹配，如 glm-5.1 vs deepseek API）
+    provider_models = config_creds.get("models", [])
+    default_model = config_creds.get("model") or config.get("default", "glm-5.1")
+    if provider_models:
+        model = provider_models[0]
+        logger.debug("Using provider model %s (available: %s, default: %s)", model, provider_models, default_model)
+    else:
+        model = default_model
+
+    # ★ R25修复ARCH-1：凭证有效性检测
+    has_api_key = bool(creds.get("api_key", "").strip())
+    has_base_url = bool(creds.get("base_url", "").strip())
+    if not has_api_key or not has_base_url:
+        logger.warning(
+            "AsyncLLMClient: LLM 凭证不完整 (api_key=%s, base_url=%s), "
+            "Reflect/Recall 的 LLM 功能将不可用，回退到规则归纳",
+            "有" if has_api_key else "缺失",
+            "有" if has_base_url else "缺失",
+        )
 
     llm_client = AsyncLLMClient(
         api_key=creds.get("api_key", ""),
@@ -437,7 +459,7 @@ def init_llm_client(config: Any) -> Any:
         timeout=30.0,
         cache_ttl=_REFLECT_CACHE_TTL,
     )
-    logger.debug("AsyncLLMClient initialized: model=%s", model)
+    logger.debug("AsyncLLMClient initialized: model=%s, has_creds=%s", model, has_api_key and has_base_url)
     return llm_client
 
 

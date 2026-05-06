@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import logging
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -17,16 +18,22 @@ from omnimem.retrieval.engine import HybridRetriever
 from omnimem.governance.feedback import FeedbackCollector
 from omnimem.utils.llm_client import AsyncLLMClient
 
+logger = logging.getLogger(__name__)
+
 
 class RetrievalFacade:
     """检索门面：向量/BM25 检索 + 上下文精炼 + 感知 + 反馈学习。"""
 
     def __init__(self, data_dir: Path, config: Any, storage_facade: Any):
-        # 检索引擎
+        embedding_model_path = config.get("embedding_model_path", "")
+        reranker_model_path = config.get("reranker_model_path", "")
+
         self._retriever = HybridRetriever(
             vector_backend=config.get("vector_backend", "chromadb"),
             data_dir=data_dir / "retrieval",
             enable_reranker=config.get("enable_reranker", False),
+            embedding_model_path=embedding_model_path,
+            reranker_model_path=reranker_model_path,
         )
 
         # 上下文管理
@@ -69,6 +76,13 @@ class RetrievalFacade:
     @property
     def feedback(self) -> FeedbackCollector:
         return self._feedback
+
+    def warmup(self) -> None:
+        """预热：启动时预加载所有检索组件。"""
+        try:
+            self._retriever.warmup()
+        except Exception as e:
+            logger.warning("RetrievalFacade warmup failed (non-fatal): %s", e)
 
     def flush(self) -> None:
         """刷新检索缓存。"""

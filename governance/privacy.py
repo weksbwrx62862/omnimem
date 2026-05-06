@@ -50,10 +50,11 @@ class PrivacyManager:
         """返回加密器实例，供存储层调用。"""
         return self._encryption
 
-    def set(self, memory_id: str, level: str) -> None:
+    def set(self, memory_id: str, level: str, new_wing: str = "") -> None:
         """设置记忆的隐私级别。
 
         同步写入内存覆盖表 + 持久化到存储层，确保进程重启后不丢失。
+        ★ R33修复Minor-4：支持 new_wing 参数，同步更新 wing。
         """
         if level not in _PRIVACY_LEVELS:
             return
@@ -61,7 +62,7 @@ class PrivacyManager:
         # ★ 持久化到存储层
         if self._store is not None:
             try:
-                self._store.update_privacy(memory_id, level)
+                self._store.update_privacy(memory_id, level, new_wing=new_wing or None)
             except Exception as e:
                 logger.warning("Privacy persist failed for %s: %s", memory_id, e)
 
