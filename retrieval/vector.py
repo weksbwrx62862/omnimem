@@ -13,12 +13,12 @@ import time
 from pathlib import Path
 from typing import Any
 
+from omnimem.retrieval.vector_factory import create_vector_store
 from omnimem.retrieval.vector_store import (
     ChromaDBStore,
     VectorStore,
     _CachedEmbeddingFunction,
 )
-from omnimem.retrieval.vector_factory import create_vector_store
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +26,12 @@ logger = logging.getLogger(__name__)
 class VectorRetriever:
     """向量检索，委托 VectorStore 抽象接口。"""
 
-    def __init__(self, backend: str = "chromadb", data_dir: Path | None = None, embedding_model_path: str = ""):
+    def __init__(
+        self,
+        backend: str = "chromadb",
+        data_dir: Path | None = None,
+        embedding_model_path: str = "",
+    ):
         self._backend = backend
         self._data_dir = data_dir or Path("/tmp/omnimem/retrieval")
         self._store: VectorStore | None = None
@@ -48,7 +53,9 @@ class VectorRetriever:
         if self._backend == "chromadb":
             try:
                 cache_path = self._data_dir / "embedding_cache.json"
-                self._embedding_fn = _CachedEmbeddingFunction(cache_path=cache_path, model_path=self._embedding_model_path)
+                self._embedding_fn = _CachedEmbeddingFunction(
+                    cache_path=cache_path, model_path=self._embedding_model_path
+                )
             except Exception as e:
                 logger.warning("Failed to create CachedEmbeddingFunction: %s, using default", e)
                 self._embedding_fn = None
@@ -246,7 +253,9 @@ class VectorRetriever:
                 logger.info("SentenceTransformer model loaded in %.1fs", time.time() - t0)
             if self._store is not None:
                 self._store.count()
-                logger.info("ChromaDB initialized in %.1fs, docs=%d", time.time() - t0, self._store.count())
+                logger.info(
+                    "ChromaDB initialized in %.1fs, docs=%d", time.time() - t0, self._store.count()
+                )
         except Exception as e:
             logger.warning("VectorRetriever warmup failed (non-fatal): %s", e)
 
@@ -287,8 +296,7 @@ class VectorRetriever:
                 # 查询所有以 memory_id 开头的 ID（含分块）
                 all_ids = self._store._collection.get(ids=None, include=[])["ids"]
                 ids_to_delete = [
-                    i for i in all_ids
-                    if i == memory_id or i.startswith(f"{memory_id}_chunk")
+                    i for i in all_ids if i == memory_id or i.startswith(f"{memory_id}_chunk")
                 ]
                 if ids_to_delete:
                     self._store.delete(ids_to_delete)
@@ -386,9 +394,7 @@ class VectorRetriever:
                 else 0
             )
             has_star_chunk = (
-                len(chunks) >= 2
-                and best_score > avg_score + score_std
-                and best_score > 0.6
+                len(chunks) >= 2 and best_score > avg_score + score_std and best_score > 0.6
             )
 
             if has_star_chunk:

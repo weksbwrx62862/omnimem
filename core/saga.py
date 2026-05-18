@@ -62,10 +62,13 @@ class SagaCoordinator:
       4. 指数退避 + 最大重试次数，超限后丢弃并告警
     """
 
-    def __init__(self, pending_path: Path | None = None,
-                 max_retry: int = _MAX_RETRY_COUNT,
-                 base_backoff: float = _BASE_BACKOFF_SECONDS,
-                 max_backoff: float = _MAX_BACKOFF_SECONDS):
+    def __init__(
+        self,
+        pending_path: Path | None = None,
+        max_retry: int = _MAX_RETRY_COUNT,
+        base_backoff: float = _BASE_BACKOFF_SECONDS,
+        max_backoff: float = _MAX_BACKOFF_SECONDS,
+    ):
         """初始化 Saga 协调器。
 
         Args:
@@ -181,18 +184,26 @@ class SagaCoordinator:
             if retry_count >= self._max_retry:
                 logger.error(
                     "Saga record %s step '%s' exceeded max retry (%d) — dropped. Error: %s",
-                    memory_id, failed_step, self._max_retry, record.get("error", "unknown"),
+                    memory_id,
+                    failed_step,
+                    self._max_retry,
+                    record.get("error", "unknown"),
                 )
                 dropped += 1
                 continue
 
             # 指数退避
-            backoff = min(self._base_backoff * (2 ** retry_count), self._max_backoff)
+            backoff = min(self._base_backoff * (2**retry_count), self._max_backoff)
             time.sleep(backoff)
 
             try:
                 action(memory_id)
-                logger.info("Saga retry OK: %s step '%s' (attempt %d)", memory_id, failed_step, retry_count + 1)
+                logger.info(
+                    "Saga retry OK: %s step '%s' (attempt %d)",
+                    memory_id,
+                    failed_step,
+                    retry_count + 1,
+                )
                 self._total_retries += 1
                 fixed += 1
             except Exception as e:
@@ -200,13 +211,19 @@ class SagaCoordinator:
                 record["last_error"] = str(e)
                 logger.warning(
                     "Saga retry failed: %s step '%s' (attempt %d/%d): %s",
-                    memory_id, failed_step, retry_count + 1, self._max_retry, e,
+                    memory_id,
+                    failed_step,
+                    retry_count + 1,
+                    self._max_retry,
+                    e,
                 )
                 self._total_retries += 1
                 still_pending.append(record)
 
         if dropped > 0:
-            logger.error("Dropped %d saga records after exceeding max retry (%d)", dropped, self._max_retry)
+            logger.error(
+                "Dropped %d saga records after exceeding max retry (%d)", dropped, self._max_retry
+            )
 
         self._pending = still_pending
         self._persist_pending()

@@ -12,7 +12,6 @@ import re
 from typing import Any
 
 from omnimem.governance.conflict import ConflictResolver
-from omnimem.memory.wing_room import _PRIVACY_TO_WING
 
 logger = logging.getLogger(__name__)
 
@@ -156,9 +155,9 @@ def handle_govern(provider: Any, args: dict[str, Any]) -> str:
                 # ★ R24修复BUG-3：全局扫描时归档每对冲突中较旧的条目
                 archived_ids = []
                 for pair in scan_results[:5]:
-                    old_id = pair.get("memory_b", {}).get("memory_id") or pair.get("memory_a", {}).get(
-                        "memory_id"
-                    )
+                    old_id = pair.get("memory_b", {}).get("memory_id") or pair.get(
+                        "memory_a", {}
+                    ).get("memory_id")
                     if old_id:
                         provider._forgetting.archive(old_id)
                         archived_ids.append(old_id)
@@ -199,7 +198,10 @@ def handle_govern(provider: Any, args: dict[str, Any]) -> str:
                 conflict = provider._conflict_resolver.check(
                     target_content,
                     existing_memories=[
-                        {"content": conflict_entry.get("content", ""), "memory_id": conflict_with_id}
+                        {
+                            "content": conflict_entry.get("content", ""),
+                            "memory_id": conflict_with_id,
+                        }
                     ],
                 )
                 if conflict.has_conflict:
@@ -228,7 +230,8 @@ def handle_govern(provider: Any, args: dict[str, Any]) -> str:
                     semantic_candidates = []
             all_memories = provider._store.search(limit=100)
             simple_candidates = [
-                m for m in all_memories
+                m
+                for m in all_memories
                 if m.get("memory_id", "") != target
                 and m.get("type", "") in ("fact", "preference", "correction")
             ]
@@ -238,9 +241,7 @@ def handle_govern(provider: Any, args: dict[str, Any]) -> str:
                 mid = m.get("memory_id", "")
                 if mid and mid != target and mid not in seen_ids:
                     seen_ids.add(mid)
-                    merged_candidates.append(
-                        {"content": m.get("content", ""), "memory_id": mid}
-                    )
+                    merged_candidates.append({"content": m.get("content", ""), "memory_id": mid})
 
             conflict = provider._conflict_resolver.check(
                 target_content, existing_memories=merged_candidates
@@ -343,9 +344,17 @@ def handle_govern(provider: Any, args: dict[str, Any]) -> str:
         if actual_wing != new_wing:
             logger.warning(
                 "govern set_privacy wing mismatch: expected=%s actual=%s for %s",
-                new_wing, actual_wing, target,
+                new_wing,
+                actual_wing,
+                target,
             )
-        provider._audit_logger.log("govern_set_privacy", memory_id=target, details={"privacy": actual_privacy, "wing": actual_wing}, result="success", instance_id=getattr(provider, "_instance_id", None))
+        provider._audit_logger.log(
+            "govern_set_privacy",
+            memory_id=target,
+            details={"privacy": actual_privacy, "wing": actual_wing},
+            result="success",
+            instance_id=getattr(provider, "_instance_id", None),
+        )
         return json.dumps(
             {
                 "status": "updated",
@@ -356,11 +365,21 @@ def handle_govern(provider: Any, args: dict[str, Any]) -> str:
         )
     elif action == "archive":
         provider._forgetting.archive(target)
-        provider._audit_logger.log("govern_archive", memory_id=target, result="success", instance_id=getattr(provider, "_instance_id", None))
+        provider._audit_logger.log(
+            "govern_archive",
+            memory_id=target,
+            result="success",
+            instance_id=getattr(provider, "_instance_id", None),
+        )
         return json.dumps({"status": "archived", "memory_id": target})
     elif action == "reactivate":
         provider._forgetting.reactivate(target)
-        provider._audit_logger.log("govern_reactivate", memory_id=target, result="success", instance_id=getattr(provider, "_instance_id", None))
+        provider._audit_logger.log(
+            "govern_reactivate",
+            memory_id=target,
+            result="success",
+            instance_id=getattr(provider, "_instance_id", None),
+        )
         return json.dumps({"status": "reactivated", "memory_id": target})
     elif action == "provenance":
         prov = provider._provenance.lookup(target)
@@ -484,7 +503,9 @@ def handle_govern(provider: Any, args: dict[str, Any]) -> str:
                 to_time=to_time,
                 limit=limit,
             )
-            return json.dumps({"status": "ok", "count": len(entries), "entries": entries}, ensure_ascii=False)
+            return json.dumps(
+                {"status": "ok", "count": len(entries), "entries": entries}, ensure_ascii=False
+            )
         except Exception as e:
             return json.dumps({"error": f"Audit log query failed: {e}"})
     elif action == "assign_role":
@@ -514,7 +535,9 @@ def handle_govern(provider: Any, args: dict[str, Any]) -> str:
         if not permission:
             return json.dumps({"error": "permission is required"})
         allowed = provider._rbac.check_permission(user_id, permission)
-        return json.dumps({"status": "ok", "user_id": user_id, "permission": permission, "allowed": allowed})
+        return json.dumps(
+            {"status": "ok", "user_id": user_id, "permission": permission, "allowed": allowed}
+        )
     elif action == "get_permissions":
         user_id = params.get("user_id", args.get("user_id", "default"))
         permissions = provider._rbac.get_user_permissions(user_id)
@@ -524,21 +547,33 @@ def handle_govern(provider: Any, args: dict[str, Any]) -> str:
         config_kwargs = {k: v for k, v in params.items() if k != "provider"}
         try:
             provider._kms.configure_provider(provider_name, **config_kwargs)
-            provider._audit_logger.log("govern_configure_kms", details={"provider": provider_name}, result="success", instance_id=getattr(provider, "_instance_id", None))
+            provider._audit_logger.log(
+                "govern_configure_kms",
+                details={"provider": provider_name},
+                result="success",
+                instance_id=getattr(provider, "_instance_id", None),
+            )
             return json.dumps({"status": "configured", "provider": provider_name})
         except ValueError as e:
             return json.dumps({"error": str(e)})
     elif action == "rotate_key":
         key_id = params.get("key_id", "default")
         provider._kms.rotate_key(key_id)
-        provider._audit_logger.log("govern_rotate_key", details={"key_id": key_id}, result="success", instance_id=getattr(provider, "_instance_id", None))
+        provider._audit_logger.log(
+            "govern_rotate_key",
+            details={"key_id": key_id},
+            result="success",
+            instance_id=getattr(provider, "_instance_id", None),
+        )
         return json.dumps({"status": "rotated", "key_id": key_id})
     elif action == "kms_status":
-        return json.dumps({
-            "status": "ok",
-            "provider": provider._kms.provider,
-            "config": provider._kms._config,
-        })
+        return json.dumps(
+            {
+                "status": "ok",
+                "provider": provider._kms.provider,
+                "config": provider._kms._config,
+            }
+        )
     elif action == "rebuild_index":
         # ★ P1修复QUAL-2：全量重建向量+BM25检索索引
         # 解决历史向量索引退化导致RAG召回率下降的问题
@@ -547,12 +582,14 @@ def handle_govern(provider: Any, args: dict[str, Any]) -> str:
             if not entries:
                 return json.dumps({"status": "no_data", "reason": "No entries in index to rebuild"})
             stats = provider._retriever.rebuild_all_from_entries(entries)
-            return json.dumps({
-                "status": "rebuilt",
-                "entries_processed": len(entries),
-                "vector_rebuilt": stats.get("vector", 0),
-                "bm25_rebuilt": stats.get("bm25", 0),
-            })
+            return json.dumps(
+                {
+                    "status": "rebuilt",
+                    "entries_processed": len(entries),
+                    "vector_rebuilt": stats.get("vector", 0),
+                    "bm25_rebuilt": stats.get("bm25", 0),
+                }
+            )
         except Exception as e:
             logger.warning("OmniMem rebuild_index failed: %s", e)
             return json.dumps({"status": "error", "reason": str(e)})
@@ -578,11 +615,14 @@ def handle_govern(provider: Any, args: dict[str, Any]) -> str:
                             )
                     except Exception as e:
                         logger.debug("purge_test_data delete failed for %s: %s", memory_id, e)
-        return json.dumps({
-            "status": "dry_run" if dry_run else "purged",
-            "test_entries_found": len(purged),
-            "entries": purged[:20],
-            "hint": "Set dry_run=false to actually delete" if dry_run else None,
-        }, ensure_ascii=False)
+        return json.dumps(
+            {
+                "status": "dry_run" if dry_run else "purged",
+                "test_entries_found": len(purged),
+                "entries": purged[:20],
+                "hint": "Set dry_run=false to actually delete" if dry_run else None,
+            },
+            ensure_ascii=False,
+        )
     else:
         return json.dumps({"error": f"Unknown governance action: {action}"})

@@ -12,8 +12,7 @@ class LLMBackend(ABC):
         system: str | None = None,
         max_tokens: int = 1024,
         temperature: float = 0.7,
-    ) -> str | None:
-        ...
+    ) -> str | None: ...
 
     @abstractmethod
     def call_sync(
@@ -22,8 +21,7 @@ class LLMBackend(ABC):
         system: str | None = None,
         max_tokens: int = 1024,
         temperature: float = 0.7,
-    ) -> Any:
-        ...
+    ) -> Any: ...
 
 
 class OpenAIBackend(LLMBackend):

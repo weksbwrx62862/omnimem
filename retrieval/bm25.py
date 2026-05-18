@@ -60,8 +60,26 @@ _NOISE_WORDS = {
 
 
 _MINIMAL_ZH_STOPWORDS = {
-    "的", "了", "是", "在", "我", "有", "和", "就", "不", "人",
-    "都", "一", "一个", "上", "也", "很", "到", "说", "要", "去",
+    "的",
+    "了",
+    "是",
+    "在",
+    "我",
+    "有",
+    "和",
+    "就",
+    "不",
+    "人",
+    "都",
+    "一",
+    "一个",
+    "上",
+    "也",
+    "很",
+    "到",
+    "说",
+    "要",
+    "去",
 }
 
 
@@ -80,7 +98,7 @@ def _load_common_zh_words() -> set[str]:
         os.path.dirname(os.path.dirname(__file__)), "config", "zh_words.json"
     )
     try:
-        with open(config_path, "r", encoding="utf-8") as f:
+        with open(config_path, encoding="utf-8") as f:
             external: list[str] = json.load(f)
         if isinstance(external, list):
             return set(external)
@@ -318,8 +336,7 @@ class BM25Retriever:
         """从 BM25 索引中删除指定条目。"""
         with self._lock:
             indices_to_remove = [
-                i for i, doc in enumerate(self._documents)
-                if doc.get("memory_id") == memory_id
+                i for i, doc in enumerate(self._documents) if doc.get("memory_id") == memory_id
             ]
             if indices_to_remove:
                 for idx in reversed(indices_to_remove):

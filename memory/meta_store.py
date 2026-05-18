@@ -32,6 +32,7 @@ def _retry_db_op(fn, *args, **kwargs):
         except sqlite3.OperationalError as e:
             if "locked" in str(e).lower() and attempt < _DB_RETRY_COUNT - 1:
                 import time
+
                 time.sleep(_DB_RETRY_DELAY * (attempt + 1))
                 continue
             raise

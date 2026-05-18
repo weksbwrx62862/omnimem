@@ -1,9 +1,10 @@
-import sqlite3
 import json
+import sqlite3
+import threading
 import time
 from pathlib import Path
 from typing import Any
-import threading
+
 
 class AuditLogger:
     def __init__(self, governance_dir: Path):
@@ -38,18 +39,39 @@ class AuditLogger:
         self._conn.execute("PRAGMA synchronous=NORMAL")
         self._conn.execute("PRAGMA busy_timeout=5000")
 
-    def log(self, operation: str, memory_id: str | None = None, details: dict | None = None, result: str = "success", instance_id: str | None = None) -> None:
+    def log(
+        self,
+        operation: str,
+        memory_id: str | None = None,
+        details: dict | None = None,
+        result: str = "success",
+        instance_id: str | None = None,
+    ) -> None:
         with self._lock:
             try:
                 self._conn.execute(
                     "INSERT INTO audit_log (timestamp, operation, memory_id, details, result, instance_id) VALUES (?, ?, ?, ?, ?, ?)",
-                    (time.time(), operation, memory_id, json.dumps(details, ensure_ascii=False) if details else None, result, instance_id),
+                    (
+                        time.time(),
+                        operation,
+                        memory_id,
+                        json.dumps(details, ensure_ascii=False) if details else None,
+                        result,
+                        instance_id,
+                    ),
                 )
                 self._conn.commit()
             except Exception:
                 pass
 
-    def query(self, operation: str | None = None, memory_id: str | None = None, from_time: float | None = None, to_time: float | None = None, limit: int = 100) -> list[dict]:
+    def query(
+        self,
+        operation: str | None = None,
+        memory_id: str | None = None,
+        from_time: float | None = None,
+        to_time: float | None = None,
+        limit: int = 100,
+    ) -> list[dict]:
         conditions = []
         params: list[Any] = []
         if operation:
@@ -73,7 +95,15 @@ class AuditLogger:
             )
             rows = cursor.fetchall()
         return [
-            {"id": r[0], "timestamp": r[1], "operation": r[2], "memory_id": r[3], "details": json.loads(r[4]) if r[4] else None, "result": r[5], "instance_id": r[6]}
+            {
+                "id": r[0],
+                "timestamp": r[1],
+                "operation": r[2],
+                "memory_id": r[3],
+                "details": json.loads(r[4]) if r[4] else None,
+                "result": r[5],
+                "instance_id": r[6],
+            }
             for r in rows
         ]
 

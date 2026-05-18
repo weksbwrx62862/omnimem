@@ -5,12 +5,19 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from omnimem.retrieval.vector_store import ChromaDBStore, QdrantStore, VectorStore, _CachedEmbeddingFunction
+from omnimem.retrieval.vector_store import (
+    ChromaDBStore,
+    QdrantStore,
+    VectorStore,
+    _CachedEmbeddingFunction,
+)
 
 
 def create_vector_store(backend: str = "chromadb", **kwargs: Any) -> VectorStore:
     if backend == "chromadb":
-        persist_dir = kwargs.pop("persist_dir", kwargs.pop("data_dir", "/tmp/omnimem/retrieval/chroma"))
+        persist_dir = kwargs.pop(
+            "persist_dir", kwargs.pop("data_dir", "/tmp/omnimem/retrieval/chroma")
+        )
         if not isinstance(persist_dir, Path):
             persist_dir = Path(persist_dir)
         collection_name = kwargs.pop("collection_name", "omnimem")

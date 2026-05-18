@@ -70,7 +70,7 @@ class _ReadWriteLock:
             self._writers -= 1
             self._cond.notify_all()
 
-    def __enter__(self) -> "_ReadWriteLock":
+    def __enter__(self) -> _ReadWriteLock:
         self.acquire_write()
         return self
 
@@ -305,10 +305,16 @@ class HybridRetriever:
             reranker_model_path: 重排序模型本地路径
         """
         self._data_dir = data_dir or Path("/tmp/omnimem/retrieval")
-        self._vector = VectorRetriever(backend=vector_backend, data_dir=self._data_dir, embedding_model_path=embedding_model_path)
+        self._vector = VectorRetriever(
+            backend=vector_backend,
+            data_dir=self._data_dir,
+            embedding_model_path=embedding_model_path,
+        )
         self._bm25 = BM25Retriever(data_dir=self._data_dir)
         self._rrf = RRFFusion(k=60, min_rrf=0.035)
-        self._reranker = CrossEncoderReranker(model_path=reranker_model_path) if enable_reranker else None
+        self._reranker = (
+            CrossEncoderReranker(model_path=reranker_model_path) if enable_reranker else None
+        )
         # ★ 读写锁替代全局互斥锁
         self._rw_lock = _ReadWriteLock()
         # ★ 查询结果缓存：key → (results, timestamp)
@@ -685,7 +691,9 @@ class HybridRetriever:
             self._vector.flush()
             logger.info(
                 "HybridRetriever rebuild: vector=%d, bm25=%d from %d entries",
-                vec_count, bm25_count, len(entries),
+                vec_count,
+                bm25_count,
+                len(entries),
             )
             return {"vector": vec_count, "bm25": bm25_count}
         finally:

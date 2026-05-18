@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import hashlib
 import logging
-import os
 import threading
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any
+
 
 # ★ 抑制 ChromaDB 0.6.x telemetry PostHog capture() 签名不兼容的噪音日志
 #    这是 ChromaDB 内部问题，不影响功能，无需暴露给用户
@@ -22,6 +22,7 @@ class _ChromaDBTelemetryFilter(logging.Filter):
             return False
         return True
 
+
 _telemetry_filter = _ChromaDBTelemetryFilter()
 for _logger_name in ("chromadb.telemetry.product.posthog", "chromadb.telemetry"):
     logging.getLogger(_logger_name).addFilter(_telemetry_filter)
@@ -32,28 +33,32 @@ logger = logging.getLogger(__name__)
 
 class VectorStore(ABC):
     @abstractmethod
-    def add(self, ids: list[str], documents: list[str], metadatas: list[dict] | None = None) -> None:
-        ...
+    def add(
+        self, ids: list[str], documents: list[str], metadatas: list[dict] | None = None
+    ) -> None: ...
 
     @abstractmethod
-    def query(self, query_texts: list[str], n_results: int = 10, where: dict | None = None) -> dict:
-        ...
+    def query(
+        self, query_texts: list[str], n_results: int = 10, where: dict | None = None
+    ) -> dict: ...
 
     @abstractmethod
-    def delete(self, ids: list[str]) -> None:
-        ...
+    def delete(self, ids: list[str]) -> None: ...
 
     @abstractmethod
-    def count(self) -> int:
-        ...
+    def count(self) -> int: ...
 
     @abstractmethod
-    def reset(self) -> None:
-        ...
+    def reset(self) -> None: ...
 
 
 class _CachedEmbeddingFunction:
-    def __init__(self, model_name: str = "all-MiniLM-L6-v2", cache_path: Path | None = None, model_path: str = ""):
+    def __init__(
+        self,
+        model_name: str = "all-MiniLM-L6-v2",
+        cache_path: Path | None = None,
+        model_path: str = "",
+    ):
         self._model_name = model_name
         self._model_path = model_path
         self._model = None
@@ -69,7 +74,7 @@ class _CachedEmbeddingFunction:
         return "omnimem_cached_sentence_transformer"
 
     @staticmethod
-    def build_from_config(config: dict[str, Any]) -> "_CachedEmbeddingFunction":
+    def build_from_config(config: dict[str, Any]) -> _CachedEmbeddingFunction:
         """ChromaDB EmbeddingFunction 协议要求的反序列化方法。"""
         return _CachedEmbeddingFunction(
             model_name=config.get("model_name", "all-MiniLM-L6-v2"),
@@ -243,9 +248,7 @@ class ChromaDBStore(VectorStore):
                 return
             conn = sqlite3.connect(str(chroma_db_path))
             try:
-                rows = conn.execute(
-                    "SELECT name, config_json_str FROM collections"
-                ).fetchall()
+                rows = conn.execute("SELECT name, config_json_str FROM collections").fetchall()
                 for name, config_str in rows:
                     if not config_str:
                         continue
@@ -271,7 +274,9 @@ class ChromaDBStore(VectorStore):
         except Exception as e:
             logger.debug("ChromaDB config migration skipped: %s", e)
 
-    def add(self, ids: list[str], documents: list[str], metadatas: list[dict] | None = None) -> None:
+    def add(
+        self, ids: list[str], documents: list[str], metadatas: list[dict] | None = None
+    ) -> None:
         self._ensure_initialized()
         if self._collection is None:
             return
@@ -381,7 +386,9 @@ class QdrantStore(VectorStore):
             logger.warning("Qdrant init failed: %s", e)
         self._initialized = True
 
-    def add(self, ids: list[str], documents: list[str], metadatas: list[dict] | None = None) -> None:
+    def add(
+        self, ids: list[str], documents: list[str], metadatas: list[dict] | None = None
+    ) -> None:
         self._ensure_initialized()
         if self._client is None:
             return
