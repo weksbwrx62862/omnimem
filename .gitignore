@@ -88,3 +88,6 @@ ANALYSIS_REPORT.md
 _*.py
 fix_*.py
 nul
+
+# Claude Code local config
+.claude/
