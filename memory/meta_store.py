@@ -18,6 +18,8 @@ import threading
 from pathlib import Path
 from typing import Any
 
+from omnimem.utils.migration import SchemaMigrator
+
 logger = logging.getLogger(__name__)
 
 _DB_RETRY_COUNT = 3
@@ -45,6 +47,12 @@ class MetaStore:
       memories_fts  — 可选 FTS5 虚拟表（全文搜索）
     """
 
+    _VALID_COLUMNS = {
+        "memory_id", "wing", "hall", "room", "type", "confidence",
+        "privacy", "stored_at", "summary", "content_preview",
+        "drawer_path", "vc", "created_at", "conflicting_with", "conflict_type",
+    }
+
     def __init__(self, db_dir: Path):
         self._db_dir = db_dir
         self._db_dir.mkdir(parents=True, exist_ok=True)
@@ -62,23 +70,28 @@ class MetaStore:
         self._conn.execute("PRAGMA busy_timeout=5000")
 
         # 核心元数据表
-        self._conn.execute("""
-            CREATE TABLE IF NOT EXISTS memories (
-                memory_id TEXT PRIMARY KEY,
-                wing TEXT,
-                hall TEXT,
-                room TEXT,
-                type TEXT,
-                confidence INTEGER DEFAULT 3,
-                privacy TEXT DEFAULT 'personal',
-                stored_at TEXT,
-                summary TEXT,
-                content_preview TEXT,
-                drawer_path TEXT,
-                vc TEXT,
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
+        migrator = SchemaMigrator(self._conn)
+        migrator.migrate(
+            table_name="memories",
+            create_sql="""
+                CREATE TABLE IF NOT EXISTS memories (
+                    memory_id TEXT PRIMARY KEY,
+                    wing TEXT,
+                    hall TEXT,
+                    room TEXT,
+                    type TEXT,
+                    confidence INTEGER DEFAULT 3,
+                    privacy TEXT DEFAULT 'personal',
+                    stored_at TEXT,
+                    summary TEXT,
+                    content_preview TEXT,
+                    drawer_path TEXT,
+                    vc TEXT,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+                )
+            """,
+            migrations=[],
+        )
 
         # 向后兼容：旧表无 vc 列时自动迁移
         try:
@@ -92,6 +105,7 @@ class MetaStore:
             try:
                 self._conn.execute(f"SELECT {col} FROM memories LIMIT 1")
             except sqlite3.OperationalError:
+                # 列名来自硬编码常量，非用户输入，安全使用 f-string
                 self._conn.execute(f"ALTER TABLE memories ADD COLUMN {col} TEXT")
                 logger.info("MetaStore migrated: added %s column", col)
 
@@ -135,9 +149,9 @@ class MetaStore:
                 END
             """)
             self._fts_enabled = True
-            logger.debug("MetaStore FTS5 enabled")
+            logger.warning("MetaStore FTS5 enabled")
         except Exception:
-            logger.debug("MetaStore FTS5 not available, falling back to LIKE search")
+            logger.warning("MetaStore FTS5 not available, falling back to LIKE search")
             self._fts_enabled = False
 
         self._conn.commit()
@@ -149,7 +163,7 @@ class MetaStore:
         if not self._conn:
             return
         with self._lock:
-            cols = ["memory_id"] + [k for k in fields if k != "memory_id"]
+            cols = ["memory_id"] + [k for k in fields if k != "memory_id" and k in self._VALID_COLUMNS]
             vals = [memory_id] + [fields.get(k, "") for k in cols[1:]]
             placeholders = ",".join("?" * len(cols))
             try:
@@ -173,7 +187,7 @@ class MetaStore:
             if row:
                 return self._row_to_dict(row)
         except Exception as e:
-            logger.debug("MetaStore get failed for %s: %s", memory_id, e)
+            logger.warning("MetaStore get failed for %s: %s", memory_id, e)
         return None
 
     def update_privacy(self, memory_id: str, privacy: str, new_wing: str = "") -> bool:
@@ -206,8 +220,11 @@ class MetaStore:
             return False
         with self._lock:
             try:
-                set_clause = ", ".join(f"{k} = ?" for k in fields)
-                values = list(fields.values()) + [memory_id]
+                safe_fields = {k: v for k, v in fields.items() if k in self._VALID_COLUMNS}
+                if not safe_fields:
+                    return False
+                set_clause = ", ".join(f"{k} = ?" for k in safe_fields)
+                values = list(safe_fields.values()) + [memory_id]
                 _retry_db_op(
                     self._conn.execute,
                     f"UPDATE memories SET {set_clause} WHERE memory_id = ?",
@@ -216,7 +233,7 @@ class MetaStore:
                 _retry_db_op(self._conn.commit)
                 return True
             except Exception as e:
-                logger.debug("MetaStore update_field failed for %s: %s", memory_id, e)
+                logger.warning("MetaStore update_field failed for %s: %s", memory_id, e)
                 return False
 
     def delete(self, memory_id: str) -> bool:
@@ -264,8 +281,8 @@ class MetaStore:
             ).fetchall()
             return [self._row_to_dict(r) for r in rows]
         except Exception as e:
-            logger.debug("MetaStore search failed: %s", e)
-            return []
+            logger.warning("MetaStore search failed: %s", e)
+            raise
 
     def search_by_content(self, query: str, limit: int = 20) -> list[dict[str, Any]]:
         """按内容关键词搜索。
@@ -276,30 +293,31 @@ class MetaStore:
             return []
         try:
             if self._fts_enabled:
-                # FTS5 查询
+                # FTS5 查询：用双引号包裹防止内容被解析为列过滤器
+                safe_query = f'"{query}"' if query and not query.startswith('"') else query
                 rows = self._conn.execute(
                     """SELECT m.* FROM memories_fts f
                        JOIN memories m ON m.rowid = f.rowid
                        WHERE memories_fts MATCH ?
                        ORDER BY rank
                        LIMIT ?""",
-                    (query, limit),
+                    (safe_query, limit),
                 ).fetchall()
                 return [self._row_to_dict(r) for r in rows]
             else:
-                # LIKE 回退
-                q = f"%{query}%"
+                escaped_query = query.replace("%", "\\%").replace("_", "\\_")
+                q = f"%{escaped_query}%"
                 rows = self._conn.execute(
                     """SELECT * FROM memories
-                       WHERE summary LIKE ? OR content_preview LIKE ?
+                       WHERE summary LIKE ? ESCAPE '\\' OR content_preview LIKE ? ESCAPE '\\'
                        ORDER BY stored_at DESC
                        LIMIT ?""",
                     (q, q, limit),
                 ).fetchall()
                 return [self._row_to_dict(r) for r in rows]
         except Exception as e:
-            logger.debug("MetaStore search_by_content failed: %s", e)
-            return []
+            logger.warning("MetaStore search_by_content failed: %s", e)
+            raise
 
     def get_all(self, limit: int = 5000) -> list[dict[str, Any]]:
         """获取所有元数据记录。"""
@@ -312,18 +330,19 @@ class MetaStore:
             ).fetchall()
             return [self._row_to_dict(r) for r in rows]
         except Exception as e:
-            logger.debug("MetaStore get_all failed: %s", e)
-            return []
+            logger.error("MetaStore get_all failed: %s", e)
+            raise
 
     def count(self) -> int:
-        """返回记录总数。"""
+        """返回记录总数，-1 表示数据库故障。"""
         if not self._conn:
-            return 0
+            return -1
         try:
             row = self._conn.execute("SELECT COUNT(*) FROM memories").fetchone()
-            return row[0] if row else 0
-        except Exception:
-            return 0
+            return row[0] if row else -1
+        except Exception as e:
+            logger.error("MetaStore count failed: %s", e)
+            return -1
 
     def warm_up(self, entries: list[dict[str, Any]]) -> int:
         """批量预热：将现有条目导入 SQLite。"""
@@ -353,7 +372,7 @@ class MetaStore:
                 self._conn.commit()
                 logger.info("MetaStore warmed up %d entries", added)
             except Exception as e:
-                logger.debug("MetaStore warm_up failed: %s", e)
+                logger.warning("MetaStore warm_up failed: %s", e)
         return added
 
     # ─── 内部方法 ─────────────────────────────────────────────

@@ -35,10 +35,10 @@ class CrossEncoderReranker:
             self._model = CrossEncoder(model_path)
             return True
         except ImportError:
-            logger.debug("sentence_transformers not installed — reranking disabled")
+            logger.warning("sentence_transformers not installed — reranking disabled")
             return False
         except Exception as e:
-            logger.debug("Cross-Encoder model load failed: %s", e)
+            logger.warning("Cross-Encoder model load failed: %s", e)
             return False
 
     def rerank(
@@ -77,5 +77,5 @@ class CrossEncoderReranker:
                 reranked.append(entry)
             return reranked
         except Exception as e:
-            logger.debug("Reranking failed: %s", e)
+            logger.warning("Reranking failed: %s", e)
             return results[:top_k]

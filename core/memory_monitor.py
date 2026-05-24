@@ -53,5 +53,5 @@ class MemoryMonitor:
             for cb in self._callbacks:
                 try:
                     cb(usage)
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning("MemoryMonitor callback failed: %s", e)

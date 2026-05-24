@@ -8,10 +8,10 @@ from __future__ import annotations
 import json
 import logging
 import re
-import time
 from datetime import datetime, timezone
 from typing import Any
 
+from omnimem.core.llm_memory_manager import LLMMemoryManager, MemoryAction
 from omnimem.core.saga import SagaStep
 from omnimem.memory.wing_room import _PRIVACY_TO_WING
 from omnimem.utils.security import SecurityValidator
@@ -38,7 +38,7 @@ def _enrich_retriever_content(content: str, memory_type: str, room: str = "") ->
     return content
 
 
-def handle_memorize(provider: Any, args: dict[str, Any]) -> str:
+def handle_memorize(provider: Any, args: dict[str, Any], llm_memory_manager: LLMMemoryManager | None = None) -> str:
     """处理 omni_memorize 工具调用。
 
     存储流程（安全扫描→去重→存储→索引）:
@@ -68,6 +68,7 @@ def handle_memorize(provider: Any, args: dict[str, Any]) -> str:
           rejected — 反递归防护拦截
     """
     content = args["content"]
+    dry_run = args.get("dry_run", False)
     user_id = args.get("user_id", "default")
     if hasattr(provider, "_rbac") and not provider._rbac.check_permission(user_id, "write"):
         return json.dumps({"status": "blocked", "reason": f"User '{user_id}' lacks 'write' permission"})
@@ -109,10 +110,18 @@ def handle_memorize(provider: Any, args: dict[str, Any]) -> str:
     if privacy in _PRIVACY_TO_WING:
         scope = privacy
 
-    # ★ 精确内容去重：在语义搜索之前，先检查是否有完全相同的内容
-    # 这避免了 ChromaDB 索引延迟导致候选搜索不到的问题
-    exact_match = provider._store.search_by_content(content, limit=5)
-    for m in exact_match:
+    # ★ 统一候选搜索：向量+BM25搜索，共享给去重和冲突检测
+    candidates = provider._unified_candidate_search(content)
+    # 补充 FTS5 精确搜索（防止 ChromaDB 索引延迟导致遗漏）
+    if len(candidates) < 5:
+        fts_results = provider._store.search_by_content(content, limit=5)
+        existing_ids = {m.get("memory_id", "") for m in candidates}
+        for m in fts_results:
+            if m.get("memory_id", "") not in existing_ids:
+                candidates.append(m)
+
+    # ★ 精确内容去重：在合并候选列表中检查完全相同内容
+    for m in candidates:
         if m.get("content", "").strip() == content.strip():
             return json.dumps(
                 {
@@ -122,14 +131,87 @@ def handle_memorize(provider: Any, args: dict[str, Any]) -> str:
                 }
             )
 
-    # ★ 统一搜索：去重和冲突检测共享候选结果，避免重复搜索
-    candidates = provider._unified_candidate_search(content)
-
-    # ★ 语义去重：写入前检索已有记忆，高相似度则合并更新
+    # ★ 语义去重：复用已合并的候选结果
     dedup_result = provider._semantic_dedup(content, memory_type, candidates)
+
+    # ★ LLM 决策层：当 LLM 客户端可用时，用 LLM 决策替代规则去重判断
+    llm_decision_applied = False
+    if llm_memory_manager and llm_memory_manager.is_available:
+        try:
+            llm_decision = llm_memory_manager.decide(content, memory_type, candidates)
+            llm_dedup_result = llm_decision.to_dedup_result()
+            llm_action = llm_dedup_result.get("action", "")
+
+            if llm_action == "create":
+                dedup_result = {"action": "create"}
+                llm_decision_applied = True
+                logger.info("OmniMem LLM 决策: ADD — %s", llm_decision.reason)
+            elif llm_action == "update":
+                dedup_result = llm_dedup_result
+                llm_decision_applied = True
+                logger.info(
+                    "OmniMem LLM 决策: UPDATE target=%s — %s",
+                    llm_decision.target_memory_id,
+                    llm_decision.reason,
+                )
+            elif llm_action == "delete":
+                # ★ DELETE 决策：删除矛盾记忆，然后继续存储新内容
+                delete_target = llm_dedup_result.get("existing_id", "")
+                if delete_target:
+                    try:
+                        provider._forgetting.archive(delete_target)
+                        provider._retriever.delete(delete_target)
+                        try:
+                            provider._index.delete(delete_target)
+                        except Exception:
+                            pass
+                        try:
+                            provider._store.delete(delete_target)
+                        except Exception:
+                            pass
+                        logger.info(
+                            "OmniMem LLM 决策: DELETE target=%s — %s",
+                            delete_target,
+                            llm_decision.reason,
+                        )
+                    except Exception as e:
+                        logger.warning("OmniMem LLM DELETE 执行失败: %s", e)
+                dedup_result = {"action": "create"}
+                llm_decision_applied = True
+            elif llm_action == "skip":
+                dedup_result = llm_dedup_result
+                llm_decision_applied = True
+                logger.info("OmniMem LLM 决策: NONE — %s", llm_decision.reason)
+        except Exception as e:
+            logger.warning("OmniMem LLM 决策层异常，回退到规则去重: %s", e)
+
+    if not llm_decision_applied:
+        # ★ 规则去重回退路径（LLM 不可用或异常时）
+        pass
+
     if dedup_result["action"] == "update":
         existing_id = dedup_result["existing_id"]
         provider._forgetting.archive(existing_id)
+        # ★ LLM UPDATE 决策：更新已有记忆内容，标记旧内容到 provenance
+        updated_content = dedup_result.get("updated_content", "")
+        if updated_content:
+            try:
+                existing_entry = provider._store.get(existing_id) if existing_id else {}
+                old_provenance = existing_entry.get("provenance", {})
+                if isinstance(old_provenance, str):
+                    try:
+                        old_provenance = json.loads(old_provenance)
+                    except (json.JSONDecodeError, TypeError):
+                        old_provenance = {}
+                old_provenance["llm_update_reason"] = dedup_result.get("reason", "")
+                old_provenance["replaced_by_llm_decision"] = True
+                old_provenance["original_content_preview"] = (existing_entry.get("content", "") or "")[:200]
+                try:
+                    provider._store.update_field(existing_id, provenance=json.dumps(old_provenance, ensure_ascii=False))
+                except Exception as e:
+                    logger.warning("OmniMem: 更新 provenance 失败: %s", e)
+            except Exception as e:
+                logger.warning("OmniMem: UPDATE provenance 标记失败: %s", e)
         logger.info("OmniMem dedup: archived duplicate %s, storing updated version", existing_id)
     elif dedup_result["action"] == "skip":
         existing_id = dedup_result.get("existing_id", "")
@@ -144,6 +226,17 @@ def handle_memorize(provider: Any, args: dict[str, Any]) -> str:
             }
         )
 
+    # ★ Dry-run 模式：执行去重检测和 wing 映射后返回预览，不执行写入操作
+    if dry_run:
+        room = provider._wing_room.resolve_room(content, wing, memory_type)
+        return json.dumps({
+            "status": "dry_run",
+            "wing": wing,
+            "room": room,
+            "dedup_result": dedup_result,
+            "content_preview": content[:200],
+        }, ensure_ascii=False)
+
     # 治理：冲突检测
     # ★ 合并候选：语义搜索结果 + 同 room 的记忆（捕捉主题矛盾但语义不相似的情况）
     conflict_candidates = list(candidates[:5])
@@ -156,7 +249,7 @@ def handle_memorize(provider: Any, args: dict[str, Any]) -> str:
                 if m.get("memory_id", "") not in existing_ids:
                     conflict_candidates.append(m)
         except (OSError, KeyError) as e:
-            logger.debug("OmniMem same_room search failed: %s", e)
+            logger.warning("OmniMem same_room search failed: %s", e)
 
     conflict = provider._conflict_resolver.check(
         content,
@@ -272,23 +365,50 @@ def handle_memorize(provider: Any, args: dict[str, Any]) -> str:
     # 记录遗忘状态
     provider._forgetting.record_access(memory_id)
 
-    # ★ R25修复Minor-3：写入后短延迟确保向量索引就绪
-    # ChromaDB 的 persist 是异步的，立即搜索可能搜不到新条目
-    time.sleep(0.05)
+    # ★ OPT: 记录溯源链 L0 对话 → L1 原子事实
+    if hasattr(provider, '_trace_chain') and provider._trace_chain:
+        try:
+            provider._trace_chain.record_derivation(
+                parent_node_ids=[f"conv-{provider._session_id}-turn-{getattr(provider, '_turn_count', 0)}"],
+                child_node_id=memory_id,
+                child_layer="L1",
+                ref_path=str(provider._data_dir / "conversations" / f"{provider._session_id}.jsonl"),
+            )
+        except Exception as e:
+            logger.warning("TraceChain record failed for %s: %s", memory_id, e)
 
-    # ★ R24修复EXT-5：写入后创建 event 记录，供 omni_detail(events) 查询
+    # ★ OPT: 通知 PipelineScheduler 有新记忆写入（L3 画像触发）
+    if hasattr(provider, '_pipeline_scheduler') and provider._pipeline_scheduler:
+        provider._pipeline_scheduler.on_new_memory(session_key=provider._session_id)
+
+    # ★ R25修复Minor-3：写入后确保向量索引就绪
+    # ChromaDB client.persist() 已在 vector.py 的 add/upsert 中同步调用，
+    # 此处仅确保 Saga 已完成的 retriever step 产生的结果已 flush
+    provider._retriever.flush()
+
+    # ★ R24修复EXT-5：写入后创建 event 记录（仅高置信度记忆，避免噪声）
+    if confidence >= 3:
+        try:
+            provider._store.add(
+                wing="auto",
+                room=f"event-{memory_id[:8]}",
+                content=f"[create] {content[:120]}",
+                memory_type="event",
+                confidence=1,
+                privacy="personal",
+                provenance={"trigger": "memorize", "source_memory_id": memory_id},
+            )
+        except (OSError, KeyError) as e:
+            logger.warning("OmniMem event log creation failed: %s", e)
+
+    # ★ 嵌入缓存持久化（确保新记忆的 embedding 写入磁盘）
     try:
-        provider._store.add(
-            wing="auto",
-            room=f"event-{memory_id[:8]}",
-            content=f"[create] {content[:120]}",
-            memory_type="event",
-            confidence=1,
-            privacy="personal",
-            provenance={"trigger": "memorize", "source_memory_id": memory_id},
-        )
-    except (OSError, KeyError) as e:
-        logger.debug("OmniMem event log creation failed: %s", e)
+        if hasattr(provider._retriever, '_vector') and hasattr(provider._retriever._vector, '_embedding_fn'):
+            emb_fn = provider._retriever._vector._embedding_fn
+            if emb_fn and hasattr(emb_fn, 'persist'):
+                emb_fn.persist()
+    except Exception as e:
+        logger.debug("Embedding cache persist skipped: %s", e)
 
     # L3: 从 Saga 结果中获取知识图谱统计（避免重复执行）
     kg_stats = saga_result.step_results.get("knowledge_graph") or {}
@@ -299,35 +419,11 @@ def handle_memorize(provider: Any, args: dict[str, Any]) -> str:
                 content, memory_id=memory_id, confidence=confidence / 5.0
             )
         except (ValueError, RuntimeError) as e:
-            logger.debug("KnowledgeGraph extraction failed: %s", e)
+            logger.warning("KnowledgeGraph extraction failed: %s", e)
 
     # L3: 提交到 Consolidation 队列
     if provider._consolidation:
         provider._consolidation.submit(memory_id, content, memory_type=memory_type)
-
-    # ★ 写入后主动矛盾扫描：检查同 type 下的记忆是否有矛盾
-    post_conflict_info = None
-    try:
-        same_type = provider._store.search(memory_type=memory_type, limit=20)
-        same_type = [m for m in same_type if m.get("memory_id", "") != memory_id][:10]
-        if same_type:
-            post_conflict = provider._conflict_resolver.check(
-                content,
-                existing_memories=[
-                    {"content": m.get("content", ""), "memory_id": m.get("memory_id", "")}
-                    for m in same_type
-                ],
-            )
-            if post_conflict.has_conflict:
-                post_conflict_info = {
-                    "conflict_type": post_conflict.conflict_type,
-                    "conflicting_with": post_conflict.existing_id,
-                    "reason": f"Post-write conflict detected: {post_conflict.conflict_type}",
-                }
-                # 优先用 post_conflict_info（比写入前的更准确）
-                conflict_info = post_conflict_info
-    except (OSError, KeyError) as e:
-        logger.debug("OmniMem post-write conflict scan failed: %s", e)
 
     # L4: 检查 KV Cache 自动预填充触发
     auto_preloaded = False
@@ -366,11 +462,11 @@ def handle_memorize(provider: Any, args: dict[str, Any]) -> str:
         try:
             provider._store.update_field(memory_id, **conflict_fields)
         except Exception as e:
-            logger.debug("OmniMem: failed to persist conflict_info to store: %s", e)
+            logger.warning("OmniMem: failed to persist conflict_info to store: %s", e)
         try:
             provider._index.update_field(memory_id, immediate=True, **conflict_fields)
         except Exception as e:
-            logger.debug("OmniMem: failed to persist conflict_info to index: %s", e)
+            logger.warning("OmniMem: failed to persist conflict_info to index: %s", e)
 
     provider._audit_logger.log(
         "memorize",

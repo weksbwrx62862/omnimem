@@ -17,6 +17,7 @@ from omnimem.retrieval.vector_store import (
     ChromaDBStore,
     VectorStore,
     _CachedEmbeddingFunction,
+    _emit,
 )
 from omnimem.retrieval.vector_factory import create_vector_store
 
@@ -45,7 +46,19 @@ class VectorRetriever:
         if self._initialized:
             return
         self._data_dir.mkdir(parents=True, exist_ok=True)
-        if self._backend == "chromadb":
+        if self._backend == "faiss":
+            from omnimem.retrieval.faiss_store import FAISSStore
+            try:
+                cache_path = self._data_dir / "embedding_cache.json"
+                self._embedding_fn = _CachedEmbeddingFunction(cache_path=cache_path, model_path=self._embedding_model_path)
+            except Exception as e:
+                logger.warning("Failed to create CachedEmbeddingFunction for faiss: %s, using default", e)
+                self._embedding_fn = None
+            self._store = FAISSStore(
+                persist_dir=self._data_dir / "faiss",
+                embedding_fn=self._embedding_fn,
+            )
+        elif self._backend == "chromadb":
             try:
                 cache_path = self._data_dir / "embedding_cache.json"
                 self._embedding_fn = _CachedEmbeddingFunction(cache_path=cache_path, model_path=self._embedding_model_path)
@@ -223,8 +236,8 @@ class VectorRetriever:
             output = self._merge_chunk_results(output)
             return output
         except Exception as e:
-            logger.debug("Vector search failed: %s", e)
-            return []
+            logger.warning("Vector search failed: %s", e)
+            return [{"degraded": True, "content": "", "score": 0.0, "memory_id": ""}]
 
     def count(self) -> int:
         self._ensure_initialized()
@@ -239,16 +252,25 @@ class VectorRetriever:
         """预热：启动时预加载模型和初始化 ChromaDB，避免首次搜索延迟。"""
         logger.info("VectorRetriever warmup: initializing...")
         t0 = time.time()
+        success = True
         try:
             self._ensure_initialized()
             if self._embedding_fn is not None:
                 self._embedding_fn(["warmup"])
-                logger.info("SentenceTransformer model loaded in %.1fs", time.time() - t0)
+                elapsed = time.time() - t0
+                logger.info("SentenceTransformer model loaded in %.1fs", elapsed)
+                _emit(f"[OmniMem] 嵌入模型就绪 ({elapsed:.1f}s), 内存缓存: {self._embedding_fn.cache_size} 条")
             if self._store is not None:
-                self._store.count()
-                logger.info("ChromaDB initialized in %.1fs, docs=%d", time.time() - t0, self._store.count())
+                doc_count = self._store.count()
+                logger.info("ChromaDB initialized in %.1fs, docs=%d", time.time() - t0, doc_count)
+                _emit(f"[OmniMem] ChromaDB 就绪: {doc_count} 条文档")
         except Exception as e:
+            success = False
             logger.warning("VectorRetriever warmup failed (non-fatal): %s", e)
+            _emit(f"[OmniMem] ⚠ 向量检索引擎预热失败: {e}")
+
+        if success:
+            logger.info("VectorRetriever warmup complete in %.1fs", time.time() - t0)
 
     def embed_text(self, text: str) -> list[float]:
         self._ensure_initialized()
@@ -258,7 +280,7 @@ class VectorRetriever:
             vecs = self._embedding_fn([text])
             return vecs[0] if vecs else []
         except Exception as e:
-            logger.debug("VectorRetriever embed_text failed: %s", e)
+            logger.warning("VectorRetriever embed_text failed: %s", e)
             return []
 
     def flush(self) -> None:
@@ -266,12 +288,12 @@ class VectorRetriever:
             if isinstance(self._store, ChromaDBStore):
                 self._store._persist_client()
         except Exception as e:
-            logger.debug("ChromaDB persist failed: %s", e)
+            logger.warning("ChromaDB persist failed: %s", e)
         if self._embedding_fn:
             try:
                 self._embedding_fn.persist()
             except Exception as e:
-                logger.debug("Embedding cache persist failed: %s", e)
+                logger.warning("Embedding cache persist failed: %s", e)
 
     def delete(self, memory_id: str) -> None:
         """从向量索引中删除指定条目（包括分块）。
@@ -295,7 +317,7 @@ class VectorRetriever:
             else:
                 self._store.delete([memory_id])
         except Exception as e:
-            logger.debug("Vector delete failed for %s: %s", memory_id, e)
+            logger.warning("Vector delete failed for %s: %s", memory_id, e)
 
     def _split_chunks(self, text: str, chunk_size: int, overlap: int) -> list[str]:
         if self._encoder is not None:

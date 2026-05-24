@@ -53,8 +53,8 @@ class TestContextManager(unittest.TestCase):
         self.assertLess(sim, 0.5)
 
     def test_fingerprint_similarity_synonyms(self) -> None:
-        fp1 = ContextManager._content_fingerprint("我喜欢暗色主题")
-        fp2 = ContextManager._content_fingerprint("偏好深色模式")
+        fp1 = ContextManager._content_fingerprint("喜欢编程")
+        fp2 = ContextManager._content_fingerprint("喜欢开发")
         sim = ContextManager._fingerprint_similarity(fp1, fp2)
         self.assertGreater(sim, 0.5)
 

@@ -69,9 +69,6 @@ cache/
 *.sqlite
 *.sqlite3
 
-# Model files (large, local only)
-models/
-
 # Trae agent files (local only)
 .trae/
 

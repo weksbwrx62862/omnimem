@@ -2,12 +2,13 @@
 
 P0方案六：长期运行的一致性保障机制。
 定期检查并修复以下不一致：
-  1. 幽灵索引：index/retriever 中有但 store 中已不存在的条目
-  2. 漏索引：store 中有但 index/retriever 中缺失的条目
+  1. 幽灵索引：index/retriever 中有但 MetaStore 中已不存在的条目
+  2. 漏索引：MetaStore 中有但 index/retriever 中缺失的条目
   3. 归档残留：已归档记忆在检索索引中的残留
 
 设计原则：
-  - 只读审计优先，修复操作需显式调用 repair()
+  - 以 MetaStore 为唯一事实来源（Single Source of Truth）
+  - 只读审计优先，修复操作需显式调用 repair() 或 _repair_from_metastore()
   - 利用现有 store/index/retriever 接口，不引入新存储
   - 轻量级实现，避免全量扫描导致的长耗时阻塞
 """
@@ -46,6 +47,9 @@ class GovernanceAuditor:
     def run_full_audit(self, limit: int = 2000) -> dict[str, Any]:
         """执行全量一致性审计。
 
+        ★ 以 MetaStore 为唯一事实来源（Single Source of Truth），
+        检测 Index/Retriever 与 MetaStore 之间的不一致。
+
         Args:
             limit: 最多审计的条目数（防止大数据量时阻塞）
 
@@ -57,10 +61,10 @@ class GovernanceAuditor:
         ghost_in_retriever: list[str] = []
         missing_in_retriever: list[str] = []
 
-        # 1. 获取 store 中的有效记忆 ID（排除已归档）
-        store_entries = self._store.search(limit=limit)
-        store_ids: set[str] = {
-            e.get("memory_id", "") for e in store_entries if e.get("memory_id", "")
+        # ★ 1. 以 MetaStore 为基准获取有效记忆 ID
+        meta_entries = self._store._meta_store.get_all(limit=limit)
+        meta_ids: set[str] = {
+            e.get("memory_id", "") for e in meta_entries if e.get("memory_id", "")
         }
 
         # 2. 获取 index 中的条目
@@ -69,36 +73,46 @@ class GovernanceAuditor:
             e.get("memory_id", "") for e in index_entries if e.get("memory_id", "")
         }
 
-        # 3. 获取 retriever 中的条目（通过 BM25 文档计数 + 搜索验证）
-        # 简化策略：假设 retriever 与 index 大体一致，重点检查 store-index 差异
-        # 如果需要更精确的 retriever 审计，可在 future 中扩展
-
-        # 检测幽灵索引：index 有但 store 无
+        # 检测幽灵索引：index 有但 MetaStore 无
         for mid in index_ids:
-            if mid not in store_ids:
+            if mid not in meta_ids:
                 ghost_in_index.append(mid)
 
-        # 检测漏索引：store 有但 index 无
-        for mid in store_ids:
+        # 检测漏索引：MetaStore 有但 index 无
+        for mid in meta_ids:
             if mid not in index_ids:
                 missing_in_index.append(mid)
 
-        # 4. 检测已归档但在 index 中残留的条目
+        # 3. 检测已归档但在 index 中残留的条目
         try:
             archived = self._forgetting.get_archived_ids(limit=limit)
             for mid in archived:
                 if mid in index_ids:
                     ghost_in_index.append(mid)
-                # 简化：也检查 retriever，通过搜索 content 验证
                 if self._retriever.bm25_document_count > 0:
-                    # 若 BM25 中有该 ID 的文档，也视为幽灵
-                    # 实际实现中 HybridRetriever 未暴露 ID 列表，
-                    # 这里通过 store.get 辅助判断
                     entry = self._store.get(mid)
                     if entry is None and mid in index_ids:
                         ghost_in_retriever.append(mid)
         except Exception as e:
-            logger.debug("Audit archived check failed: %s", e)
+            logger.warning("Audit archived check failed: %s", e)
+
+        # 4. ChromaDB 条目数一致性检查（以 MetaStore 为基准）
+        chroma_count: int = 0
+        chroma_degraded: bool = False
+        try:
+            chroma_count = self._retriever._vector.count()
+            meta_count = len(meta_ids)
+            threshold = max(meta_count // 20, 5)
+            if abs(meta_count - chroma_count) > threshold:
+                chroma_degraded = True
+                logger.warning(
+                    "Audit: ChromaDB 条目数偏差超阈值 — meta=%d, chroma=%d, 阈值=%d",
+                    meta_count,
+                    chroma_count,
+                    threshold,
+                )
+        except Exception as e:
+            logger.warning("Audit ChromaDB count check failed: %s", e)
 
         total_issues = (
             len(ghost_in_index)
@@ -113,8 +127,10 @@ class GovernanceAuditor:
             "ghost_in_retriever": list(set(ghost_in_retriever)),
             "missing_in_retriever": list(set(missing_in_retriever)),
             "total_issues": total_issues,
-            "scanned_store": len(store_ids),
+            "scanned_meta": len(meta_ids),
             "scanned_index": len(index_ids),
+            "chroma_count": chroma_count,
+            "chroma_degraded": chroma_degraded,
         }
 
     def repair(self, audit_result: dict[str, Any]) -> int:
@@ -137,10 +153,10 @@ class GovernanceAuditor:
         for mid in audit_result.get("ghost_in_index", []):
             try:
                 if self._index.delete(mid):
-                    logger.debug("Auditor: removed ghost index %s", mid)
+                    logger.warning("Auditor: removed ghost index %s", mid)
                     fixed += 1
             except Exception as e:
-                logger.debug("Auditor: failed to remove ghost index %s: %s", mid, e)
+                logger.warning("Auditor: failed to remove ghost index %s: %s", mid, e)
 
         # 修复漏索引
         for mid in audit_result.get("missing_in_index", []):
@@ -176,26 +192,113 @@ class GovernanceAuditor:
                         "stored_at": entry.get("stored_at", ""),
                     },
                 )
-                logger.debug("Auditor: re-indexed missing entry %s", mid)
+                logger.warning("Auditor: re-indexed missing entry %s", mid)
                 fixed += 1
             except Exception as e:
-                logger.debug("Auditor: failed to re-index %s: %s", mid, e)
+                logger.warning("Auditor: failed to re-index %s: %s", mid, e)
 
         return fixed
 
     def quick_health_check(self) -> dict[str, Any]:
-        """快速健康检查：仅对比计数，不扫描全量 ID。
+        """快速健康检查：以 MetaStore 为基准对比计数，不扫描全量 ID。
 
         Returns:
             健康状态摘要
         """
-        store_count = len(self._store.get_all_for_indexing())
+        meta_count = self._store._meta_store.count()
         index_count = len(self._index.search_all_for_retrieval(limit=5000))
         retriever_count = self._retriever.bm25_document_count
 
         return {
-            "store_count": store_count,
+            "meta_count": meta_count,
             "index_count": index_count,
             "retriever_bm25_count": retriever_count,
-            "healthy": abs(store_count - index_count) <= max(store_count // 20, 5),
+            "healthy": abs(meta_count - index_count) <= max(meta_count // 20, 5),
         }
+
+    def _repair_from_metastore(self, limit: int = 2000) -> int:
+        """以 MetaStore 为唯一事实来源，修复 Index/Retriever 中的不一致数据。
+
+        遍历 MetaStore 中的所有 memory_id，检查 Index 和 Retriever 中
+        是否存在对应条目，缺失则补充。
+
+        Args:
+            limit: 最多处理的条目数
+
+        Returns:
+            成功修复的条目数
+        """
+        fixed = 0
+
+        # ★ 以 MetaStore 为基准获取所有记忆 ID
+        meta_entries = self._store._meta_store.get_all(limit=limit)
+        meta_ids: set[str] = {
+            e.get("memory_id", "") for e in meta_entries if e.get("memory_id", "")
+        }
+
+        # 获取 Index 中已有的 ID
+        index_entries = self._index.search_all_for_retrieval(limit=limit)
+        index_ids: set[str] = {
+            e.get("memory_id", "") for e in index_entries if e.get("memory_id", "")
+        }
+
+        # 遍历 MetaStore，检查 Index 和 Retriever 中的缺失
+        for mid in meta_ids:
+            entry = self._store.get(mid)
+            if not entry:
+                continue
+
+            # 检查 Index 缺失
+            if mid not in index_ids:
+                try:
+                    self._index.add(
+                        memory_id=mid,
+                        wing=entry.get("wing", ""),
+                        hall=entry.get("hall", entry.get("type", "fact")),
+                        room=entry.get("room", ""),
+                        content=entry.get("content", ""),
+                        summary=entry.get("summary", ""),
+                        type=entry.get("type", "fact"),
+                        confidence=entry.get("confidence", 3),
+                        privacy=entry.get("privacy", "personal"),
+                        scope=entry.get("privacy", "personal"),
+                        stored_at=entry.get("stored_at", ""),
+                        provenance="",
+                    )
+                    logger.info("Auditor._repair_from_metastore: 补充 Index 条目 %s", mid)
+                    fixed += 1
+                except Exception as e:
+                    logger.warning("Auditor._repair_from_metastore: 补充 Index 失败 %s: %s", mid, e)
+
+            # 检查 Retriever 缺失（通过 add 补充）
+            try:
+                self._retriever.add(
+                    entry.get("content", ""),
+                    memory_id=mid,
+                    metadata={
+                        "memory_id": mid,
+                        "type": entry.get("type", "fact"),
+                        "confidence": entry.get("confidence", 3),
+                        "scope": entry.get("privacy", "personal"),
+                        "privacy": entry.get("privacy", "personal"),
+                        "wing": entry.get("wing", ""),
+                        "room": entry.get("room", ""),
+                        "stored_at": entry.get("stored_at", ""),
+                    },
+                )
+            except Exception as e:
+                logger.warning("Auditor._repair_from_metastore: 补充 Retriever 失败 %s: %s", mid, e)
+
+        # 清理 Index 中 MetaStore 已不存在的幽灵条目
+        ghost_ids = index_ids - meta_ids
+        for mid in ghost_ids:
+            try:
+                if self._index.delete(mid):
+                    logger.info("Auditor._repair_from_metastore: 清理幽灵 Index 条目 %s", mid)
+                    fixed += 1
+            except Exception as e:
+                logger.warning("Auditor._repair_from_metastore: 清理幽灵 Index 失败 %s: %s", mid, e)
+
+        if fixed > 0:
+            logger.info("Auditor._repair_from_metastore: 共修复 %d 条不一致", fixed)
+        return fixed

@@ -32,24 +32,37 @@ class ContextBudget:
     # 预取阶段最大 token 数（注入到上下文的摘要）
     max_prefetch_tokens: int = 300
     # 每条记忆摘要最大字符数
-    max_summary_chars: int = 60
+    max_summary_chars: int = 60       # L0：符号摘要（prefetch 注入）
+    # L1：结构化概览（recall 返回）
+    max_overview_chars: int = 200     # ★ 新增：L1 概览最大字符数
     # 预取最多返回多少条
     max_prefetch_items: int = 8
     # 按需拉取（omni_detail）最大字符数
-    max_detail_chars: int = 500
+    max_detail_chars: int = 500       # L2：完整原文（omni_detail 拉取）
     # 去重相似度阈值
     dedup_similarity_threshold: float = 0.7
+    # ★ OPT: Mermaid 画布 token 预算比例（参考 TencentDB mmdMaxTokenRatio=0.2）
+    mmd_max_token_ratio: float = 0.2
+    # ★ OPT: 温和压缩触发比例（参考 TencentDB mildOffloadRatio=0.5）
+    mild_offload_ratio: float = 0.5
+    # ★ OPT: 激进压缩触发比例（参考 TencentDB aggressiveCompressRatio=0.85）
+    aggressive_compress_ratio: float = 0.85
 
 
 @dataclass
 class RefinedItem:
     """精炼后的记忆条目。"""
 
-    summary: str  # 精炼摘要（≤ max_summary_chars）
-    memory_id: str  # 原始记忆 ID，用于按需拉取细节
-    memory_type: str  # fact / preference / correction / ...
-    confidence: float  # 置信度
+    summary: str          # L0：符号摘要（≤60 字）
+    memory_id: str
+    memory_type: str
+    confidence: float
     source_type: str = ""  # kv_cache / vector / bm25 / graph
+    overview: str = ""     # ★ L1：结构化概览（≤200 字）
+    # ★ OPT: 溯源链 node_id，支持从摘要下钻到原文
+    trace_node_id: str = ""
+    # ★ OPT: 底层原文引用路径
+    ref_path: str = ""
 
 
 class ContextManager:
@@ -192,6 +205,78 @@ class ContextManager:
             truncated = truncated[:last_punct]
         return truncated.strip()
 
+    @staticmethod
+    def refine_overview(raw_content: str, max_chars: int = 200) -> str:
+        """将原始记忆内容精炼为结构化概览（L1 层）。
+        
+        内化 OpenViking overview() 的设计：
+        - L0 summary: 一句话核心事实（60 字）
+        - L1 overview: 结构化概览，保留关键条件和上下文（200 字）
+        - L2 full: 完整原文
+        
+        策略：
+        1. 如果内容 ≤ max_chars，直接返回
+        2. 提取关键句子（含条件/因果/时序标记的句子）
+        3. 拼接关键句子，截断到 max_chars
+        """
+        content = raw_content.strip()
+        if len(content) <= max_chars:
+            return content
+        
+        # 剥离结构化标记
+        for pattern, replacement in ContextManager._COMPRESSION_TEMPLATES:
+            matched = re.search(pattern, content)
+            if matched:
+                compressed = re.sub(pattern, replacement, content, count=1)
+                if len(compressed.strip()) <= max_chars:
+                    return compressed.strip()
+        
+        # 提取关键句子：含信号词的句子优先
+        content_for_split = content.replace("\n", " ").replace("\r", " ")
+        sentences = re.split(r"[。！？.!?]", content_for_split)
+        
+        # 信号词权重
+        signal_words = [
+            "但是", "不过", "然而", "如果", "除非", "因为", "所以",
+            "注意", "重要", "关键", "必须", "不要",
+            "but", "however", "if", "because", "important", "note",
+            "must", "should", "don't",
+        ]
+        
+        scored_sentences = []
+        for s in sentences:
+            s = s.strip()
+            if len(s) < 3:
+                continue
+            score = 0
+            s_lower = s.lower()
+            for sw in signal_words:
+                if sw in s_lower:
+                    score += 2
+            scored_sentences.append((s, score))
+        
+        # 按信号词权重降序 + 原文顺序排列
+        # 使用 enumerate 保持原始顺序索引
+        for idx, (s, score) in enumerate(scored_sentences):
+            pass  # 已经在列表中
+        scored_sentences.sort(key=lambda x: (-x[1], content_for_split.find(x[0])))
+        
+        # 拼接到预算内
+        result_parts = []
+        used_chars = 0
+        for s, _ in scored_sentences:
+            if used_chars + len(s) + 1 <= max_chars:
+                result_parts.append(s)
+                used_chars += len(s) + 1
+            else:
+                break
+        
+        if not result_parts:
+            # 回退：取前 max_chars
+            return content_for_split[:max_chars].strip()
+        
+        return "。".join(result_parts) + "。"
+
     # ─── 去重 (Dedup) ─────────────────────────────────────────
 
     _SYNONYM_MAP: dict[str, str] = {}
@@ -202,7 +287,10 @@ class ContextManager:
 
         加载策略：
           1. 尝试从 config/synonyms.json 加载
-          2. 加载失败时回退到空字典并记录 warning
+          2. 将一对多格式（key→list[str]）展开为扁平格式（word→key）
+             即每个同义词值映射回其主词 key
+          3. key 自身也映射到自身
+          4. 加载失败时回退到空字典并记录 warning
         """
         result: dict[str, str] = {}
         config_path = os.path.join(
@@ -210,11 +298,18 @@ class ContextManager:
         )
         try:
             with open(config_path, "r", encoding="utf-8") as f:
-                external: dict[str, str] = json.load(f)
+                external = json.load(f)
             if isinstance(external, dict):
-                result.update(external)
+                for key, val in external.items():
+                    result[key] = key
+                    if isinstance(val, list):
+                        for v in val:
+                            if isinstance(v, str) and v not in result:
+                                result[v] = key
+                    elif isinstance(val, str) and val not in result:
+                        result[val] = key
         except FileNotFoundError:
-            logger.debug("synonyms.json not found at %s", config_path)
+            logger.warning("synonyms.json not found at %s", config_path)
         except Exception:
             logger.warning("Failed to load synonyms.json from %s", config_path)
         return result
@@ -249,7 +344,12 @@ class ContextManager:
         """将词归一化：先查同义映射，再返回原词。"""
         if not cls._SYNONYM_MAP:
             cls._SYNONYM_MAP = cls._load_synonym_map()
-        return cls._SYNONYM_MAP.get(word, word)
+        syn = cls._SYNONYM_MAP.get(word)
+        if isinstance(syn, list):
+            return syn[0] if syn else word
+        if isinstance(syn, str):
+            return syn
+        return word
 
     @classmethod
     def _tokenize_chinese(cls, content: str) -> list[str]:
@@ -546,7 +646,7 @@ class ContextManager:
                         self._fp_to_summary.get(existing_fp, ""),
                     )
                     if emb_sim > 0.92:
-                        logger.debug(
+                        logger.warning(
                             "Embedding dedup: '%s' ~ '%s' (emb_sim=%.3f)",
                             item.summary[:30],
                             self._fp_to_summary.get(existing_fp, "")[:30],
@@ -622,13 +722,13 @@ class ContextManager:
 
             # 2. 去重
             if self._is_duplicate(item):
-                logger.debug("ContextManager: skipped duplicate '%s'", summary[:30])
+                logger.warning("ContextManager: skipped duplicate '%s'", summary[:30])
                 continue
 
             # 3. 预算检查
             estimated_chars = len(summary) + 20  # 格式开销
             if total_chars + estimated_chars > self._budget.max_prefetch_tokens:
-                logger.debug(
+                logger.warning(
                     "ContextManager: budget exceeded, stopping at %d items", len(refined_items)
                 )
                 break

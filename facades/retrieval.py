@@ -34,6 +34,9 @@ class RetrievalFacade:
             enable_reranker=config.get("enable_reranker", False),
             embedding_model_path=embedding_model_path,
             reranker_model_path=reranker_model_path,
+            recall_timeout_ms=config.get("recall_timeout_ms", 5000),
+            recall_strategy=config.get("recall_strategy", "hybrid"),
+            query_cache_ttl=config.get("query_cache_ttl", 60.0),
         )
 
         # 上下文管理
@@ -90,4 +93,8 @@ class RetrievalFacade:
 
     def close(self) -> None:
         """关闭资源。"""
+        if hasattr(self, "_feedback") and self._feedback:
+            self._feedback.close()
+        if hasattr(self, "_retriever") and self._retriever and hasattr(self._retriever, "close"):
+            self._retriever.close()
         self._prefetch_executor.shutdown(wait=False)

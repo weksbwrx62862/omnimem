@@ -29,6 +29,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from omnimem.utils.migration import SchemaMigrator
+
 logger = logging.getLogger(__name__)
 
 
@@ -222,19 +224,25 @@ class ReflectEngine:
         db_path = data_dir / "reflect.db"
         self._conn = sqlite3.connect(str(db_path), check_same_thread=False)
         self._conn.execute("PRAGMA journal_mode=WAL")
-        self._conn.execute("""
-            CREATE TABLE IF NOT EXISTS reflections (
-                reflection_id TEXT PRIMARY KEY,
-                query TEXT NOT NULL,
-                observation TEXT,
-                mental_model TEXT,
-                confidence REAL,
-                disposition TEXT,
-                source_ids TEXT,
-                created_at TEXT,
-                metadata TEXT
-            )
-        """)
+        self._conn.execute("PRAGMA busy_timeout=5000")
+        migrator = SchemaMigrator(self._conn)
+        migrator.migrate(
+            table_name="reflections",
+            create_sql="""
+                CREATE TABLE IF NOT EXISTS reflections (
+                    reflection_id TEXT PRIMARY KEY,
+                    query TEXT NOT NULL,
+                    observation TEXT,
+                    mental_model TEXT,
+                    confidence REAL,
+                    disposition TEXT,
+                    source_ids TEXT,
+                    created_at TEXT,
+                    metadata TEXT
+                )
+            """,
+            migrations=[],
+        )
         self._conn.execute("""
             CREATE INDEX IF NOT EXISTS idx_reflect_query ON reflections(query)
         """)
@@ -321,7 +329,7 @@ class ReflectEngine:
             ]
             return [dict(zip(keys, row, strict=False)) for row in rows]
         except Exception as e:
-            logger.debug("Reflect history query failed: %s", e)
+            logger.warning("Reflect history query failed: %s", e)
             return []
 
     def get_stats(self) -> dict[str, Any]:
@@ -366,7 +374,7 @@ class ReflectEngine:
                 if results:
                     return results  # type: ignore[no-any-return]
             except Exception as e:
-                logger.debug("Recall function failed: %s", e)
+                logger.warning("Recall function failed: %s", e)
 
         # 从 Consolidation 查询经验事实
         if self._consolidation:
@@ -478,6 +486,7 @@ class ReflectEngine:
             depth = max(depth, 2)
         else:
             # LLM 不可用 → 回退到规则归纳
+            logger.warning("LLM unavailable, degrading to rule-based synthesis")
             observation, mental_model, confidence = self._rule_based_synthesize(
                 query, ctx, confidence
             )
@@ -513,7 +522,7 @@ class ReflectEngine:
             (observation, mental_model, confidence) 或 None（LLM 不可用时）
         """
         if self._llm_client is None and self._llm_fn is None:
-            logger.debug("ReflectEngine: no LLM client available, skipping LLM call")
+            logger.warning("ReflectEngine: no LLM client available, skipping LLM call")
             return None
 
         # 构建推理 prompt
@@ -529,19 +538,20 @@ class ReflectEngine:
         evidence_block = "\n".join(f"{i + 1}. {c}" for i, c in enumerate(contents[:15]))
 
         prompt = (
-            f"请对以下关于「{query}」的记忆内容进行深度反思和归纳推理。\n\n"
-            f"推理要求：\n"
-            f"- {skepticism_hint}\n"
-            f"- 从表面事实中提炼深层规律和模式\n"
-            f"- 识别矛盾或不确定性\n"
-            f"- 用简洁的中文表达，避免罗列关键词\n\n"
-            f"记忆内容：\n{evidence_block}\n\n"
-            f"请按以下格式输出（严格遵守）：\n"
-            f"【观察】\n"
-            f"（对记忆内容的归纳性总结，2-4句话，提炼核心发现而非复述原文）\n\n"
-            f"【心智模型】\n"
-            f"（从观察中提炼的规律性认知，1-2句话，描述因果关系或模式）\n\n"
-            f"【置信度】\n"
+            f"请对以下关于「{query}」的记忆内容进行深度反思和归纳推理。\\n\\n"
+            f"推理要求：\\n"
+            f"- {skepticism_hint}\\n"
+            f"- 从表面事实中提炼深层规律和模式\\n"
+            f"- 识别矛盾或不确定性\\n"
+            f"- 用简洁的中文表达，避免罗列关键词\\n"
+            f"- 心智模型必须是完整的因果陈述句，禁止输出逗号分隔的关键词列表\\n\\n"
+            f"记忆内容：\\n{evidence_block}\\n\\n"
+            f"请按以下格式输出（严格遵守）：\\n"
+            f"【观察】\\n"
+            f"（对记忆内容的归纳性总结，2-4句话，提炼核心发现而非复述原文）\\n\\n"
+            f"【心智模型】\\n"
+            f"（从观察中提炼的规律性认知，1-2个完整的因果陈述句，描述因果关系或模式）\\n\\n"
+            f"【置信度】\\n"
             f"（0.0-1.0的数字，表示对上述结论的确信程度）"
         )
 
@@ -586,6 +596,7 @@ class ReflectEngine:
                             max_retries,
                         )
                         continue
+                    logger.warning("LLM generation failed, degrading to rule-based")
                     return None
 
                 # ★ R17修复：检测截断 — 如果输出没有结束标记（【置信度】），可能被截断
@@ -638,6 +649,7 @@ class ReflectEngine:
                 if attempt < max_retries - 1:
                     continue
 
+        logger.warning("LLM generation failed, degrading to rule-based")
         return None
 
     @staticmethod
@@ -1072,7 +1084,7 @@ class ReflectEngine:
                 )
                 self._conn.commit()
             except Exception as e:
-                logger.debug("Reflect persist failed: %s", e)
+                logger.warning("Reflect persist failed: %s", e)
 
     # ─── 内部辅助 ─────────────────────────────────────────────
 

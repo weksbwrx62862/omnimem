@@ -80,6 +80,7 @@ class SagaCoordinator:
         self._base_backoff = base_backoff
         self._max_backoff = max_backoff
         self._total_retries = 0
+        self._dead_letters: list[dict[str, Any]] = []
         if pending_path and pending_path.exists():
             self._load_pending()
 
@@ -103,7 +104,7 @@ class SagaCoordinator:
                 result = step.action()
                 completed.append(step.name)
                 step_results[step.name] = result
-                logger.debug("Saga step '%s' OK for %s", step.name, memory_id)
+                logger.warning("Saga step '%s' OK for %s", step.name, memory_id)
             except Exception as e:
                 logger.warning(
                     "Saga step '%s' failed for %s: %s",
@@ -148,6 +149,74 @@ class SagaCoordinator:
             "max_retry": self._max_retry,
         }
 
+    def get_dead_letters(self) -> list[dict[str, Any]]:
+        """获取所有 dead_letter 记录（超限未重试成功的记录）。"""
+        return list(self._dead_letters)
+
+    def _retry_pending_impl(
+        self,
+        step_actions: dict[str, Callable[[str], Any]],
+        backoff_enabled: bool = True,
+    ) -> int:
+        """批量重试 pending 任务的内部实现。
+
+        Args:
+            step_actions: 步骤名 → (memory_id) -> Any 的映射。
+            backoff_enabled: 是否启用指数退避等待。
+
+        Returns:
+            成功修复的条目数
+        """
+        if not self._pending:
+            return 0
+
+        label = "retry" if backoff_enabled else "auto-retry"
+        fixed = 0
+        still_pending: list[dict[str, Any]] = []
+
+        for record in self._pending:
+            memory_id = record.get("memory_id", "")
+            failed_step = record.get("failed_step", "")
+            retry_count = record.get("retry_count", 0)
+            action = step_actions.get(failed_step)
+
+            if not action:
+                logger.warning("No retry action for step '%s', keeping pending", failed_step)
+                still_pending.append(record)
+                continue
+
+            if retry_count >= self._max_retry:
+                record["dead_letter_reason"] = "exceeded_max_retry"
+                self._dead_letters.append(record)
+                logger.warning(
+                    "Saga record %s step '%s' exceeded max retry (%d) — moved to dead_letter. Error: %s",
+                    memory_id, failed_step, self._max_retry, record.get("error", "unknown"),
+                )
+                continue
+
+            if backoff_enabled:
+                backoff = min(self._base_backoff * (2 ** retry_count), self._max_backoff)
+                time.sleep(backoff)
+
+            try:
+                action(memory_id)
+                logger.info("Saga %s OK: %s step '%s' (attempt %d)", label, memory_id, failed_step, retry_count + 1)
+                self._total_retries += 1
+                fixed += 1
+            except Exception as e:
+                record["retry_count"] = retry_count + 1
+                record["last_error"] = str(e)
+                logger.warning(
+                    "Saga %s failed: %s step '%s' (attempt %d/%d): %s",
+                    label, memory_id, failed_step, retry_count + 1, self._max_retry, e,
+                )
+                self._total_retries += 1
+                still_pending.append(record)
+
+        self._pending = still_pending
+        self._persist_pending()
+        return fixed
+
     def retry_pending(
         self,
         step_actions: dict[str, Callable[[str], Any]],
@@ -160,57 +229,23 @@ class SagaCoordinator:
         Returns:
             成功修复的条目数
         """
-        if not self._pending:
-            return 0
+        return self._retry_pending_impl(step_actions, backoff_enabled=True)
 
-        fixed = 0
-        still_pending: list[dict[str, Any]] = []
-        dropped = 0
+    def auto_retry_pending(
+        self,
+        step_actions: dict[str, Callable[[str], Any]],
+    ) -> int:
+        """启动时自动重试 pending 任务，无指数退避。
 
-        for record in self._pending:
-            memory_id = record.get("memory_id", "")
-            failed_step = record.get("failed_step", "")
-            retry_count = record.get("retry_count", 0)
-            action = step_actions.get(failed_step)
+        适合在 provider.initialize() 末尾调用，不需要退避等待。
 
-            if not action:
-                logger.debug("No retry action for step '%s', keeping pending", failed_step)
-                still_pending.append(record)
-                continue
+        Args:
+            step_actions: 步骤名 → (memory_id) -> Any 的映射。
 
-            if retry_count >= self._max_retry:
-                logger.error(
-                    "Saga record %s step '%s' exceeded max retry (%d) — dropped. Error: %s",
-                    memory_id, failed_step, self._max_retry, record.get("error", "unknown"),
-                )
-                dropped += 1
-                continue
-
-            # 指数退避
-            backoff = min(self._base_backoff * (2 ** retry_count), self._max_backoff)
-            time.sleep(backoff)
-
-            try:
-                action(memory_id)
-                logger.info("Saga retry OK: %s step '%s' (attempt %d)", memory_id, failed_step, retry_count + 1)
-                self._total_retries += 1
-                fixed += 1
-            except Exception as e:
-                record["retry_count"] = retry_count + 1
-                record["last_error"] = str(e)
-                logger.warning(
-                    "Saga retry failed: %s step '%s' (attempt %d/%d): %s",
-                    memory_id, failed_step, retry_count + 1, self._max_retry, e,
-                )
-                self._total_retries += 1
-                still_pending.append(record)
-
-        if dropped > 0:
-            logger.error("Dropped %d saga records after exceeding max retry (%d)", dropped, self._max_retry)
-
-        self._pending = still_pending
-        self._persist_pending()
-        return fixed
+        Returns:
+            成功修复的条目数
+        """
+        return self._retry_pending_impl(step_actions, backoff_enabled=False)
 
     def clear_pending(self) -> int:
         """清空 pending 队列（谨慎使用）。返回清空的条目数。"""

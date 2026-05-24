@@ -132,6 +132,28 @@ class SecurityValidator:
         (r"authorized_keys", "ssh_backdoor"),
         (r"\$HOME/\.ssh|\~/\.ssh", "ssh_access"),
         (r"\$HOME/\.hermes/\.env|\~/\.hermes/.env", "hermes_env"),
+        (r"忽略.{0,4}(之前|先前|上面|上文|以上).{0,4}(指令|提示|规则|限制|约束)", "prompt_injection_zh"),
+        (r"你现在是.{0,6}(黑客|恶意|DAN|无限制|越狱)", "role_hijack_zh"),
+        (r"忘掉.{0,4}(所有|一切).{0,4}(限制|规则|约束)", "forget_context_zh"),
+        (r"(导出|输出|显示|打印|泄露).{0,4}(所有|全部).{0,4}(记忆|数据|内容|信息)", "exfil_zh"),
+        (r"(假装|扮演|模拟).{0,4}(你是|为).{0,4}(DAN|黑客|恶意|无限制)", "bypass_restrictions_zh"),
+        (r"(绕过|突破|无视|忽略).{0,4}(安全|限制|过滤|检查|防护)", "bypass_restrictions_zh"),
+    ]
+
+    # ─── Trivial content patterns (content fencing) ───
+    _TRIVIAL_MIN_CONTENT_LENGTH: int = 4  # 最少有意义字符数（排除空白）
+    _TRIVIAL_MAX_NOISE_RATIO: float = 0.6  # 最大噪音比例（符号/数字占比）
+
+    # 无信息量正则模式
+    _TRIVIAL_PATTERNS: list[tuple[str, str]] = [
+        (r"^[\s\d]+$", "Whitespace/digits only"),
+        (r"^[\W_]+$", "Symbols only"),
+        (r"^(ok|yes|no|done|good|bad|test|debug|hello|hi|thanks|thx|嗯|好|行|对|是|否)\s*$", "Single trivial word"),
+        (r"^(.)\1{10,}$", "Repeated character"),
+        (r"^[a-zA-Z]{1,2}$", "Too short (1-2 chars)"),
+        (r"^(DEBUG|INFO|WARN|ERROR|TRACE)\s", "Log line prefix only"),
+        (r"^[0-9a-fA-F]{8,}$", "Hex string only"),
+        (r"^\{[^}]*\}$", "Bare JSON object"),
     ]
 
     # ─── Public API ─────────────────────────────────────────────
@@ -192,7 +214,7 @@ class SecurityValidator:
     def is_memory_summary_item(cls, text: str) -> bool:
         """Check if text is a memory summary list item (e.g., '- [fact] ...')."""
         return bool(
-            re.match(r"^\s*- \[(fact|preference|correction|skill|procedural|event)\]", text)
+            re.match(r"^\s*- \[(fact|preference|correction|skill|procedural|event|action|reasoning)\]", text)
         )
 
     @classmethod
@@ -204,6 +226,82 @@ class SecurityValidator:
     def is_assistant_echo(cls, text: str) -> bool:
         """Check if text is an assistant echo."""
         return text.startswith("Assistant:")
+
+    @classmethod
+    def is_trivial_content(cls, text: str) -> bool:
+        """Check if content is trivial / non-informative.
+
+        Returns True if the content should be rejected for being noise.
+        """
+        if not text or not isinstance(text, str):
+            return True
+
+        stripped = text.strip()
+        if not stripped:
+            return True
+
+        # 1. Pattern match against trivial patterns
+        for pattern, _reason in cls._TRIVIAL_PATTERNS:
+            if re.match(pattern, stripped, re.IGNORECASE):
+                return True
+
+        # 2. Content length check (meaningful chars only, strip whitespace)
+        meaningful = stripped.replace(" ", "").replace("\n", "").replace("\t", "")
+        if len(meaningful) < cls._TRIVIAL_MIN_CONTENT_LENGTH:
+            return True
+
+        # 3. Noise ratio check (symbols + digits / total meaningful chars)
+        if len(meaningful) > 0:
+            noise_chars = sum(1 for c in meaningful if not c.isalpha() and not c.isalnum())
+            # CJK characters are alnum but may be miscounted. Allow CJK.
+            alpha_count = sum(1 for c in meaningful
+                            if c.isalpha() or ('\u4e00' <= c <= '\u9fff'))
+            if alpha_count == 0 and len(meaningful) > 2:
+                return True  # No alphabetic/CJK chars at all
+            # If more than threshold is noise
+            if noise_chars / len(meaningful) > cls._TRIVIAL_MAX_NOISE_RATIO:
+                return True
+
+        return False
+
+    @classmethod
+    def get_content_quality(cls, text: str) -> float:
+        """Calculate content quality score (0.0 to 1.0).
+
+        Based on: length, alpha diversity, CJK presence, structure.
+        Higher = more informative.
+        """
+        if not text or not isinstance(text, str):
+            return 0.0
+
+        stripped = text.strip()
+        if len(stripped) < 10:
+            return max(0.0, len(stripped) / 20.0)
+
+        score = 0.5  # base
+
+        # Length bonus
+        if len(stripped) > 50:
+            score += 0.1
+        if len(stripped) > 100:
+            score += 0.1
+
+        # Alpha diversity bonus (unique chars / total meaningful chars)
+        meaningful = "".join(c for c in stripped if c.isalnum() or '\u4e00' <= c <= '\u9fff')
+        if len(meaningful) > 5:
+            unique_ratio = len(set(meaningful)) / len(meaningful)
+            score += min(unique_ratio * 0.2, 0.15)
+
+        # CJK presence bonus
+        cjk_count = sum(1 for c in stripped if '\u4e00' <= c <= '\u9fff')
+        if cjk_count > 2:
+            score += 0.05
+
+        # Structure bonus (has newlines = structured content)
+        if "\n" in stripped:
+            score += 0.05
+
+        return min(score, 1.0)
 
     @classmethod
     def should_store(cls, text: str) -> tuple[bool, str | None]:
@@ -219,7 +317,7 @@ class SecurityValidator:
 
         # 1. Invisible character check (raw text — normalization would hide them)
         if reason := cls.check_invisible_chars(text):
-            logger.debug("SecurityValidator.should_store blocked: %s", reason)
+            logger.warning("SecurityValidator.should_store blocked: %s", reason)
             return False, reason
 
         # 2. System injection markers (normalized to catch encoding bypasses)
@@ -241,6 +339,19 @@ class SecurityValidator:
         # 6. Tool invocation injection
         if cls.is_tool_injection(text):
             return False, "Tool invocation injection"
+
+        # 7. Threat pattern scan (prompt injection, exfil, etc.)
+        if reason := cls.scan_threats(text):
+            return False, reason
+
+        # 8. Trivial / non-informative content
+        if cls.is_trivial_content(text):
+            return False, "Trivial or non-informative content"
+
+        # 9. Content quality floor
+        quality = cls.get_content_quality(text)
+        if quality < 0.1:
+            return False, f"Content quality too low ({quality:.2f})"
 
         return True, None
 

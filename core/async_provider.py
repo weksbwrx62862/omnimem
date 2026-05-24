@@ -5,6 +5,8 @@ P2方案五：为 Hermes asyncio 事件循环提供非阻塞接口。
   1. 零侵入：不修改 OmniMemProvider 的任何同步代码
   2. 镜像接口：所有公共方法提供 async 版本
   3. 线程池隔离：使用独立 ThreadPoolExecutor，避免阻塞事件循环
+  4. 原生异步：memorize_async/recall_async/reflect_async/govern_async
+     使用 asyncio.to_thread 包装同步操作，提供真正的异步接口
 
 所有耗时操作（检索、存储、Saga 执行、LLM 调用）都委托到线程池，
 在 asyncio 事件循环中通过 run_in_executor 异步执行。
@@ -13,6 +15,7 @@ P2方案五：为 Hermes asyncio 事件循环提供非阻塞接口。
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
@@ -126,6 +129,32 @@ class AsyncOmniMemProvider:
             self._provider.on_pre_compress,
             messages,
         )
+
+    # ─── 原生异步接口（asyncio.to_thread 包装） ──────────────────
+
+    async def memorize_async(self, content: str, memory_type: str = "fact", **kwargs) -> dict:
+        """异步记忆写入：使用 asyncio.to_thread 包装同步操作。"""
+        args = {"content": content, "memory_type": memory_type, **kwargs}
+        raw = await asyncio.to_thread(self._provider._handle_memorize, args)
+        return json.loads(raw)
+
+    async def recall_async(self, query: str, mode: str = "rag", **kwargs) -> dict:
+        """异步检索：使用 asyncio.to_thread 包装同步操作。"""
+        args = {"query": query, "mode": mode, **kwargs}
+        raw = await asyncio.to_thread(self._provider._handle_recall, args)
+        return json.loads(raw)
+
+    async def reflect_async(self, query: str, **kwargs) -> dict:
+        """异步反思：使用 asyncio.to_thread 包装同步操作。"""
+        args = {"query": query, **kwargs}
+        raw = await asyncio.to_thread(self._provider._handle_reflect, args)
+        return json.loads(raw)
+
+    async def govern_async(self, action: str, **kwargs) -> dict:
+        """异步治理：使用 asyncio.to_thread 包装同步操作。"""
+        args = {"action": action, **kwargs}
+        raw = await asyncio.to_thread(self._provider._handle_govern, args)
+        return json.loads(raw)
 
     # ─── 治理/诊断接口 ────────────────────────────────────────
 

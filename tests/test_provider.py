@@ -49,7 +49,7 @@ class TestOmniMemProviderStatic(unittest.TestCase):
         self.assertEqual(cleaned, text)
 
     def test_compute_text_similarity(self) -> None:
-        sim = OmniMemProvider._compute_text_similarity("用户喜欢Python", "用户偏好Python")
+        sim = OmniMemProvider._compute_text_similarity("喜欢Python", "爱Python")
         self.assertGreater(sim, 0.5)
 
     def test_compute_text_similarity_different(self) -> None:

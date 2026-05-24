@@ -1,15 +1,21 @@
 import sqlite3
 import json
+import logging
 import time
 from pathlib import Path
 from typing import Any
 import threading
 
+from omnimem.utils.migration import SchemaMigrator
+
+logger = logging.getLogger(__name__)
+
 class AuditLogger:
-    def __init__(self, governance_dir: Path):
+    def __init__(self, governance_dir: Path, max_rows: int = 100000):
         self._db_path = governance_dir / "audit_log.db"
         self._lock = threading.RLock()
         self._conn: sqlite3.Connection | None = None
+        self._max_rows = max_rows
         self._ensure_table()
 
     def _ensure_table(self) -> None:
@@ -17,17 +23,22 @@ class AuditLogger:
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA synchronous=NORMAL")
         conn.execute("PRAGMA busy_timeout=5000")
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS audit_log (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                timestamp REAL NOT NULL,
-                operation TEXT NOT NULL,
-                memory_id TEXT,
-                details TEXT,
-                result TEXT,
-                instance_id TEXT
-            )
-        """)
+        migrator = SchemaMigrator(conn)
+        migrator.migrate(
+            table_name="audit_log",
+            create_sql="""
+                CREATE TABLE IF NOT EXISTS audit_log (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    timestamp REAL NOT NULL,
+                    operation TEXT NOT NULL,
+                    memory_id TEXT,
+                    details TEXT,
+                    result TEXT,
+                    instance_id TEXT
+                )
+            """,
+            migrations=[],
+        )
         conn.execute("CREATE INDEX IF NOT EXISTS idx_audit_timestamp ON audit_log(timestamp)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_audit_operation ON audit_log(operation)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_audit_memory_id ON audit_log(memory_id)")
@@ -46,8 +57,18 @@ class AuditLogger:
                     (time.time(), operation, memory_id, json.dumps(details, ensure_ascii=False) if details else None, result, instance_id),
                 )
                 self._conn.commit()
-            except Exception:
-                pass
+                self._rotate_if_needed()
+            except Exception as e:
+                logger.warning("Audit log write failed: %s", e)
+
+    def _rotate_if_needed(self):
+        try:
+            count = self._conn.execute("SELECT COUNT(*) FROM audit_log").fetchone()[0]
+            if count > self._max_rows:
+                self._conn.execute("DELETE FROM audit_log WHERE rowid IN (SELECT rowid FROM audit_log ORDER BY rowid ASC LIMIT ?)", (count - self._max_rows,))
+                self._conn.commit()
+        except Exception as e:
+            logger.warning("AuditLog _rotate_if_needed failed: %s", e)
 
     def query(self, operation: str | None = None, memory_id: str | None = None, from_time: float | None = None, to_time: float | None = None, limit: int = 100) -> list[dict]:
         conditions = []

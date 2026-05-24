@@ -21,6 +21,7 @@ class ToolRouter:
         compact_fn: Callable[[dict[str, Any]], str],
         detail_fn: Callable[[dict[str, Any]], str],
         memory_compat_fn: Callable[[dict[str, Any]], str],
+        record_action_fn: Callable[[dict[str, Any]], str] | None = None,
     ) -> None:
         self._routes: dict[str, Callable[[dict[str, Any]], str]] = {
             "omni_memorize": memorize_fn,
@@ -31,6 +32,8 @@ class ToolRouter:
             "omni_detail": detail_fn,
             "memory": memory_compat_fn,
         }
+        if record_action_fn is not None:
+            self._routes["omni_record_action"] = record_action_fn
 
     def route(self, tool_name: str, args: dict[str, Any]) -> str:
         handler = self._routes.get(tool_name)
@@ -93,6 +96,7 @@ def handle_detail(
     feedback: Any,
     turn_count: int,
     last_query: str,
+    trace_chain: Any = None,  # ★ OPT: TraceChain 实例，用于 drill_down
 ) -> str:
     action = args.get("action", "list")
 
@@ -174,7 +178,7 @@ def handle_detail(
                         }
                     )
         except Exception as e:
-            logger.debug("OmniMem events query failed: %s", e)
+            logger.warning("OmniMem events query failed: %s", e)
 
         events.sort(key=lambda x: x.get("turn", 0))
 
@@ -186,6 +190,31 @@ def handle_detail(
                 "count": len(events),
                 "events": events[:20],
             },
+            ensure_ascii=False,
+        )
+
+    elif action == "drill_down":
+        # ★ OPT: 按 node_id 下钻溯源链，恢复完整原文
+        node_id = args.get("node_id", "")
+        if not node_id:
+            return json.dumps(
+                {"status": "error", "message": "node_id is required for action='drill_down'"},
+                ensure_ascii=False,
+            )
+        if trace_chain:
+            chain = trace_chain.drill_down(node_id)
+            full_text = trace_chain.recover_full_text(node_id)
+            return json.dumps(
+                {
+                    "status": "ok",
+                    "node_id": node_id,
+                    "trace_chain": chain,
+                    "full_text": full_text,
+                },
+                ensure_ascii=False,
+            )
+        return json.dumps(
+            {"status": "error", "message": "Trace chain not available"},
             ensure_ascii=False,
         )
 
@@ -302,6 +331,7 @@ def run_prefetch(
     privacy: Any,
     prefetch_cache: str,
     prefetch_lock: Any,
+    forgetting: Any = None,
 ) -> tuple[str, str]:
     context_manager.reset_for_new_turn()
 
@@ -328,6 +358,16 @@ def run_prefetch(
         max_tokens = config.get("max_prefetch_tokens", 300)
         live_results = retriever.search(query, max_tokens=max_tokens)
 
+        # ★ OPT: prefetch 结果记录访问（可配置，驱动遗忘曲线热度分类）
+        if config.get("prefetch_record_access", False) and forgetting and live_results:
+            for r in live_results:
+                mid = r.get("memory_id", "")
+                if mid:
+                    try:
+                        forgetting.record_access(mid)
+                    except Exception as e:
+                        logger.warning("ToolRouter prefetch record_access failed: %s", e)
+
         if knowledge_graph:
             try:
                 graph_results = knowledge_graph.graph_search(query, max_depth=2, limit=10)
@@ -340,7 +380,7 @@ def run_prefetch(
                         gr["confidence"] = gr.get("confidence", 0.5)
                     live_results.extend(graph_results[:5])
             except Exception as e:
-                logger.debug("OmniMem graph prefetch failed: %s", e)
+                logger.warning("OmniMem graph prefetch failed: %s", e)
 
         live_results = temporal_decay.apply(live_results)
         live_results = privacy.filter(live_results, session_id=session_id)
@@ -384,7 +424,7 @@ def run_queue_prefetch(
         with prefetch_lock:
             return serialized
     except Exception as e:
-        logger.debug("OmniMem background prefetch failed: %s", e)
+        logger.warning("OmniMem background prefetch failed: %s", e)
         return ""
 
 
@@ -429,16 +469,44 @@ def init_llm_client(config: Any) -> Any:
         creds["base_url"] = config_creds.get("base_url", "")
     if not creds.get("api_key"):
         creds["api_key"] = config_creds.get("api_key", "")
-    # ★ R25修复ARCH-1：model 选择策略
-    # 优先使用 provider 支持的 models 列表中的第一个（与 base_url 匹配），
-    # 而非 model.default（可能与 provider 不匹配，如 glm-5.1 vs deepseek API）
-    provider_models = config_creds.get("models", [])
+    # ★ R25修复ARCH-1 + P0-fix：model 选择策略
+    # 必须匹配实际 base_url 对应的 provider 的 models 列表，
+    # 否则会把 mimo-v2.5-pro 发给 deepseek API（400错误）
+    actual_base_url = creds.get("base_url", "")
     default_model = config_creds.get("model") or config.get("default", "glm-5.1")
-    if provider_models:
-        model = provider_models[0]
-        logger.debug("Using provider model %s (available: %s, default: %s)", model, provider_models, default_model)
+
+    # 从 config providers 中找到与实际 base_url 匹配的 provider，取其 models
+    matched_models: list[str] = []
+    try:
+        from pathlib import Path
+        import yaml
+        cfg_file = Path.home() / ".hermes" / "config.yaml"
+        if cfg_file.exists():
+            cfg = yaml.safe_load(cfg_file.read_text(encoding="utf-8"))
+            for _pname, pval in (cfg.get("providers") or {}).items():
+                if isinstance(pval, dict) and pval.get("base_url") == actual_base_url:
+                    matched_models = pval.get("models", [])
+                    if matched_models:
+                        logger.warning("Matched provider '%s' for base_url %s, models: %s",
+                                     _pname, actual_base_url, matched_models)
+                        break
+    except Exception as e:
+        logger.warning("ToolRouter init_llm_client provider match failed: %s", e)
+
+    # 优先用匹配到的 provider models，其次用 config_creds 的 models，最后用 default
+    if matched_models:
+        model = matched_models[0]
+    elif config_creds.get("models"):
+        # config_creds.models 来自第一个 provider，可能与 base_url 不匹配
+        # 只在 base_url 也来自 config（未被 env 覆盖）时使用
+        config_base_url = config_creds.get("base_url", "")
+        if config_base_url and config_base_url == actual_base_url:
+            model = config_creds["models"][0]
+        else:
+            model = default_model
     else:
         model = default_model
+    logger.warning("Selected model=%s (actual_base_url=%s, default=%s)", model, actual_base_url, default_model)
 
     # ★ R25修复ARCH-1：凭证有效性检测
     has_api_key = bool(creds.get("api_key", "").strip())
@@ -459,7 +527,7 @@ def init_llm_client(config: Any) -> Any:
         timeout=30.0,
         cache_ttl=_REFLECT_CACHE_TTL,
     )
-    logger.debug("AsyncLLMClient initialized: model=%s, has_creds=%s", model, has_api_key and has_base_url)
+    logger.warning("AsyncLLMClient initialized: model=%s, has_creds=%s", model, has_api_key and has_base_url)
     return llm_client
 
 
@@ -501,7 +569,7 @@ def call_llm_for_reflect(
     if cache_key in reflect_cache:
         cached_result, cached_time = reflect_cache[cache_key]
         if now - cached_time < _REFLECT_CACHE_TTL:
-            logger.debug("ReflectEngine LLM cache hit")
+            logger.warning("ReflectEngine LLM cache hit")
             return str(cached_result)
 
     if llm_client:
@@ -632,7 +700,7 @@ def apply_sync_change(change: dict[str, Any], store: Any, index: Any, retriever:
         )
         return True
     except Exception as e:
-        logger.debug("OmniMem apply_sync_change failed for %s: %s", memory_id, e)
+        logger.warning("OmniMem apply_sync_change failed for %s: %s", memory_id, e)
         return False
 
 

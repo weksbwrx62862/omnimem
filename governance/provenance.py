@@ -20,6 +20,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from omnimem.utils.migration import SchemaMigrator
+
 logger = logging.getLogger(__name__)
 
 
@@ -40,17 +42,23 @@ class ProvenanceTracker:
         db_path = data_dir / "provenance.db"
         self._conn = sqlite3.connect(str(db_path), check_same_thread=False)
         self._conn.execute("PRAGMA journal_mode=WAL")
-        self._conn.execute("""
-            CREATE TABLE IF NOT EXISTS provenance (
-                memory_id TEXT PRIMARY KEY,
-                source TEXT,
-                method TEXT,
-                timestamp TEXT,
-                content_hash TEXT,
-                parent_id TEXT,
-                metadata TEXT
-            )
-        """)
+        self._conn.execute("PRAGMA busy_timeout=5000")
+        migrator = SchemaMigrator(self._conn)
+        migrator.migrate(
+            table_name="provenance",
+            create_sql="""
+                CREATE TABLE IF NOT EXISTS provenance (
+                    memory_id TEXT PRIMARY KEY,
+                    source TEXT,
+                    method TEXT,
+                    timestamp TEXT,
+                    content_hash TEXT,
+                    parent_id TEXT,
+                    metadata TEXT
+                )
+            """,
+            migrations=[],
+        )
         self._conn.commit()
         # 从数据库恢复内存索引
         self._restore()
@@ -79,7 +87,7 @@ class ProvenanceTracker:
                 self._provenance[memory_id] = prov
             logger.info("ProvenanceTracker: restored %d entries from disk", len(self._provenance))
         except Exception as e:
-            logger.debug("Provenance restore failed: %s", e)
+            logger.warning("Provenance restore failed: %s", e)
 
     def track(
         self,
@@ -170,7 +178,7 @@ class ProvenanceTracker:
                 )
                 self._conn.commit()
             except Exception as e:
-                logger.debug("Provenance persist failed: %s", e)
+                logger.warning("Provenance persist failed: %s", e)
 
     @staticmethod
     def _hash(content: str) -> str:

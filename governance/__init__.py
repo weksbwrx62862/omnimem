@@ -10,3 +10,5 @@ from omnimem.governance.sync import ChangeLog as ChangeLog
 from omnimem.governance.sync import FileLockManager as FileLockManager
 from omnimem.governance.sync import SyncConfig as SyncConfig
 from omnimem.governance.sync import SyncEngine as SyncEngine
+from omnimem.governance.temporal_kg import TemporalKnowledgeGraph as TemporalKnowledgeGraph
+from omnimem.governance.temporal_kg import TemporalTriple as TemporalTriple

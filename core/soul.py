@@ -33,7 +33,7 @@ class SoulSystem:
                     if text:
                         parts.append(text)
                 except Exception as e:
-                    logger.debug("Failed to read %s: %s", name, e)
+                    logger.warning("Failed to read %s: %s", name, e)
         return "\n\n".join(parts)
 
     def update_user_profile(self, content: str) -> None:

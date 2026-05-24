@@ -40,9 +40,11 @@ class OmniMemMCPServer:
                                 "skill",
                                 "procedural",
                                 "event",
+                                "action",
+                                "reasoning",
                             ],
                             "default": "fact",
-                            "description": "Type of memory",
+                            "description": "Type of memory. action: agent operations. reasoning: lessons learned.",
                         },
                         "confidence": {
                             "type": "integer",

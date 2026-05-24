@@ -79,7 +79,7 @@ class AsyncLLMClient:
         if use_cache and cache_key in self._cache:
             cached, ts = self._cache[cache_key]
             if now - ts < self._cache_ttl:
-                logger.debug("AsyncLLM cache hit")
+                logger.warning("AsyncLLM cache hit")
                 return cached
 
         async with self._semaphore:
@@ -149,7 +149,7 @@ class AsyncLLMClient:
                 except RuntimeError:
                     pass  # No loop running — ignore
             except Exception as e:
-                logger.debug("LLM client close error: %s", e)
+                logger.warning("LLM client close error: %s", e)
             self._client = None
 
     # ─── Internal ────────────────────────────────────────────
@@ -183,7 +183,7 @@ class AsyncLLMClient:
             content = response.choices[0].message.content or ""
             return LLMResponse(content=content.strip(), model=self._model)
         except Exception:
-            logger.debug("Async LLM direct call failed, will try fallback")
+            logger.warning("Async LLM direct call failed, will try fallback")
             raise
 
     # ─── Credential helpers ──────────────────────────────────

@@ -1,11 +1,13 @@
 """GovernanceFacade — 治理引擎横切面。
 
 封装: ConflictResolver, TemporalDecay, ForgettingCurve, PrivacyManager,
-      ProvenanceTracker, SyncEngine, VectorClock, GovernanceAuditor
+      ProvenanceTracker, SyncEngine, VectorClock, GovernanceAuditor,
+      TemporalKnowledgeGraph
 """
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -20,6 +22,9 @@ from omnimem.governance.audit_log import AuditLogger
 from omnimem.governance.auditor import GovernanceAuditor
 from omnimem.governance.rbac import RBACManager
 from omnimem.governance.kms import KMSManager
+from omnimem.governance.temporal_kg import TemporalKnowledgeGraph
+
+logger = logging.getLogger(__name__)
 
 
 class GovernanceFacade:
@@ -40,9 +45,11 @@ class GovernanceFacade:
         )
         self._temporal_decay = TemporalDecay()
         self._forgetting = ForgettingCurve(gov_dir, config)
+        self._kms = KMSManager(gov_dir)
         self._privacy = PrivacyManager(
             default_level=config.get("default_privacy", "personal"),
             session_id=session_id,
+            kms_manager=self._kms,
         )
         self._privacy.bind_store(storage_facade.store)
         storage_facade.store.bind_privacy_manager(self._privacy)
@@ -73,13 +80,13 @@ class GovernanceFacade:
         )
 
         # 操作审计日志
-        self._audit_logger = AuditLogger(gov_dir)
+        self._audit_logger = AuditLogger(gov_dir, max_rows=config.get("audit_log_max_rows", 100000))
 
         # RBAC 访问控制
         self._rbac = RBACManager(gov_dir)
 
-        # KMS 密钥管理
-        self._kms = KMSManager(gov_dir)
+        # 时序知识图谱
+        self._temporal_kg = TemporalKnowledgeGraph(gov_dir, config)
 
     @property
     def conflict_resolver(self) -> ConflictResolver:
@@ -122,6 +129,10 @@ class GovernanceFacade:
         return self._kms
 
     @property
+    def temporal_kg(self) -> TemporalKnowledgeGraph:
+        return self._temporal_kg
+
+    @property
     def vector_clock(self) -> VectorClock:
         return self._vector_clock
 
@@ -135,3 +146,35 @@ class GovernanceFacade:
         self.provenance.close()
         self.sync_engine.close()
         self._audit_logger.close()
+        if self._temporal_kg:
+            self._temporal_kg.close()
+
+    def trust_feedback(self, memory_id: str, useful: bool) -> float:
+        """信任评分反馈：Agent 使用记忆后反馈有用/无用。
+
+        参考 Holographic: +0.05 (有用) / -0.10 (无用)。
+        信任评分范围 0.0-1.0。
+
+        Args:
+            memory_id: 记忆 ID
+            useful: True 表示有用，False 表示无用
+
+        Returns:
+            更新后的信任评分
+        """
+        entry = self._store.get(memory_id)
+        if not entry:
+            return 0.5
+        current_trust = entry.get("trust", 0.5)
+        delta = 0.05 if useful else -0.10
+        new_trust = max(0.0, min(1.0, current_trust + delta))
+        try:
+            self._store.update(memory_id, {"trust": new_trust})
+            self._audit_logger.record(
+                action=("trust_helpful" if useful else "trust_unhelpful"),
+                target=memory_id,
+                detail=f"trust: {current_trust:.2f} -> {new_trust:.2f}",
+            )
+        except Exception as e:
+            logger.warning("Trust feedback update failed for %s: %s", memory_id, e)
+        return new_trust

@@ -437,7 +437,7 @@ class ConflictResolver:
                         reason=f"Semantic conflict: similarity={score:.2f} with existing memory",
                     )
         except Exception as e:
-            logger.debug("Semantic conflict check failed: %s", e)
+            logger.warning("Semantic conflict check failed: %s", e)
         return None
 
     @staticmethod

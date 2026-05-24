@@ -42,7 +42,7 @@ class DrawerClosetStore:
     # 内存索引最大条目数
     _MAX_CLOSET_INDEX = 10000
 
-    def __init__(self, palace_dir: Path, max_index_size: int = 0):
+    def __init__(self, palace_dir: Path, max_index_size: int = 0, write_buffer_threshold: int = 20):
         self._palace_dir = palace_dir
         self._palace_dir.mkdir(parents=True, exist_ok=True)
         # 内存索引（Closet 加速），带容量限制
@@ -58,7 +58,7 @@ class DrawerClosetStore:
         # ★ 磁盘写入缓冲：批量 flush 减少高频 add 时的 IO 压力
         self._write_buffer: list[Any] = []
         self._pending_disk_writes = 0
-        self._WRITE_BUFFER_THRESHOLD = 5
+        self._WRITE_BUFFER_THRESHOLD = write_buffer_threshold
 
         # ★ P0方案一：MetaStore SQLite 元数据存储（并行双写）
         # 保留 Drawer 文件作为冷备份，元数据主查询走 SQLite
@@ -174,7 +174,7 @@ class DrawerClosetStore:
             vc=vc,
         )
 
-        logger.debug(
+        logger.info(
             "Stored memory %s in %s/%s/%s (type=%s, confidence=%d, privacy=%s)",
             memory_id,
             wing,
@@ -187,16 +187,23 @@ class DrawerClosetStore:
         return memory_id
 
     def get(self, memory_id: str) -> dict[str, Any] | None:
-        """根据 ID 获取记忆。先查内存索引，再查 Drawer。"""
+        """根据 ID 获取记忆。优先 MetaStore，回退内存索引/Drawer 文件。"""
+        # 优先路径：MetaStore SQLite 查询
+        meta_result = self._meta_store.get(memory_id)
+        if meta_result:
+            # 补充内存中的 content（若可用，更完整）
+            if memory_id in self._closet_index:
+                self._touch(memory_id)
+                return dict(self._closet_index[memory_id])
+            return meta_result
+
         # 内存索引
         if memory_id in self._closet_index:
             self._touch(memory_id)
             return dict(self._closet_index[memory_id])
 
-        # 磁盘查找（找到后回填索引）
-        # 优化：直接按路径推算查找，避免 rglob 扫描整个目录树
-        # memory_id 存储路径为: palace_dir/wing/memory_type/room/drawer/memory_id.md
-        # 由于可能不知道 wing/type/room，先尝试用已知的路径索引
+        # ★ DEPRECATED: Drawer 文件查询回退，仅作兼容保留
+        logger.debug("Drawer file query fallback is deprecated, use MetaStore")
         result = self._find_on_disk(memory_id)
         if result:
             self._closet_index[memory_id] = result
@@ -204,8 +211,55 @@ class DrawerClosetStore:
             self._evict_if_needed()
         return result
 
+    def delete(self, memory_id: str) -> bool:
+        """删除记忆：MetaStore + 内存索引 + 文件系统 + 路径索引 + 倒排索引。
+
+        Returns:
+            True 如果至少清理了一层存储
+        """
+        deleted_any = False
+
+        # 1. MetaStore（SQLite 元数据）
+        try:
+            self._meta_store.delete(memory_id)
+            deleted_any = True
+        except Exception as e:
+            logger.warning("DrawerClosetStore.delete: MetaStore failed for %s: %s", memory_id, e)
+
+        # 2. 内存索引
+        if memory_id in self._closet_index:
+            del self._closet_index[memory_id]
+            deleted_any = True
+
+        # 3. 路径索引
+        drawer_path = self._id_to_path.pop(memory_id, None)
+
+        # 4. 文件系统（drawer + closet .md 文件）
+        if drawer_path is not None:
+            try:
+                drawer_path.unlink(missing_ok=True)
+                deleted_any = True
+            except Exception as e:
+                logger.warning("DrawerClosetStore.delete: drawer unlink failed: %s", e)
+            # 也尝试删除对应的 closet 文件
+            try:
+                closet_path = drawer_path.parent.parent / "closet" / drawer_path.name
+                closet_path.unlink(missing_ok=True)
+                deleted_any = True
+            except Exception as e:
+                logger.warning("DrawerClosetStore.delete: closet unlink failed: %s", e)
+
+        # 5. 倒排索引清理
+        for _type_set in self._type_index.values():
+            _type_set.discard(memory_id)
+        for _wing_set in self._wing_index.values():
+            _wing_set.discard(memory_id)
+
+        return deleted_any
+
+    # ★ DEPRECATED: Drawer 文件查询方法，仅作兼容保留
     def _find_on_disk(self, memory_id: str) -> dict[str, Any] | None:
-        """在磁盘上查找记忆，优先用路径索引，回退到 rglob。"""
+        """★ DEPRECATED: 在磁盘上查找记忆，优先用路径索引，回退到 rglob。"""
         # 策略1：用已知的路径索引
         known_path = self._id_to_path.get(memory_id)
         if known_path and known_path.exists():
@@ -230,15 +284,14 @@ class DrawerClosetStore:
     ) -> list[dict[str, Any]]:
         """按条件搜索记忆。
 
-        ★ P0方案一：优先使用 MetaStore SQLite 查询（O(log n)），
-        回退到内存索引（兼容旧路径）。
+        ★ 仅使用 MetaStore SQLite 查询（O(log n)），
+        内存二级索引回退已移除。
         """
-        # 优先路径：MetaStore SQL 索引查询
+        # 唯一查询路径：MetaStore SQL 索引查询
         meta_results = self._meta_store.search(
             wing=wing, room=room, memory_type=memory_type, limit=limit
         )
         if meta_results:
-            # 从 MetaStore 获取元数据后，补充内存中的 content（若可用）
             enriched = []
             for mr in meta_results:
                 mid = mr.get("memory_id", "")
@@ -250,61 +303,14 @@ class DrawerClosetStore:
                     break
             return enriched
 
-        # 回退路径：内存二级索引（与原有逻辑一致）
-        if memory_type and not wing and not room:
-            type_ids = self._type_index.get(memory_type, set())
-            results = []
-            for mid in type_ids:
-                if mid in self._closet_index:
-                    results.append(dict(self._closet_index[mid]))
-                    if len(results) >= limit:
-                        break
-            return results
-
-        if wing and not memory_type and not room:
-            wing_ids = self._wing_index.get(wing, set())
-            results = []
-            for mid in wing_ids:
-                if mid in self._closet_index:
-                    results.append(dict(self._closet_index[mid]))
-                    if len(results) >= limit:
-                        break
-            return results
-
-        if memory_type and wing:
-            type_ids = self._type_index.get(memory_type, set())
-            wing_ids = self._wing_index.get(wing, set())
-            candidate_ids = type_ids & wing_ids
-            results = []
-            for mid in candidate_ids:
-                if mid in self._closet_index:
-                    entry = self._closet_index[mid]
-                    if room and entry.get("room") != room:
-                        continue
-                    results.append(dict(entry))
-                    if len(results) >= limit:
-                        break
-            return results
-
-        results = []
-        for mid, entry in self._closet_index.items():
-            if wing and entry.get("wing") != wing:
-                continue
-            if room and entry.get("room") != room:
-                continue
-            if memory_type and entry.get("type") != memory_type:
-                continue
-            results.append(dict(entry))
-            if len(results) >= limit:
-                break
-        return results
+        return []
 
     def search_by_content(self, query: str, limit: int = 20) -> list[dict[str, Any]]:
         """按内容关键词搜索。
 
-        ★ P0方案一：优先使用 MetaStore FTS5/LIKE 查询，回退到内存子串匹配。
+        ★ 仅使用 MetaStore FTS5/LIKE 查询，内存子串匹配回退已移除。
         """
-        # 优先路径：MetaStore 全文搜索
+        # 唯一查询路径：MetaStore 全文搜索
         meta_results = self._meta_store.search_by_content(query, limit=limit)
         if meta_results:
             enriched = []
@@ -318,17 +324,7 @@ class DrawerClosetStore:
                     break
             return enriched
 
-        # 回退路径：内存子串匹配
-        query_lower = query.lower()
-        results = []
-        for mid, entry in self._closet_index.items():
-            content = entry.get("content", "").lower()
-            summary = entry.get("summary", "").lower()
-            if query_lower in content or query_lower in summary:
-                results.append(dict(entry))
-            if len(results) >= limit:
-                break
-        return results
+        return []
 
     def get_all_for_indexing(self) -> list[dict[str, Any]]:
         """获取所有记忆（用于检索引擎索引）。"""
@@ -354,7 +350,7 @@ class DrawerClosetStore:
         self._evict_if_needed()
         # ★ P0方案一：同步预热 MetaStore
         self._meta_store.warm_up(entries)
-        logger.debug("Warmed up %d entries into closet index and meta store", len(entries))
+        logger.info("Warmed up %d entries into closet index and meta store", len(entries))
 
     def update_privacy(self, memory_id: str, privacy: str, new_wing: Optional[str] = None) -> bool:
         """更新记忆的隐私级别。可选同步更新wing。"""
@@ -430,7 +426,7 @@ class DrawerClosetStore:
                     )
                 drawer_path.write_text(text, encoding="utf-8")
         except Exception as e:
-            logger.debug("Failed to update drawer privacy for %s: %s", memory_id, e)
+            logger.warning("Failed to update drawer privacy for %s: %s", memory_id, e)
 
     def _flush_write_buffer(self) -> None:
         """执行缓冲队列中的所有磁盘写入。"""
@@ -438,7 +434,7 @@ class DrawerClosetStore:
             try:
                 fn()
             except Exception as e:
-                logger.debug("Buffered write failed: %s", e)
+                logger.warning("Buffered write failed: %s", e)
         self._write_buffer.clear()
         self._pending_disk_writes = 0
 
@@ -540,7 +536,7 @@ class DrawerClosetStore:
                     }
             return {"memory_id": path.stem, "content": text}
         except Exception as e:
-            logger.debug("Failed to read drawer %s: %s", path, e)
+            logger.warning("Failed to read drawer %s: %s", path, e)
             return None
 
     # ─── LRU 管理 ─────────────────────────────────────────────
@@ -552,6 +548,9 @@ class DrawerClosetStore:
 
     def _evict_if_needed(self) -> None:
         """超出容量时淘汰最久未访问的条目。"""
+        if len(self._closet_index) > self._max_index:
+            # ★ 先刷盘再淘汰：确保被淘汰的条目已持久化到磁盘
+            self.flush()
         while len(self._closet_index) > self._max_index:
             oldest_id, _ = self._closet_index.popitem(last=False)
             logger.debug("Closet index evicted: %s", oldest_id)

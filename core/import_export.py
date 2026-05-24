@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import json
+import logging
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 _EXPORT_VERSION = "1.0"
+
+logger = logging.getLogger(__name__)
 
 
 class MemoryExporter:
@@ -209,8 +212,8 @@ class MemoryImporter:
                         "room": room or "imported",
                     },
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("MemoryImporter retriever add failed: %s", e)
 
             self._forgetting.record_access(new_id)
             imported += 1

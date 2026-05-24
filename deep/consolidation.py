@@ -29,6 +29,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from omnimem.utils.migration import SchemaMigrator
+
 logger = logging.getLogger(__name__)
 
 
@@ -196,17 +198,23 @@ class ConsolidationEngine:
         db_path = data_dir / "consolidation.db"
         self._conn = sqlite3.connect(str(db_path), check_same_thread=False)
         self._conn.execute("PRAGMA journal_mode=WAL")
-        self._conn.execute("""
-            CREATE TABLE IF NOT EXISTS consolidation_items (
-                item_id TEXT PRIMARY KEY,
-                stage TEXT NOT NULL,
-                content TEXT NOT NULL,
-                source_ids TEXT,
-                confidence REAL DEFAULT 0.5,
-                created_at TEXT,
-                metadata TEXT
-            )
-        """)
+        self._conn.execute("PRAGMA busy_timeout=5000")
+        migrator = SchemaMigrator(self._conn)
+        migrator.migrate(
+            table_name="consolidation_items",
+            create_sql="""
+                CREATE TABLE IF NOT EXISTS consolidation_items (
+                    item_id TEXT PRIMARY KEY,
+                    stage TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    source_ids TEXT,
+                    confidence REAL DEFAULT 0.5,
+                    created_at TEXT,
+                    metadata TEXT
+                )
+            """,
+            migrations=[],
+        )
         self._conn.execute("""
             CREATE INDEX IF NOT EXISTS idx_stage ON consolidation_items(stage)
         """)
@@ -214,6 +222,7 @@ class ConsolidationEngine:
 
     def submit(self, memory_id: str, content: str, memory_type: str = "fact") -> None:
         """提交一条记忆到 Consolidation 队列。"""
+        logger.warning("Consolidation submit: %d items", len(self._pending))
         self._pending.append(
             {
                 "memory_id": memory_id,
@@ -412,6 +421,7 @@ class ConsolidationEngine:
 
             obs_content = self._generate_observation_with_llm(cluster_facts)
             if not obs_content:
+                logger.warning("LLM observation generation failed, degrading to rule-based")
                 obs_content = _generate_observation(cluster_facts)
             if obs_content:
                 source_ids = [f.get("item_id", "") for f in cluster_facts]
@@ -435,6 +445,7 @@ class ConsolidationEngine:
         obs_contents = [o.get("content", "") for o in observations]
         model_content = self._generate_model_with_llm(obs_contents)
         if not model_content:
+            logger.warning("LLM model generation failed, degrading to rule-based")
             model_content = _generate_mental_model(obs_contents)
 
         if model_content:
@@ -474,7 +485,7 @@ class ConsolidationEngine:
                         ),
                     )
                 except Exception as e:
-                    logger.debug("Consolidation persist failed for %s: %s", item.get("item_id"), e)
+                    logger.warning("Consolidation persist failed for %s: %s", item.get("item_id"), e)
             self._conn.commit()
 
     def _query_items(self, stage: str, keyword: str = "", limit: int = 20) -> list[dict[str, Any]]:
@@ -512,7 +523,7 @@ class ConsolidationEngine:
                 results.append(d)
             return results
         except Exception as e:
-            logger.debug("Consolidation query failed: %s", e)
+            logger.warning("Consolidation query failed: %s", e)
             return []
 
     def close(self) -> None:

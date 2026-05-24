@@ -1,3 +1,6 @@
+import pytest
+pytest.importorskip("chromadb", reason="chromadb not installed")
+
 import shutil
 import uuid
 from pathlib import Path

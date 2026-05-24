@@ -27,8 +27,102 @@ from omnimem.retrieval.bm25 import BM25Retriever
 from omnimem.retrieval.reranker import CrossEncoderReranker
 from omnimem.retrieval.rrf import RRFFusion
 from omnimem.retrieval.vector import VectorRetriever
+from omnimem.protocols import RetrieverProtocol
+from omnimem.retrieval.vector_store import _emit
 
 logger = logging.getLogger(__name__)
+
+
+class CircuitBreaker:
+    """三态熔断器 — 向量检索连续故障时自动降级到纯 BM25。
+
+    状态机：
+      CLOSED → (阈值次故障) → OPEN → (冷却后) → HALF_OPEN → (成功) → CLOSED
+                                                    HALF_OPEN → (失败) → OPEN
+
+    使用：
+        breaker = CircuitBreaker(threshold=3, cooldown=60)
+        result = breaker.call(lambda: risky_op(), fallback=lambda: safe_op())
+    """
+
+    CLOSED, OPEN, HALF_OPEN = "closed", "open", "half_open"
+
+    def __init__(self, threshold: int = 3, cooldown: float = 60.0, on_recover=None):
+        self._state = self.CLOSED
+        self._failures = 0
+        self._threshold = threshold
+        self._cooldown = cooldown
+        self._last_failure_time = 0.0
+        self._on_recover = on_recover
+
+    @property
+    def state(self) -> str:
+        return self._state
+
+    def call(self, fn, fallback):
+        """执行 fn()，故障时返回 fallback()。"""
+        now = time.time()
+        if self._state == self.OPEN:
+            if now - self._last_failure_time > self._cooldown:
+                self._state = self.HALF_OPEN
+                logger.info("CircuitBreaker: OPEN→HALF_OPEN (cooldown elapsed)")
+            else:
+                logger.warning("CircuitBreaker: OPEN, circuit open (%.1fs remaining)",
+                               self._cooldown - (now - self._last_failure_time))
+                return fallback()
+        try:
+            result = fn()
+            # 成功 — 恢复
+            if self._state == self.HALF_OPEN:
+                self._state = self.CLOSED
+                self._failures = 0
+                logger.info("CircuitBreaker: HALF_OPEN→CLOSED (recovered)")
+                if self._on_recover:
+                    self._on_recover()
+            elif self._failures > 0:
+                self._failures = 0
+            return result
+        except Exception:
+            self._failures += 1
+            self._last_failure_time = time.time()
+            if self._failures >= self._threshold:
+                self._state = self.OPEN
+                logger.error("CircuitBreaker: CLOSED→OPEN (%d consecutive failures)", self._failures)
+            return fallback()
+
+    def reset(self) -> None:
+        """手动重置熔断器。"""
+        self._state = self.CLOSED
+        self._failures = 0
+
+    def record_failure(self) -> None:
+        """记录一次故障，达到阈值时自动 OPEN。"""
+        self._failures += 1
+        self._last_failure_time = time.time()
+        if self._failures >= self._threshold:
+            self._state = self.OPEN
+            logger.error("CircuitBreaker: CLOSED→OPEN (%d consecutive failures)", self._failures)
+
+    def record_success(self) -> None:
+        """记录一次成功，HALF_OPEN→CLOSED 或清零计数器。"""
+        if self._state == self.HALF_OPEN:
+            self._state = self.CLOSED
+            self._failures = 0
+            logger.info("CircuitBreaker: HALF_OPEN→CLOSED (recovered)")
+            if self._on_recover:
+                self._on_recover()
+        elif self._failures > 0:
+            self._failures = 0
+
+    def should_skip(self) -> bool:
+        """OPEN 且未冷却时返回 True，调用方应跳过向量检索。"""
+        if self._state != self.OPEN:
+            return False
+        if time.time() - self._last_failure_time > self._cooldown:
+            self._state = self.HALF_OPEN
+            logger.info("CircuitBreaker: OPEN→HALF_OPEN (cooldown elapsed)")
+            return False
+        return True
 
 
 class _ReadWriteLock:
@@ -97,132 +191,7 @@ class HybridRetriever:
 
     _QUERY_CACHE_TTL = 60.0
 
-    # ★ 类级别同义词映射：避免每次 _bm25_search 调用时重建大字典
-    _SYNONYM_MAP = {
-        # ─── 宠物领域（QUAL-3核心修复） ───
-        "宠物": [
-            "猫咪",
-            "狗狗",
-            "猫",
-            "狗",
-            "兔子",
-            "仓鼠",
-            "鹦鹉",
-            "橘猫",
-            "英短",
-            "布偶",
-            "缅因",
-            "暹罗",
-            "蓝猫",
-            "加菲",
-            "波斯猫",
-            "美短",
-            "折耳",
-            "狸花",
-            "三花",
-            "奶牛猫",
-            "金毛",
-            "拉布拉多",
-            "哈士奇",
-            "泰迪",
-            "柯基",
-            "柴犬",
-            "边牧",
-            "萨摩耶",
-            "阿拉斯加",
-            "松狮",
-            "比熊",
-            "雪纳瑞",
-        ],
-        "猫咪": ["猫", "宠物", "喵星人", "主子", "橘猫", "英短", "布偶", "缅因", "暹罗"],
-        "狗狗": ["狗", "宠物", "汪星人", "金毛", "拉布拉多", "哈士奇", "泰迪", "柯基"],
-        "猫": ["猫咪", "宠物", "橘猫", "英短", "布偶", "缅因", "暹罗", "蓝猫"],
-        "狗": ["狗狗", "宠物", "金毛", "拉布拉多", "哈士奇", "泰迪", "柯基", "柴犬"],
-        # ─── 饮食领域 ───
-        "饮食": [
-            "食用",
-            "喂食",
-            "饲料",
-            "吃",
-            "食物",
-            "营养",
-            "猫粮",
-            "狗粮",
-            "罐头",
-            "冻干",
-            "猫条",
-            "零食",
-            "鸡胸肉",
-            "牛肉",
-            "鱼肉",
-            "三文鱼",
-            "虾",
-            "生骨肉",
-            "自制粮",
-            "处方粮",
-            "幼猫粮",
-            "成猫粮",
-            "化毛膏",
-            "卵磷脂",
-            "鱼油",
-            "营养膏",
-            "益生菌",
-        ],
-        "吃饭": ["饮食", "喂食", "吃", "食物", "猫粮", "狗粮", "罐头"],
-        "喂食": ["饮食", "吃饭", "喂养", "投喂", "给吃的"],
-        # ─── 技术领域（保留原有） ───
-        "编程": ["代码", "开发", "程序", "coding", "写代码", "敲代码", "软件开发"],
-        "部署": ["deploy", "上线", "发布", "运维", "发布上线", "生产环境"],
-        "代码": ["编程", "开发", "程序", "coding", "源码", "脚本"],
-        # ─── 个人信息领域 ───
-        "姓名": ["名字", "称呼", "叫什么", "名号"],
-        "城市": ["住址", "所在地", "地方", "位置", "居住"],
-        "爱好": ["兴趣", "喜欢", "特长", "擅长", "业余"],
-        "职业": ["工作", "行业", "岗位", "职位", "公司"],
-        # ─── 通用高频词扩展 ───
-        "不喜欢": ["讨厌", "反感", "拒绝", "不要", "别"],
-        "喜欢": ["爱", "爱好", "感兴趣", "钟爱", "偏爱"],
-        "问题": ["bug", "错误", "故障", "异常", "缺陷", "issue"],
-        # ─── 深度学习领域（QUAL-2修复） ───
-        "深度学习": [
-            "神经网络",
-            "深度神经",
-            "CNN",
-            "RNN",
-            "Transformer",
-            "alexnet",
-            "resnet",
-            "vggnet",
-            "bert",
-            "gpt",
-            "机器学习",
-            "训练",
-            "推理",
-            "模型",
-        ],
-        "神经网络": [
-            "深度学习",
-            "CNN",
-            "RNN",
-            "Transformer",
-            "alexnet",
-            "resnet",
-            "感知机",
-            "前馈",
-            "循环",
-        ],
-        "机器学习": [
-            "深度学习",
-            "训练",
-            "分类",
-            "回归",
-            "聚类",
-            "特征",
-            "模型",
-            "监督学习",
-            "无监督",
-        ],
-    }
+    _SYNONYM_MAP: dict[str, list[str]] = {}
 
     # ★ 类级别垃圾查询白名单：避免每次 _is_garbage_query 调用时重建集合
     _GARBAGE_COMMON_WORDS = frozenset(
@@ -294,6 +263,12 @@ class HybridRetriever:
         enable_reranker: bool = False,
         embedding_model_path: str = "",
         reranker_model_path: str = "",
+        recall_timeout_ms: int = 5000,
+        recall_strategy: str = "hybrid",
+        enable_catalog: bool = True,
+        index: Any = None,
+        wing_room: Any = None,
+        query_cache_ttl: float = 60.0,
     ):
         """初始化混合检索引擎。
 
@@ -303,22 +278,106 @@ class HybridRetriever:
             enable_reranker: 是否启用 Cross-Encoder 重排序
             embedding_model_path: 嵌入模型本地路径
             reranker_model_path: 重排序模型本地路径
+            recall_timeout_ms: 召回整体超时时间（毫秒），超时后自动降级
+            recall_strategy: 召回策略 - hybrid(默认)/keyword(纯BM25)/embedding(纯向量)
+            enable_catalog: 是否启用目录递归检索通道
+            index: ThreeLevelIndex 实例
+            wing_room: WingRoomManager 实例
         """
         self._data_dir = data_dir or Path("/tmp/omnimem/retrieval")
-        self._vector = VectorRetriever(backend=vector_backend, data_dir=self._data_dir, embedding_model_path=embedding_model_path)
-        self._bm25 = BM25Retriever(data_dir=self._data_dir)
+        synonym_map = self._load_synonyms()
+        if synonym_map:
+            self._SYNONYM_MAP = synonym_map
+        # ★ 通道注册表：通道名 → (retriever, weight)
+        self._channels: dict[str, tuple[RetrieverProtocol, float]] = {}
+        vec = VectorRetriever(backend=vector_backend, data_dir=self._data_dir, embedding_model_path=embedding_model_path)
+        bm25 = BM25Retriever(data_dir=self._data_dir)
+        self.register_channel("vector", vec, weight=3.0)
+        self.register_channel("bm25", bm25, weight=1.0)
+        self._vector = vec  # 向后兼容属性引用
+        self._bm25 = bm25   # 向后兼容属性引用
         self._rrf = RRFFusion(k=60, min_rrf=0.035)
         self._reranker = CrossEncoderReranker(model_path=reranker_model_path) if enable_reranker else None
+        self._recall_timeout_ms = recall_timeout_ms
+        self._recall_strategy = recall_strategy
+        self._query_cache_ttl = query_cache_ttl
         # ★ 读写锁替代全局互斥锁
         self._rw_lock = _ReadWriteLock()
         # ★ 查询结果缓存：key → (results, timestamp)
         self._query_cache: dict[str, tuple[list[dict[str, Any]], float]] = {}
         # ★ P1方案四：动态来源权重（由 FeedbackCollector 驱动）
         self._source_weights: dict[str, float] = {}
+        # ★ OPT: 目录递归检索通道（内化 OpenViking find()）
+        self._catalog: Any = None
+        # ★ OPT: 向量检索熔断器 — 连续故障时自动降级纯BM25
+        self._vector_breaker = CircuitBreaker(
+            threshold=3,
+            cooldown=60.0,
+        )
+        if enable_catalog and index and wing_room:
+            try:
+                from omnimem.retrieval.catalog import CatalogRetriever
+                self._catalog = CatalogRetriever(
+                    index=index,
+                    wing_room=wing_room,
+                    vector_retriever=self._vector,
+                    bm25_retriever=self._bm25,
+                )
+            except Exception as e:
+                logger.warning("CatalogRetriever init failed (non-fatal): %s", e)
+
+    @staticmethod
+    def _load_synonyms() -> dict[str, list[str]]:
+        try:
+            import json
+            from pathlib import Path
+            synonyms_path = Path(__file__).parent.parent / "config" / "synonyms.json"
+            if synonyms_path.exists():
+                with open(synonyms_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                if isinstance(data, dict):
+                    result = {}
+                    for k, v in data.items():
+                        if isinstance(v, list):
+                            result[k] = v
+                        elif isinstance(v, str):
+                            result[k] = [v]
+                    if result:
+                        logger.info("Loaded %d synonym entries from %s", len(result), synonyms_path)
+                        return result
+            logger.warning("synonyms.json not found or empty at %s, synonym expansion disabled", synonyms_path)
+        except Exception as e:
+            logger.warning("Failed to load synonyms.json: %s, synonym expansion disabled", e)
+        return {}
+
+    def register_channel(self, name: str, retriever: RetrieverProtocol, weight: float = 1.0) -> None:
+        """注册检索通道。
+
+        Args:
+            name: 通道名称（如 "vector"、"bm25"）
+            retriever: 符合 RetrieverProtocol 的检索器实例
+            weight: RRF 融合权重，默认 1.0
+        """
+        self._channels[name] = (retriever, weight)
+
+    def unregister_channel(self, name: str) -> None:
+        """注销检索通道。
+
+        Args:
+            name: 要注销的通道名称
+        """
+        self._channels.pop(name, None)
 
     def embed_text(self, text: str) -> list[float]:
         """Embed text using the vector retriever."""
         return self._vector.embed_text(text)
+
+    def _check_vector_health(self) -> dict[str, Any]:
+        try:
+            vec_count = self._vector.count()
+        except Exception:
+            vec_count = -1
+        return {"vector_count": vec_count, "breaker_state": self._vector_breaker.state}
 
     def warmup(self) -> None:
         """预热：启动时预加载模型、ChromaDB 和 BM25 索引。"""
@@ -327,9 +386,34 @@ class HybridRetriever:
         try:
             self._vector.warmup()
             self._bm25.warmup() if hasattr(self._bm25, "warmup") else None
-            logger.info("HybridRetriever warmup complete in %.1fs", time.time() - t0)
+            elapsed = time.time() - t0
+            logger.info("HybridRetriever warmup complete in %.1fs", elapsed)
+            try:
+                vec_count = self._vector.count()
+                if vec_count == 0:
+                    logger.warning("HybridRetriever: vector index is empty after warmup (count=0)")
+            except Exception:
+                pass
+            _emit(f"[OmniMem] 混合检索引擎就绪 ({elapsed:.1f}s)")
         except Exception as e:
             logger.warning("HybridRetriever warmup failed (non-fatal): %s", e)
+            _emit(f"[OmniMem] ⚠ 混合检索引擎预热失败: {e}")
+
+    def delete(self, memory_id: str) -> None:
+        """从所有检索通道中移除指定记忆（软故障，用于归档清理）。"""
+        self._rw_lock.acquire_write()
+        try:
+            self._query_cache.clear()
+            try:
+                self._vector.delete(memory_id)
+            except Exception as e:
+                logger.warning("Vector delete failed for %s: %s", memory_id, e)
+            try:
+                self._bm25.delete(memory_id)
+            except Exception as e:
+                logger.warning("BM25 delete failed for %s: %s", memory_id, e)
+        finally:
+            self._rw_lock.release_write()
 
     def add(self, content: str, memory_id: str, metadata: dict[str, Any]) -> None:
         """添加文档到所有检索通道。"""
@@ -354,6 +438,7 @@ class HybridRetriever:
             self._query_cache.clear()
             self._vector.add_batch(documents)
             self._bm25.add_batch(documents)
+            self._vector.flush()
         finally:
             self._rw_lock.release_write()
 
@@ -390,6 +475,8 @@ class HybridRetriever:
         mode: str = "rag",
         top_k: int = 10,
         store: Any = None,  # noqa: ARG002
+        enable_trace: bool = False,  # ★ 新增：是否记录检索轨迹
+        channels_only: list[str] | None = None,  # ★ 新增：仅使用指定通道检索
     ) -> list[dict[str, Any]]:
         """混合检索：向量 + BM25 + RRF 融合。
 
@@ -398,10 +485,11 @@ class HybridRetriever:
           2. 垃圾查询检测 → 限制 top_k 和 max_tokens
           3. 向量检索通道: ChromaDB 语义搜索
           4. BM25 检索通道: 关键词搜索 + 同义词扩展
-          5. RRF 融合: 合并两路结果，数据量自适应 min_rrf 阈值
-          6. 垃圾查询二次验证: 低分结果过滤
-          7. 可选 Cross-Encoder Rerank
-          8. Token 预算裁剪
+          5. 目录递归检索通道: Wing/Hall/Room 定向搜索
+          6. RRF 融合: 合并三路结果，数据量自适应 min_rrf 阈值
+          7. 垃圾查询二次验证: 低分结果过滤
+          8. 可选 Cross-Encoder Rerank
+          9. Token 预算裁剪
 
         mode:
           rag: 快速向量+BM25混合检索（毫秒级）
@@ -411,12 +499,21 @@ class HybridRetriever:
             query: 检索查询文本
             max_tokens: 返回结果的最大 token 预算
             mode: 检索模式 (rag/llm)
-            top_k: 每个通道返回的最大结果数
-            store: DrawerClosetStore 实例（保留参数，暂未使用）
+            top_k: 返回结果数
+            store: 存储实例（用于 llm 模式）
+            enable_trace: 是否记录检索轨迹（默认 False）
+            channels_only: 仅使用指定名称的通道检索，如 ["vector", "bm25"]；未指定的通道跳过（不报错）
 
         Returns:
             检索结果列表，每项包含 content/memory_id/score/metadata 等字段
         """
+        # ★ 新增：创建检索轨迹记录器
+        from omnimem.retrieval.trace import SearchTrace
+        trace = SearchTrace(query) if enable_trace else None
+
+        # ★ 单通道测试：channels_only 指定时仅使用指定通道检索
+        _allowed_channels = set(channels_only) if channels_only else None
+
         is_garbage = _is_garbage_query(query)
 
         try:
@@ -443,30 +540,272 @@ class HybridRetriever:
             now = time.time()
             if cache_key in self._query_cache:
                 cached_results, cached_time = self._query_cache[cache_key]
-                if now - cached_time < self._QUERY_CACHE_TTL:
+                if now - cached_time < self._query_cache_ttl:
                     logger.debug("HybridRetriever query cache hit: %s", query[:50])
                     return cached_results
 
-            # ★ 并行执行向量检索与 BM25 检索，降低搜索延迟
-            with ThreadPoolExecutor(max_workers=2) as executor:
-                vec_future = executor.submit(self._vector_search, query, top_k)
-                bm25_future = executor.submit(self._bm25_search, query, top_k)
-                vector_results = vec_future.result()
-                bm25_results = bm25_future.result()
+            # ★ 动态通道并行检索，降低搜索延迟
+            # ★ OPT: 按 recall_strategy 分流 + 超时降级
+            channel_results: dict[str, list[dict[str, Any]]] = {}
+
+            if self._recall_strategy == "keyword":
+                # 纯关键词模式：仅运行 BM25 通道
+                if "bm25" in self._channels and (not _allowed_channels or "bm25" in _allowed_channels):
+                    channel_results["bm25"] = self._bm25_search(query, top_k)
+            elif self._recall_strategy == "embedding":
+                # 纯向量模式：仅运行向量通道，熔断器保护
+                if "vector" in self._channels and (not _allowed_channels or "vector" in _allowed_channels):
+                    if self._vector_breaker.should_skip():
+                        logger.warning("CircuitBreaker OPEN: skipping vector search, no results")
+                        _emit("[OmniMem] ⚠ 向量检索不可用，已降级到关键词模式")
+                    else:
+                        try:
+                            channel_results["vector"] = self._vector_search(query, top_k)
+                            self._vector_breaker.record_success()
+                        except Exception:
+                            self._vector_breaker.record_failure()
+            else:
+                # hybrid 模式：动态通道并行检索 + 超时降级
+                timeout_sec = self._recall_timeout_ms / 1000.0
+                futures: dict[str, Any] = {}
+                n_workers = len(self._channels) + (1 if self._catalog else 0)
+
+                with ThreadPoolExecutor(max_workers=max(n_workers, 1)) as executor:
+                    # ★ 遍历注册通道，并行提交检索任务
+                    for name, (retriever, _weight) in self._channels.items():
+                        # channels_only 过滤
+                        if _allowed_channels and name not in _allowed_channels:
+                            continue
+                        # 向量通道：熔断器保护
+                        if name == "vector" and self._vector_breaker.should_skip():
+                            logger.warning("CircuitBreaker OPEN: skipping vector search, degrading to BM25+Catalog only")
+                            _emit("[OmniMem] ⚠ 向量检索不可用，已降级到关键词模式")
+                            continue
+                        # BM25 通道：使用含同义词扩展的搜索方法
+                        if name == "bm25":
+                            futures[name] = executor.submit(self._bm25_search, query, top_k)
+                        else:
+                            futures[name] = executor.submit(retriever.search, query, top_k=top_k)
+
+                    # 目录检索通道（未纳入通道注册表，保持独立）
+                    if self._catalog and (not _allowed_channels or "catalog" in _allowed_channels):
+                        futures["catalog"] = executor.submit(self._catalog_search, query, top_k)
+
+                    # ★ 收集各通道结果
+                    for name, future in futures.items():
+                        try:
+                            channel_results[name] = future.result(timeout=timeout_sec)
+                            if name == "vector":
+                                self._vector_breaker.record_success()
+                        except (TimeoutError, Exception) as e:
+                            channel_results[name] = []
+                            future.cancel()
+                            if name == "vector":
+                                self._vector_breaker.record_failure()
+                            logger.warning("%s search timeout/degraded (%dms): %s",
+                                           name, self._recall_timeout_ms, e)
+
+                    # 所有通道超时时关闭线程池
+                    if not any(channel_results.values()):
+                        executor.shutdown(wait=False, cancel_futures=True)
+
+                # ★ 记录各通道检索轨迹
+                if trace:
+                    for ch_name, ch_results in channel_results.items():
+                        trace.add_step("channel_search", channel=ch_name,
+                                       output_count=len(ch_results))
+
+                # 降级日志
+                active = [n for n, r in channel_results.items() if r]
+                if len(active) == 1 and active[0] != "vector":
+                    logger.info("Recall degraded: only %s channel has results", active[0])
+                    _emit("[OmniMem] ⚠ 向量检索不可用，已降级到关键词模式")
+
             results = self._rrf_fuse(
                 query,
-                vector_results,
-                bm25_results,
+                channel_results,
                 is_garbage=is_garbage,
                 doc_count=doc_count,
                 top_k=top_k,
                 max_tokens=max_tokens,
             )
+
+            # ★ 记录 RRF 融合轨迹
+            if trace:
+                trace.add_step("rrf_fuse",
+                               input_count=sum(len(r) for r in channel_results.values()),
+                               output_count=len(results))
+            
             # ★ 过滤 sync_turn 条目（对话片段不应污染记忆检索结果）
             results = [r for r in results if r.get("source") != "sync_turn"]
 
+            # ★ 低召回类型补充：reasoning/action 关键词密度低，额外扩展查询
+            results = self._supplement_low_recall_types(query, results, top_k)
+
+            # ★ 类型权重：reasoning/action 提高 1.3x
+            results = self._apply_type_boost(results)
+
             # ★ 缓存搜索结果
             self._query_cache[cache_key] = (results, now)
+            
+            # ★ 新增：将轨迹附加到最后一个结果
+            if trace and results:
+                results[-1]["_trace"] = trace.to_dict()
+            
+            return results
+        finally:
+            self._rw_lock.release_read()
+
+    async def async_search(
+        self,
+        query: str,
+        max_tokens: int = 1500,
+        mode: str = "rag",
+        top_k: int = 10,
+        store: Any = None,
+        enable_trace: bool = False,
+        channels_only: list[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        """异步混合检索：使用 asyncio 并行执行各通道检索。
+
+        与同步 search() 逻辑一致，但使用 asyncio.gather() 并行执行
+        向量检索和 BM25 检索，各通道用 asyncio.to_thread() 包装为异步。
+        适用于 asyncio 事件循环中非阻塞调用。
+
+        Args:
+            query: 检索查询文本
+            max_tokens: 返回结果的最大 token 预算
+            mode: 检索模式 (rag/llm)
+            top_k: 返回结果数
+            store: 存储实例（用于 llm 模式）
+            enable_trace: 是否记录检索轨迹
+            channels_only: 仅使用指定名称的通道检索
+
+        Returns:
+            检索结果列表
+        """
+        import asyncio as _asyncio
+
+        from omnimem.retrieval.trace import SearchTrace
+
+        trace = SearchTrace(query) if enable_trace else None
+        _allowed_channels = set(channels_only) if channels_only else None
+
+        is_garbage = _is_garbage_query(query)
+
+        try:
+            doc_count = self._vector.count()
+        except Exception:
+            doc_count = 0
+
+        if is_garbage:
+            top_k = min(top_k, 2)
+            max_tokens = min(max_tokens, 200)
+            if doc_count >= 100:
+                top_k = 1
+            elif doc_count >= 30:
+                top_k = min(top_k, 1)
+
+        if mode == "llm" and not is_garbage:
+            top_k = max(top_k, 20)
+            max_tokens = max(max_tokens, 3000)
+
+        self._rw_lock.acquire_read()
+        try:
+            cache_key = f"{query}|{max_tokens}|{mode}|{top_k}"
+            now = time.time()
+            if cache_key in self._query_cache:
+                cached_results, cached_time = self._query_cache[cache_key]
+                if now - cached_time < self._query_cache_ttl:
+                    logger.debug("HybridRetriever async query cache hit: %s", query[:50])
+                    return cached_results
+
+            channel_results: dict[str, list[dict[str, Any]]] = {}
+
+            if self._recall_strategy == "keyword":
+                if "bm25" in self._channels and (not _allowed_channels or "bm25" in _allowed_channels):
+                    channel_results["bm25"] = await _asyncio.to_thread(self._bm25_search, query, top_k)
+            elif self._recall_strategy == "embedding":
+                if "vector" in self._channels and (not _allowed_channels or "vector" in _allowed_channels):
+                    if self._vector_breaker.should_skip():
+                        logger.warning("CircuitBreaker OPEN: skipping async vector search")
+                        _emit("[OmniMem] ⚠ 向量检索不可用，已降级到关键词模式")
+                    else:
+                        try:
+                            channel_results["vector"] = await _asyncio.to_thread(
+                                self._vector_search, query, top_k
+                            )
+                            self._vector_breaker.record_success()
+                        except Exception:
+                            self._vector_breaker.record_failure()
+            else:
+                # hybrid 模式：asyncio.gather 并行检索
+                async_tasks: dict[str, Any] = {}
+
+                for name, (retriever, _weight) in self._channels.items():
+                    if _allowed_channels and name not in _allowed_channels:
+                        continue
+                    if name == "vector" and self._vector_breaker.should_skip():
+                        logger.warning("CircuitBreaker OPEN: skipping async vector search, degrading to BM25+Catalog only")
+                        _emit("[OmniMem] ⚠ 向量检索不可用，已降级到关键词模式")
+                        continue
+                    if name == "bm25":
+                        async_tasks[name] = _asyncio.to_thread(self._bm25_search, query, top_k)
+                    else:
+                        async_tasks[name] = _asyncio.to_thread(retriever.search, query, top_k=top_k)
+
+                if self._catalog and (not _allowed_channels or "catalog" in _allowed_channels):
+                    async_tasks["catalog"] = _asyncio.to_thread(self._catalog_search, query, top_k)
+
+                # 并行执行所有通道检索
+                if async_tasks:
+                    task_names = list(async_tasks.keys())
+                    task_coros = list(async_tasks.values())
+                    results_list = await _asyncio.gather(*task_coros, return_exceptions=True)
+                    for name, result in zip(task_names, results_list):
+                        if isinstance(result, Exception):
+                            channel_results[name] = []
+                            if name == "vector":
+                                self._vector_breaker.record_failure()
+                            logger.warning("async %s search failed: %s", name, result)
+                        else:
+                            channel_results[name] = result
+                            if name == "vector":
+                                self._vector_breaker.record_success()
+
+                if trace:
+                    for ch_name, ch_results in channel_results.items():
+                        trace.add_step("channel_search", channel=ch_name,
+                                       output_count=len(ch_results))
+
+                active = [n for n, r in channel_results.items() if r]
+                if len(active) == 1 and active[0] != "vector":
+                    logger.info("Async recall degraded: only %s channel has results", active[0])
+                    _emit("[OmniMem] ⚠ 向量检索不可用，已降级到关键词模式")
+
+            results = self._rrf_fuse(
+                query,
+                channel_results,
+                is_garbage=is_garbage,
+                doc_count=doc_count,
+                top_k=top_k,
+                max_tokens=max_tokens,
+            )
+
+            if trace:
+                trace.add_step("rrf_fuse",
+                               input_count=sum(len(r) for r in channel_results.values()),
+                               output_count=len(results))
+
+            results = [r for r in results if r.get("source") != "sync_turn"]
+            results = self._supplement_low_recall_types(query, results, top_k)
+            results = self._apply_type_boost(results)
+
+            self._query_cache[cache_key] = (results, now)
+
+            if trace and results:
+                results[-1]["_trace"] = trace.to_dict()
+
             return results
         finally:
             self._rw_lock.release_read()
@@ -495,11 +834,20 @@ class HybridRetriever:
                             existing_ids.add(r.get("memory_id", ""))
         return bm25_results
 
+    def _catalog_search(self, query: str, top_k: int) -> list[dict[str, Any]]:
+        """目录递归检索通道（内化 OpenViking find()）。"""
+        if not self._catalog:
+            return []
+        try:
+            return self._catalog.search(query, top_k=top_k)
+        except Exception as e:
+            logger.warning("Catalog search failed (non-fatal): %s", e)
+            return []
+
     def _rrf_fuse(
         self,
         query: str,
-        vector_results: list[dict[str, Any]],
-        bm25_results: list[dict[str, Any]],
+        channel_results: dict[str, list[dict[str, Any]]],
         *,
         is_garbage: bool,
         doc_count: int,
@@ -523,20 +871,43 @@ class HybridRetriever:
         # 如仅 BM25 rank1: 1.0/61=0.0164 < 0.035 会被误过滤
         elif doc_count < 10:
             adaptive_min_rrf = 0.01
-        # ★ 单通道降权：当某通道返回空结果时，降低 min_rrf 阈值
-        # 避免单通道结果因 RRF 分数不足被全部过滤
-        # ★ R29修复Minor-3：放宽 doc_count 条件到 200
-        # 语料增长后 doc_count 容易超过 50，导致 BM25-only 结果被过滤
-        single_channel = (not vector_results) or (not bm25_results)
-        if single_channel and doc_count < 200 and adaptive_min_rrf > 0.01:
-            adaptive_min_rrf = 0.01
+
+        # ★ 从通道注册表动态获取权重，构建结果列表
+        base_weights: list[float] = []
+        result_lists: list[list[dict[str, Any]]] = []
+        active_names: list[str] = []
+        for name, results in channel_results.items():
+            if not results:
+                continue
+            if name in self._channels:
+                weight = self._channels[name][1]
+            elif name == "catalog":
+                weight = 2.0
+            else:
+                weight = 1.0
+            base_weights.append(weight)
+            result_lists.append(results)
+            active_names.append(name)
+
+        # ★ 多通道降级：仅一个通道有结果时降低阈值
+        active_channels = len(result_lists)
+
+        if active_channels <= 1:
+            adaptive_min_rrf = min(adaptive_min_rrf, 0.01)
+            if active_channels == 1:
+                logger.warning("RRF degraded: only %s channel has results, weight=%.1f",
+                             active_names[0], base_weights[0] if base_weights else 0)
+
         # ★ P1方案四：应用动态来源权重（基于 FeedbackCollector 的 CTR 统计）
-        base_weights = [3.0, 1.0]
         if self._source_weights:
-            base_weights[0] *= self._source_weights.get("vector", 1.0)
-            base_weights[1] *= self._source_weights.get("bm25", 1.0)
+            for i, name in enumerate(active_names):
+                base_weights[i] *= self._source_weights.get(name, 1.0)
+
+        if not result_lists:
+            return []
+
         fused = self._rrf.merge(
-            [vector_results, bm25_results],
+            result_lists,
             min_rrf=adaptive_min_rrf,
             weights=base_weights,
         )
@@ -602,6 +973,73 @@ class HybridRetriever:
         """
         self._source_weights = dict(weights)
 
+    # ── 类型加权 ──
+
+    # reasoning/action 类型的记忆包含高价值信息但关键词密度低，
+    # 需要提高权重避免被 fact/preference 等高频词类型淹没。
+    _TYPE_BOOST: dict[str, float] = {
+        "reasoning": 1.3,
+        "action": 1.3,
+        "correction": 1.1,
+    }
+
+    @classmethod
+    def _apply_type_boost(cls, results: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """对 reasoning/action/correction 类型应用分数加权。"""
+        for r in results:
+            mem_type = r.get("type", "")
+            boost = cls._TYPE_BOOST.get(mem_type, 1.0)
+            if boost > 1.0:
+                current_score = r.get("score", r.get("rrf_score", 0))
+                r["score"] = round(current_score * boost, 5)
+                r["type_boost"] = boost
+        # 按加权后分数重新排序
+        return sorted(results, key=lambda x: x.get("score", 0), reverse=True)
+
+    def _supplement_low_recall_types(
+        self, query: str, results: list[dict[str, Any]], top_k: int
+    ) -> list[dict[str, Any]]:
+        """对 reasoning/action 类型做扩展查询，弥补关键词密度低导致的召回不足。
+
+        reasoning/action 类型记忆通常包含长句叙述而非密集关键词，
+        在 BM25 中容易被 fact/preference 等类型淹没。
+        当主检索结果中这些类型<2条时，用类型前缀做补充搜索。
+        """
+        existing_ids = {r.get("memory_id", "") for r in results}
+        type_counts = {}
+        for r in results:
+            t = r.get("type", "")
+            type_counts[t] = type_counts.get(t, 0) + 1
+
+        need_reasoning = type_counts.get("reasoning", 0) < 2
+        need_action = type_counts.get("action", 0) < 2
+
+        if not need_reasoning and not need_action:
+            return results
+
+        # 用 enriched 前缀做 BM25 扩展搜索
+        extra_queries = []
+        if need_reasoning:
+            extra_queries.append(f"[教训/经验/踩坑] {query}")
+        if need_action:
+            extra_queries.append(f"[Agent行为/工具调用] {query}")
+
+        for eq in extra_queries:
+            extra_results = self._bm25.search(eq, top_k=5)
+            for r in extra_results:
+                mid = r.get("memory_id", "")
+                if mid in existing_ids:
+                    continue
+                mem_type = r.get("type", "")
+                if mem_type not in ("reasoning", "action"):
+                    continue
+                r["_source"] = "type_supplement"
+                r["score"] = r.get("score", 0) * 0.8  # 略低于主检索
+                results.append(r)
+                existing_ids.add(mid)
+
+        return results
+
     def invalidate_cache(self) -> None:
         """清除查询结果缓存（写入时调用）。"""
         self._query_cache.clear()
@@ -614,21 +1052,42 @@ class HybridRetriever:
     def rebuild_bm25_from_entries(self, entries: list[dict[str, Any]]) -> int:
         """从索引条目重建 BM25 检索通道（跨会话持久化恢复）。
 
-        若 BM25 已从磁盘缓存恢复且有数据，跳过重复重建。
-        否则委托给 BM25Retriever.rebuild_from_entries 进行全量重建。
+        若 BM25 已从磁盘缓存恢复且有数据，做增量更新：找出缺失的
+        memory_id 并追加，而不是跳过重建。这解决磁盘缓存落后于
+        SQLite 索引导致的 BM25 召回缺失问题。
 
         Args:
             entries: 索引条目列表，需含 content/summary, memory_id, type, scope 等字段
 
         Returns:
-            重建的条目数
+            新增的条目数
         """
         if self._bm25.cache_loaded and self._bm25.document_count > 0:
-            logger.debug(
-                "BM25 already has %d entries from disk cache, skipping rebuild",
+            existing_ids = {doc.get("memory_id", "") for doc in self._bm25._documents}
+            new_entries = [e for e in entries if e.get("memory_id", "") not in existing_ids]
+            if not new_entries:
+                logger.warning(
+                    "BM25 already has all %d entries from disk cache, skipping",
+                    self._bm25.document_count,
+                )
+                return 0
+            logger.info(
+                "BM25 has %d from cache, adding %d new entries",
                 self._bm25.document_count,
+                len(new_entries),
             )
-            return 0
+            count = 0
+            for entry in new_entries:
+                content = entry.get("content", "") or entry.get("summary", "")
+                memory_id = entry.get("memory_id", "")
+                if content and memory_id:
+                    mem_type = entry.get("type", "fact")
+                    room = entry.get("room", "")
+                    enriched = _enrich_for_rebuild(content, mem_type, room)
+                    self._bm25.add_document(memory_id, enriched)
+                    count += 1
+            self._bm25.flush()
+            return count
         return self._bm25.rebuild_from_entries(entries)
 
     def rebuild_all_from_entries(self, entries: list[dict[str, Any]]) -> dict[str, int]:
@@ -666,22 +1125,22 @@ class HybridRetriever:
                 enriched = _enrich_for_rebuild(content, mem_type, room)
                 try:
                     self._vector.delete(mid)
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning("Vector delete failed in rebuild for %s: %s", mid, e)
                 try:
                     self._bm25.delete(mid)
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning("BM25 delete failed in rebuild for %s: %s", mid, e)
                 try:
                     self._vector.add(enriched, mid, metadata)
                     vec_count += 1
                 except Exception as e:
-                    logger.debug("rebuild vector add failed for %s: %s", mid, e)
+                    logger.warning("rebuild vector add failed for %s: %s", mid, e)
                 try:
                     self._bm25.add(enriched, mid, metadata)
                     bm25_count += 1
                 except Exception as e:
-                    logger.debug("rebuild bm25 add failed for %s: %s", mid, e)
+                    logger.warning("rebuild bm25 add failed for %s: %s", mid, e)
             self._vector.flush()
             logger.info(
                 "HybridRetriever rebuild: vector=%d, bm25=%d from %d entries",
@@ -693,13 +1152,17 @@ class HybridRetriever:
 
 
 def _enrich_for_rebuild(content: str, mem_type: str, room: str = "") -> str:
-    """★ R34修复Minor-3：重建索引时为 secret/skill/procedural 附加可搜索描述。"""
-    if mem_type == "secret":
-        return f"[加密信息/密钥/凭证] {room} {content}"
-    elif mem_type == "skill":
-        return f"[技能/步骤/教程] {room} {content}"
-    elif mem_type == "procedural":
-        return f"[流程/操作/指南] {room} {content}"
+    """★ R34修复Minor-3：重建索引时为各类型附加可搜索描述。"""
+    type_prefixes = {
+        "secret": "[加密信息/密钥/凭证]",
+        "skill": "[技能/步骤/教程]",
+        "procedural": "[流程/操作/指南]",
+        "reasoning": "[教训/经验/踩坑]",
+        "action": "[Agent行为/工具调用]",
+    }
+    prefix = type_prefixes.get(mem_type, "")
+    if prefix:
+        return f"{prefix} {room} {content}"
     return content
 
 

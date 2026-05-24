@@ -91,7 +91,7 @@ def llm_summarize(messages: str, llm_call_fn: Callable[[str], str] | None = None
         response = llm_call_fn(prompt)
         return _parse_llm_response(response)
     except Exception as e:
-        logger.debug("LLM summary failed: %s", e)
+        logger.warning("LLM summary failed: %s", e)
         return _extract_without_llm(messages)
 
 

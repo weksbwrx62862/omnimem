@@ -16,6 +16,8 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
+from omnimem.utils.migration import SchemaMigrator
+
 logger = logging.getLogger(__name__)
 
 
@@ -38,18 +40,24 @@ class FeedbackCollector:
         """初始化反馈数据库。"""
         self._conn = sqlite3.connect(str(self._db_path), check_same_thread=False)
         self._conn.execute("PRAGMA journal_mode=WAL")
+        self._conn.execute("PRAGMA busy_timeout=5000")
 
-        self._conn.execute("""
-            CREATE TABLE IF NOT EXISTS feedback_clicks (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                query TEXT,
-                memory_id TEXT,
-                source_type TEXT,
-                rank INTEGER,
-                action TEXT DEFAULT 'click',
-                timestamp TEXT DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
+        migrator = SchemaMigrator(self._conn)
+        migrator.migrate(
+            table_name="feedback_clicks",
+            create_sql="""
+                CREATE TABLE IF NOT EXISTS feedback_clicks (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    query TEXT,
+                    memory_id TEXT,
+                    source_type TEXT,
+                    rank INTEGER,
+                    action TEXT DEFAULT 'click',
+                    timestamp TEXT DEFAULT CURRENT_TIMESTAMP
+                )
+            """,
+            migrations=[],
+        )
         self._conn.execute("""
             CREATE INDEX IF NOT EXISTS idx_fb_query ON feedback_clicks(query)
         """)
@@ -57,17 +65,21 @@ class FeedbackCollector:
             CREATE INDEX IF NOT EXISTS idx_fb_mid ON feedback_clicks(memory_id)
         """)
 
-        self._conn.execute("""
-            CREATE TABLE IF NOT EXISTS feedback_shown (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                query TEXT,
-                memory_id TEXT,
-                source_type TEXT,
-                rank INTEGER,
-                was_clicked INTEGER DEFAULT 0,
-                timestamp TEXT DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
+        migrator.migrate(
+            table_name="feedback_shown",
+            create_sql="""
+                CREATE TABLE IF NOT EXISTS feedback_shown (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    query TEXT,
+                    memory_id TEXT,
+                    source_type TEXT,
+                    rank INTEGER,
+                    was_clicked INTEGER DEFAULT 0,
+                    timestamp TEXT DEFAULT CURRENT_TIMESTAMP
+                )
+            """,
+            migrations=[],
+        )
         self._conn.commit()
 
     def record_click(
@@ -231,3 +243,51 @@ class FeedbackCollector:
         except Exception as e:
             logger.warning("Feedback stats fetch failed: %s", e)
         return stats
+
+    def get_memory_trust(self, memory_id: str) -> float:
+        """基于反馈数据计算记忆信任评分 (0.0-1.0)。
+
+        对标 Holographic 的信任评分：每次点击 +0.05，展示未点击不扣分，
+        基于点击频次衰减归一。
+        """
+        if not self._conn:
+            return 0.5  # default trust
+        try:
+            row = self._conn.execute(
+                "SELECT COUNT(*) FROM feedback_clicks WHERE memory_id = ?",
+                (memory_id,),
+            ).fetchone()
+            click_count = row[0] if row else 0
+
+            # 归一化：最多 20 次点击得满分
+            base_trust = min(click_count / 20.0, 1.0)
+
+            # 最近一次点击越近，信任越高
+            last_click = self._conn.execute(
+                "SELECT timestamp FROM feedback_clicks WHERE memory_id = ? "
+                "ORDER BY timestamp DESC LIMIT 1",
+                (memory_id,),
+            ).fetchone()
+
+            if last_click and last_click[0]:
+                try:
+                    from datetime import datetime, timezone
+                    last_dt = datetime.fromisoformat(last_click[0].replace("Z", "+00:00"))
+                    days_ago = (datetime.now(timezone.utc) - last_dt.replace(tzinfo=timezone.utc)).days
+                    recency_bonus = max(0, 0.1 - days_ago * 0.01)  # 10天内有效
+                    base_trust = min(base_trust + recency_bonus, 1.0)
+                except (ValueError, TypeError):
+                    pass
+
+            return round(base_trust, 2)
+        except Exception as e:
+            logger.warning("Trust score calculation failed: %s", e)
+            return 0.5
+
+    def close(self):
+        if self._conn:
+            try:
+                self._conn.close()
+                self._conn = None
+            except Exception:
+                pass

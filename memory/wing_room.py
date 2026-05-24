@@ -47,6 +47,8 @@ _TYPE_TO_HALL = {
     "skill": "skills",
     "procedural": "procedures",
     "event": "events",
+    "action": "actions",       # Agent 行为记忆
+    "reasoning": "reasoning",  # 推理链条记忆
 }
 
 # 停用词表（扩展版）
@@ -133,7 +135,10 @@ class WingRoomManager:
 
     def resolve_wing(self, scope: str) -> str:
         """将 scope 映射为 Wing 名称。"""
-        return _SCOPE_TO_WING.get(scope, scope)
+        wing = _SCOPE_TO_WING.get(scope, scope)
+        if wing == scope and scope not in _SCOPE_TO_WING:
+            logger.warning("Unknown scope '%s', using as-is", scope)
+        return wing
 
     def resolve_wing_from_privacy(self, privacy: str, memory_type: str = "") -> str:
         """直接从 privacy 值映射到 wing。
@@ -151,7 +156,10 @@ class WingRoomManager:
         Returns:
             wing 名称
         """
-        return _PRIVACY_TO_WING.get(privacy, "personal")
+        wing = _PRIVACY_TO_WING.get(privacy, "personal")
+        if privacy not in _PRIVACY_TO_WING:
+            logger.warning("Unknown privacy '%s', defaulting to 'personal'", privacy)
+        return wing
 
     def resolve_hall(self, memory_type: str) -> str:
         """将 memory_type 映射为 Hall 名称。"""
@@ -223,6 +231,68 @@ class WingRoomManager:
             return []
         return [d.name for d in hall_path.iterdir() if d.is_dir() and not d.name.startswith("_")]
 
+    def tree(self, wing: str = "", hall: str = "") -> dict[str, Any]:
+        """展示目录树 — 内化 OpenViking tree()。
+        
+        Returns:
+            嵌套字典表示的目录树：
+            {
+                "personal": {
+                    "facts": ["docker", "python", "猫咪"],
+                    "preferences": ["称呼", "饮食"],
+                },
+                "team": {
+                    "skills": ["部署"],
+                },
+            }
+        """
+        result: dict[str, Any] = {}
+        wings = [wing] if wing else self.list_wings()
+        for w in wings:
+            halls = [hall] if hall else self.list_halls(w)
+            result[w] = {}
+            for h in halls:
+                rooms = self.list_rooms(w, h)
+                result[w][h] = rooms
+        return result
+
+    def grep_rooms(self, pattern: str) -> list[dict[str, str]]:
+        """搜索 Room 名称 — 内化 OpenViking grep()。
+        
+        在所有 Wing/Hall 下搜索匹配 pattern 的 Room 名称。
+        
+        Args:
+            pattern: 搜索模式（子串匹配，不区分大小写）
+        
+        Returns:
+            [{"wing": str, "hall": str, "room": str}, ...]
+        """
+        pattern_lower = pattern.lower()
+        results = []
+        for wing in self.list_wings():
+            for hall in self.list_halls(wing):
+                for room in self.list_rooms(wing, hall):
+                    if pattern_lower in room.lower():
+                        results.append({"wing": wing, "hall": hall, "room": room})
+        return results
+
+    def count_memories(self, wing: str = "", hall: str = "", room: str = "") -> dict[str, int]:
+        """统计各目录下的记忆数量。"""
+        result = {}
+        wings = [wing] if wing else self.list_wings()
+        for w in wings:
+            halls = [hall] if hall else self.list_halls(w)
+            for h in halls:
+                rooms = [room] if room else self.list_rooms(w, h)
+                for r in rooms:
+                    path = self.get_room_path(w, h, r)
+                    drawer_path = path / "drawer"
+                    if drawer_path.exists():
+                        count = len(list(drawer_path.glob("*.md")))
+                        key = f"{w}/{h}/{r}"
+                        result[key] = count
+        return result
+
     def _detect_topic(self, content: str) -> str | None:
         """从内容中检测话题。
 
@@ -288,8 +358,18 @@ class WingRoomManager:
         return None
 
     @staticmethod
-    def _sanitize_name(name: str) -> str:
-        """清理名称，使其可安全用于文件路径。"""
+    def _sanitize_name(name: str, max_len: int = 20) -> str:
+        """清理名称，使其可安全用于文件路径。最长 20 字符。"""
         sanitized = re.sub(r"[^\w\u4e00-\u9fff-]", "-", name)
         sanitized = sanitized.strip("-")
-        return sanitized[:50] if sanitized else "unnamed"
+        if not sanitized:
+            return "unnamed"
+        # 优先截取首个有意义的片段
+        if len(sanitized) > max_len:
+            # 尝试在标点或空格处截断
+            cut = sanitized[:max_len]
+            last_dash = max(cut.rfind("-"), cut.rfind("_"))
+            if last_dash > max_len // 2:
+                cut = cut[:last_dash]
+            return cut
+        return sanitized

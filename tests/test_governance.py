@@ -177,8 +177,9 @@ class TestForgettingCurve(unittest.TestCase):
         self.fc.archive("s-1")
         self.fc.flush()
         status = self.fc.get_status()
-        self.assertIn("active", status)
-        self.assertIn("archived", status)
+        self.assertIn("stages", status)
+        self.assertIn("active", status["stages"])
+        self.assertIn("archived", status["stages"])
 
 
 class TestPrivacyManager(unittest.TestCase):

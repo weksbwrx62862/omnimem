@@ -1,9 +1,13 @@
+from __future__ import annotations
+
 """检索模块单元测试。
 
 覆盖: RRFFusion / CrossEncoderReranker / VectorRetriever / BM25Retriever / HybridRetriever
 """
 
-from __future__ import annotations
+import pytest
+pytest.importorskip("chromadb", reason="chromadb not installed")
+pytest.importorskip("sentence_transformers", reason="sentence-transformers not installed")
 
 import tempfile
 import unittest

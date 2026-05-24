@@ -154,7 +154,7 @@ class MemoryStoreService:
             ),
         )
         self._last_save_turn = self._turn_count
-        logger.debug("Auto checkpoint at turn %d", self._turn_count)
+        logger.warning("Auto checkpoint at turn %d", self._turn_count)
         return True
 
     # ─── Emergency save ──────────────────────────────────────

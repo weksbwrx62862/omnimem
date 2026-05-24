@@ -7,14 +7,20 @@ OPT-6: 支持磁盘缓存，跨会话后快速恢复索引而无需全量重建�
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
-import pickle
 import re
 import threading
 from pathlib import Path
 from typing import Any
+
+try:
+    import jieba
+    _HAS_JIEBA = True
+except ImportError:
+    _HAS_JIEBA = False
 
 logger = logging.getLogger(__name__)
 
@@ -22,20 +28,6 @@ logger = logging.getLogger(__name__)
 # ★ 高频噪声词集合（IDF值极低，会稀释有效词的区分度）
 # 这些词在BM25中几乎无区分能力，需降权处理
 _NOISE_WORDS = {
-    "偏好",
-    "喜欢",
-    "需要",
-    "可以",
-    "应该",
-    "知道",
-    "觉得",
-    "认为",
-    "希望",
-    "想要",
-    "重要",
-    "关键",
-    "主要",
-    "基本",
     "问题",
     "方法",
     "使用",
@@ -85,7 +77,7 @@ def _load_common_zh_words() -> set[str]:
         if isinstance(external, list):
             return set(external)
     except FileNotFoundError:
-        logger.debug("zh_words.json not found at %s, using minimal stopwords", config_path)
+        logger.warning("zh_words.json not found at %s, using minimal stopwords", config_path)
     except Exception:
         logger.warning("Failed to load zh_words.json from %s, using minimal stopwords", config_path)
     return set(_MINIMAL_ZH_STOPWORDS)
@@ -99,26 +91,28 @@ def _ensure_common_zh_words() -> None:
 
 
 def _tokenize(text: str) -> list[str]:
-    """中英文混合分词（正向最大匹配 + 英文单词）。
+    if _HAS_JIEBA:
+        raw_tokens = jieba.lcut(text)
+        processed = []
+        for t in raw_tokens:
+            if not re.search(r'[\u4e00-\u9fffa-zA-Z0-9]', t):
+                continue
+            processed.append(t)
+        if not processed and re.search(r'[\u4e00-\u9fff]', text):
+            zh_chars = re.findall(r'[\u4e00-\u9fff]', text)
+            if zh_chars:
+                processed = [zh_chars[0]]
+        return processed
 
-    分词策略：
-    1. 英文：按完整单词切分（≥2字母）
-    2. 中文：正向最大匹配，4字→3字→2字词必须在词典中
-    3. 词典未匹配时单字回退（避免跨过下一个词典词的起始位置）
-    4. 单字不入最终结果（BM25 对单字 IDF 过低，噪音大）
-    """
     _ensure_common_zh_words()
     raw_tokens = []
-    # 英文单词
-    raw_tokens.extend(re.findall(r"[a-zA-Z]{2,}", text.lower()))
+    raw_tokens.extend(re.findall(r"[a-zA-Z0-9]{2,}", text.lower()))
 
-    # 中文分词：正向最大匹配
     zh_chars = re.findall(r"[\u4e00-\u9fff]+", text)
     for segment in zh_chars:
         i = 0
         while i < len(segment):
             matched = False
-            # 优先匹配4字词 → 3字词 → 2字词（词典优先）
             for word_len in (4, 3, 2):
                 if i + word_len > len(segment):
                     continue
@@ -129,18 +123,19 @@ def _tokenize(text: str) -> list[str]:
                     matched = True
                     break
             if not matched:
-                # 词典未匹配：单字回退
                 raw_tokens.append(segment[i])
                 i += 1
 
-    # 过滤单字（中文单字对 BM25 噪音大，保留英文和≥2字的中文词）
     filtered = [t for t in raw_tokens if len(t) >= 2 or not re.match(r"[\u4e00-\u9fff]", t)]
 
-    # ★ Fallback: 如果过滤后为空，回退到不过滤单字的版本（排除纯虚词停用词）
-    # 修复短查询如 "我是谁"、"小兰" 被完全过滤的问题
     if not filtered and raw_tokens:
         _stop_chars = {"的", "了", "是", "在", "和", "就", "也", "很", "到", "说", "要", "去", "不"}
         filtered = [t for t in raw_tokens if t not in _stop_chars]
+
+    if not filtered and re.search(r'[\u4e00-\u9fff]', text):
+        zh_chars = re.findall(r'[\u4e00-\u9fff]', text)
+        if zh_chars:
+            filtered = [zh_chars[0]]
 
     return filtered
 
@@ -157,12 +152,15 @@ class BM25Retriever:
       - rebuild_from_entries() 全量重建公开接口
     """
 
-    def __init__(self, buffer_size: int = 50, data_dir: Path | None = None):
+    CACHE_VERSION = 3
+
+    def __init__(self, buffer_size: int = 50, data_dir: Path | None = None, max_documents: int = 5000):
         self._corpus: list[list[str]] = []
         self._documents: list[dict[str, Any]] = []
         self._bm25: Any = None
         self._buffer: list[dict[str, Any]] = []
         self._buffer_size = buffer_size
+        self._max_documents = max_documents
         self._data_dir = data_dir
         self._lock = threading.Lock()
         self._dirty = False
@@ -286,7 +284,7 @@ class BM25Retriever:
                     results.append(entry)
             return results
         except Exception as e:
-            logger.debug("BM25 search failed: %s", e)
+            logger.warning("BM25 search failed: %s", e)
             return []
 
     def flush(self) -> None:
@@ -341,6 +339,11 @@ class BM25Retriever:
             content = entry.get("content", "") or entry.get("summary", "")
             memory_id = entry.get("memory_id", "")
             if content and memory_id:
+                existing_ids = {doc.get("memory_id", ""): i for i, doc in enumerate(self._documents)}
+                if memory_id in existing_ids:
+                    old_content = self._documents[existing_ids[memory_id]].get("content", "")
+                    if hashlib.md5(old_content.encode()).hexdigest() != hashlib.md5(content.encode()).hexdigest():
+                        self.delete(memory_id)
                 self.add_document(memory_id, content)
                 rebuilt += 1
         with self._lock:
@@ -357,6 +360,10 @@ class BM25Retriever:
             self._corpus.append(tokens)
             self._documents.append(entry)
         self._buffer.clear()
+        # ★ P3 LRU淘汰：超出上限时删除最旧文档
+        while len(self._documents) > self._max_documents:
+            self._corpus.pop(0)
+            self._documents.pop(0)
         self._rebuild()
 
     def _rebuild(self) -> None:
@@ -383,9 +390,10 @@ class BM25Retriever:
                 with self._lock:
                     if self._buffer:
                         self._flush_buffer()
+                        self._save_to_disk()
                         self._dirty = False
             except Exception:
-                logger.debug("BM25 background rebuild failed", exc_info=True)
+                logger.warning("BM25 background rebuild failed", exc_info=True)
             finally:
                 self._rebuilding = False
 
@@ -397,40 +405,43 @@ class BM25Retriever:
     def _disk_cache_path(self) -> Path | None:
         if self._data_dir is None:
             return None
-        return self._data_dir / "bm25_cache.pkl"
+        return self._data_dir / "bm25_cache.json"
 
     def _load_from_disk(self) -> None:
         cache_path = self._disk_cache_path()
         if cache_path is None or not cache_path.exists():
             return
         try:
-            with open(cache_path, "rb") as f:
-                cached = pickle.load(f)
-            if cached.get("version") != 1:
-                logger.debug("BM25 disk cache version mismatch, ignoring")
+            with open(cache_path, "r", encoding="utf-8") as f:
+                cached = json.load(f)
+            if cached.get("version") != self.CACHE_VERSION:
+                logger.warning("BM25 disk cache version mismatch (expected %d, got %d), rebuilding", self.CACHE_VERSION, cached.get("version", 0))
+                try:
+                    cache_path.unlink()
+                except OSError:
+                    pass
                 return
             self._corpus = cached.get("corpus", [])
             self._documents = cached.get("documents", [])
             if self._corpus:
                 self._rebuild()
                 self._cache_loaded = True
-                logger.debug("BM25 loaded %d entries from disk cache", len(self._documents))
+                logger.warning("BM25 loaded %d entries from disk cache", len(self._documents))
         except Exception as e:
-            logger.debug("BM25 disk cache load failed: %s", e)
+            logger.warning("BM25 disk cache load failed: %s", e)
 
     def _save_to_disk(self) -> None:
-        """将 corpus 和 documents 持久化到磁盘。"""
         cache_path = self._disk_cache_path()
         if cache_path is None:
             return
         try:
             cache_path.parent.mkdir(parents=True, exist_ok=True)
-            with open(cache_path, "wb") as f:
-                pickle.dump(
-                    {"version": 1, "corpus": self._corpus, "documents": self._documents},
+            with open(cache_path, "w", encoding="utf-8") as f:
+                json.dump(
+                    {"version": self.CACHE_VERSION, "corpus": self._corpus, "documents": self._documents},
                     f,
-                    protocol=pickle.HIGHEST_PROTOCOL,
+                    ensure_ascii=False,
                 )
-            logger.debug("BM25 saved %d entries to disk cache", len(self._documents))
+            logger.warning("BM25 saved %d entries to disk cache", len(self._documents))
         except Exception as e:
-            logger.debug("BM25 disk cache save failed: %s", e)
+            logger.warning("BM25 disk cache save failed: %s", e)

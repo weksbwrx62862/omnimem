@@ -18,6 +18,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from omnimem.utils.migration import SchemaMigrator
+
 logger = logging.getLogger(__name__)
 
 _DB_RETRY_COUNT = 3
@@ -60,23 +62,52 @@ class ThreeLevelIndex:
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA synchronous=NORMAL")
         self._conn.execute("PRAGMA busy_timeout=5000")
-        self._conn.execute("""
-            CREATE TABLE IF NOT EXISTS memory_index (
-                memory_id TEXT PRIMARY KEY,
-                wing TEXT NOT NULL,
-                hall TEXT NOT NULL,
-                room TEXT NOT NULL,
-                content TEXT NOT NULL,
-                summary TEXT,
-                type TEXT NOT NULL,
-                confidence INTEGER DEFAULT 3,
-                privacy TEXT DEFAULT 'personal',
-                scope TEXT DEFAULT 'personal',
-                stored_at TEXT,
-                provenance TEXT,
-                metadata TEXT
-            )
-        """)
+        migrator = SchemaMigrator(self._conn)
+        migrator.migrate(
+            table_name="memory_index",
+            create_sql="""
+                CREATE TABLE IF NOT EXISTS memory_index (
+                    memory_id TEXT PRIMARY KEY,
+                    wing TEXT NOT NULL,
+                    hall TEXT NOT NULL,
+                    room TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    summary TEXT,
+                    type TEXT NOT NULL,
+                    confidence INTEGER DEFAULT 3,
+                    privacy TEXT DEFAULT 'personal',
+                    scope TEXT DEFAULT 'personal',
+                    stored_at TEXT,
+                    provenance TEXT,
+                    metadata TEXT
+                )
+            """,
+            migrations=[],
+        )
+
+        # ★ 旧 schema 迁移：补全缺失的列
+        _MIGRATE_COLUMNS = [
+            ("wing", "TEXT NOT NULL DEFAULT ''"),
+            ("hall", "TEXT NOT NULL DEFAULT ''"),
+            ("room", "TEXT NOT NULL DEFAULT ''"),
+            ("summary", "TEXT"),
+            ("confidence", "INTEGER DEFAULT 3"),
+            ("privacy", "TEXT DEFAULT 'personal'"),
+            ("scope", "TEXT DEFAULT 'personal'"),
+            ("stored_at", "TEXT"),
+            ("provenance", "TEXT"),
+            ("metadata", "TEXT"),
+            ("conflicting_with", "TEXT"),
+            ("conflict_type", "TEXT"),
+        ]
+        for col_name, col_def in _MIGRATE_COLUMNS:
+            try:
+                self._conn.execute(f"SELECT {col_name} FROM memory_index LIMIT 1")
+            except sqlite3.OperationalError:
+                # 列名来自硬编码常量，非用户输入，安全使用 f-string
+                self._conn.execute(f"ALTER TABLE memory_index ADD COLUMN {col_name} {col_def}")
+                logger.info("Index migrated: added %s column", col_name)
+
         self._conn.execute("""
             CREATE INDEX IF NOT EXISTS idx_wing ON memory_index(wing)
         """)
@@ -86,14 +117,6 @@ class ThreeLevelIndex:
         self._conn.execute("""
             CREATE INDEX IF NOT EXISTS idx_stored_at ON memory_index(stored_at)
         """)
-
-        # ★ R28v2修复BUG-3：添加冲突信息列迁移
-        for col in ("conflicting_with", "conflict_type"):
-            try:
-                self._conn.execute(f"SELECT {col} FROM memory_index LIMIT 1")
-            except sqlite3.OperationalError:
-                self._conn.execute(f"ALTER TABLE memory_index ADD COLUMN {col} TEXT")
-                logger.info("Index migrated: added %s column", col)
 
         self._conn.commit()
 
@@ -150,7 +173,7 @@ class ThreeLevelIndex:
             )
             self._maybe_commit()
         except Exception as e:
-            logger.debug("Index add failed for %s: %s", memory_id, e)
+            logger.warning("Index add failed for %s: %s", memory_id, e)
 
     def get(self, memory_id: str) -> dict[str, Any] | None:
         """根据 ID 获取索引记录。"""
@@ -163,7 +186,7 @@ class ThreeLevelIndex:
             if row:
                 return self._row_to_dict(row)
         except Exception as e:
-            logger.debug("Index get failed for %s: %s", memory_id, e)
+            logger.warning("Index get failed for %s: %s", memory_id, e)
         return None
 
     def delete(self, memory_id: str) -> bool:
@@ -177,7 +200,7 @@ class ThreeLevelIndex:
             self._maybe_commit()
             return True
         except Exception as e:
-            logger.debug("Index delete failed for %s: %s", memory_id, e)
+            logger.warning("Index delete failed for %s: %s", memory_id, e)
             return False
 
     def search_l0(self, wing: str = "", hall: str = "") -> list[str]:
@@ -195,9 +218,59 @@ class ThreeLevelIndex:
             rows = self._conn.execute(query, params).fetchall()
             return [r[0] for r in rows]
         except Exception as e:
-            logger.debug("L0 search failed: %s", e)
-            return []
-
+            logger.warning("L0 search failed: %s", e)
+            raise
+    
+    def search_by_directory(
+        self,
+        wing: str = "",
+        hall: str = "",
+        room: str = "",
+    ) -> list[dict[str, Any]]:
+        """按目录结构查询索引条目。
+        
+        内化 OpenViking 的目录定位能力：
+        通过 Wing/Hall/Room 三级目录缩小搜索空间，
+        返回目录内所有条目的 memory_id 和摘要。
+        
+        Args:
+            wing: Wing 名称（personal/team/public）
+            hall: Hall 名称（facts/preferences/...）
+            room: Room 名称（话题）
+        
+        Returns:
+            匹配的索引条目列表
+        """
+        assert self._conn is not None
+        query = "SELECT memory_id, wing, hall, room, summary, type, confidence FROM memory_index WHERE 1=1"
+        params = []
+        if wing:
+            query += " AND wing = ?"
+            params.append(wing)
+        if hall:
+            query += " AND hall = ?"
+            params.append(hall)
+        if room:
+            query += " AND room = ?"
+            params.append(room)
+        try:
+            rows = self._conn.execute(query, params).fetchall()
+            return [
+                {
+                    "memory_id": r[0],
+                    "wing": r[1],
+                    "hall": r[2],
+                    "room": r[3],
+                    "summary": r[4],
+                    "type": r[5],
+                    "confidence": r[6],
+                }
+                for r in rows
+            ]
+        except Exception as e:
+            logger.warning("Directory search failed: %s", e)
+            raise
+    
     def search_l1(self, wing: str = "", type: str = "", limit: int = 50) -> list[dict[str, Any]]:
         """L1 摘要索引：返回摘要记录（含 content 用于 warm_up）。"""
         assert self._conn is not None
@@ -231,8 +304,8 @@ class ThreeLevelIndex:
                 for r in rows
             ]
         except Exception as e:
-            logger.debug("L1 search failed: %s", e)
-            return []
+            logger.warning("L1 search failed: %s", e)
+            raise
 
     def search_l2(
         self,
@@ -261,8 +334,8 @@ class ThreeLevelIndex:
             rows = self._conn.execute(query, params).fetchall()
             return [self._row_to_dict(r) for r in rows]
         except Exception as e:
-            logger.debug("L2 search failed: %s", e)
-            return []
+            logger.warning("L2 search failed: %s", e)
+            raise
 
     def search_all_for_retrieval(self, limit: int = 1000) -> list[dict[str, Any]]:
         """获取所有记录（用于检索引擎全量索引）。"""
@@ -274,8 +347,8 @@ class ThreeLevelIndex:
             ).fetchall()
             return [self._row_to_dict(r) for r in rows]
         except Exception as e:
-            logger.debug("Full index scan failed: %s", e)
-            return []
+            logger.warning("Full index scan failed: %s", e)
+            raise
 
     def update_privacy(self, memory_id: str, privacy: str) -> bool:
         """更新隐私级别。"""
@@ -288,7 +361,7 @@ class ThreeLevelIndex:
             self._maybe_commit()
             return True
         except Exception as e:
-            logger.debug("Privacy update failed: %s", e)
+            logger.warning("Privacy update failed: %s", e)
             return False
 
     def update_field(self, memory_id: str, immediate: bool = False, **fields: Any) -> bool:
@@ -317,7 +390,7 @@ class ThreeLevelIndex:
                 self._maybe_commit()
             return True
         except Exception as e:
-            logger.debug("Field update failed: %s", e)
+            logger.warning("Field update failed: %s", e)
             return False
 
     def remove(self, memory_id: str) -> bool:
@@ -331,7 +404,7 @@ class ThreeLevelIndex:
             self._maybe_commit()
             return True
         except Exception as e:
-            logger.debug("Index remove failed: %s", e)
+            logger.warning("Index remove failed: %s", e)
             return False
 
     def close(self) -> None:

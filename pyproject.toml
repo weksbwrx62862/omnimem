@@ -37,11 +37,10 @@ classifiers = [
 ]
 
 dependencies = [
-    "chromadb>=0.4.0,<0.7.0",
     "rank-bm25>=0.2.0,<0.3.0",
     "tiktoken>=0.7.0",
     "pyyaml>=6.0",
-    "sentence-transformers>=2.2.0",
+    "typing-extensions>=4.0.0",
 ]
 
 [project.scripts]
@@ -63,6 +62,15 @@ mcp = [
 langchain = [
     "langchain>=0.1.0",
 ]
+vector = [
+    "chromadb>=0.4.0,<0.7.0",
+    "sentence-transformers>=2.2.0",
+]
+nlp = [
+    "jieba>=0.42.1",
+    "openai>=1.0.0",
+    "httpx>=0.24.0",
+]
 dev = [
     "pytest>=7.0.0",
     "pytest-asyncio>=0.21.0",
@@ -72,7 +80,7 @@ dev = [
     "pre-commit>=3.0.0",
 ]
 all = [
-    "omnimem[crypto,lora,mcp,langchain,dev]",
+    "omnimem[crypto,lora,mcp,langchain,nlp,vector,dev]",
 ]
 
 [project.urls]

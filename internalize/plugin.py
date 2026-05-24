@@ -6,9 +6,12 @@ import logging
 from abc import ABC, abstractmethod
 from typing import Any
 
+from omnimem.utils.experimental import experimental_class
+
 logger = logging.getLogger(__name__)
 
 
+@experimental_class
 class InternalizationPlugin(ABC):
     @abstractmethod
     def name(self) -> str:
@@ -89,7 +92,7 @@ class PluginRegistry:
         if plugin.is_available():
             self._plugins[plugin.name()] = plugin
         else:
-            logger.debug("Plugin %s skipped: dependencies not available", plugin.name())
+            logger.warning("Plugin %s skipped: dependencies not available", plugin.name())
 
     def get(self, name: str) -> InternalizationPlugin | None:
         return self._plugins.get(name)
@@ -106,4 +109,4 @@ class PluginRegistry:
             try:
                 plugin.close()
             except Exception:
-                logger.debug("Failed to close plugin %s", plugin.name(), exc_info=True)
+                logger.warning("Failed to close plugin %s", plugin.name(), exc_info=True)

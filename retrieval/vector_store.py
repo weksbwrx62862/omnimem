@@ -30,6 +30,23 @@ for _logger_name in ("chromadb.telemetry.product.posthog", "chromadb.telemetry")
 logger = logging.getLogger(__name__)
 
 
+def _emit(msg: str) -> None:
+    """向用户输出状态消息。
+    
+    优先写入 stderr（CLI 中可见），
+    非 TTY 环境（gateway/cron/background）降级为 logger.info。
+    """
+    try:
+        import sys
+        if sys.stderr.isatty():
+            sys.stderr.write(msg + "\n")
+            sys.stderr.flush()
+        else:
+            logger.info(msg)
+    except Exception:
+        logger.info(msg)
+
+
 class VectorStore(ABC):
     @abstractmethod
     def add(self, ids: list[str], documents: list[str], metadatas: list[dict] | None = None) -> None:
@@ -87,6 +104,12 @@ class _CachedEmbeddingFunction:
     def is_legacy() -> bool:
         return False
 
+    @property
+    def cache_size(self) -> int:
+        """当前内存缓存条目数。"""
+        with self._lock:
+            return len(self._cache)
+
     def _load_cache(self) -> None:
         if not self._cache_path or not self._cache_path.exists():
             return
@@ -96,9 +119,12 @@ class _CachedEmbeddingFunction:
             with open(self._cache_path, encoding="utf-8") as f:
                 data = json.load(f)
             self._cache = {k: [float(v) for v in vec] for k, vec in data.items()}
-            logger.debug("Loaded %d entries from embedding cache", len(self._cache))
+            count = len(self._cache)
+            logger.warning("Loaded %d entries from embedding cache", count)
+            if count > 0:
+                _emit(f"[OmniMem] 嵌入缓存: 从磁盘加载 {count} 条")
         except Exception as e:
-            logger.debug("Embedding cache load failed: %s", e)
+            logger.warning("Embedding cache load failed: %s", e)
             self._cache = {}
 
     def persist(self) -> None:
@@ -112,20 +138,34 @@ class _CachedEmbeddingFunction:
                 data = dict(self._cache)
             with open(self._cache_path, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False)
-            logger.debug("Saved %d entries to embedding cache", len(data))
+            logger.warning("Saved %d entries to embedding cache", len(data))
         except Exception as e:
-            logger.debug("Embedding cache persist failed: %s", e)
+            logger.warning("Embedding cache persist failed: %s", e)
 
     def _get_model(self) -> Any:
         if self._model is None:
+            import time
+            import os
             import torch.distributed as dist
 
             if not hasattr(dist, "is_initialized"):
                 dist.is_initialized = lambda: False
             from sentence_transformers import SentenceTransformer
 
+            # ★ GFW 修复：使用中国镜像 + CPU 模式
+            if 'HF_ENDPOINT' not in os.environ:
+                os.environ['HF_ENDPOINT'] = 'https://hf-mirror.com'
+
             model_path = self._model_path or self._model_name
-            self._model = SentenceTransformer(model_path)
+            _emit(f"[OmniMem] 正在加载嵌入模型: {model_path} ...")
+            t0 = time.time()
+            try:
+                self._model = SentenceTransformer(model_path, device='cpu')
+                elapsed = time.time() - t0
+                _emit(f"[OmniMem] 嵌入模型加载完成 ({model_path}, {elapsed:.1f}s, CPU)")
+            except Exception as e:
+                _emit(f"[OmniMem] ⚠ 嵌入模型加载失败: {e}")
+                raise
         return self._model
 
     def __call__(self, input: list[str]) -> list[list[float]]:
@@ -175,6 +215,7 @@ class ChromaDBStore(VectorStore):
         self._client: Any = None
         self._collection: Any = None
         self._initialized = False
+        self._persist_pending = False
 
     def _ensure_initialized(self) -> None:
         if self._initialized:
@@ -218,7 +259,7 @@ class ChromaDBStore(VectorStore):
                         name=self._collection_name,
                         metadata={"hnsw:space": "cosine"},
                     )
-            logger.debug(
+            logger.warning(
                 "ChromaDB collection initialized: %d documents",
                 self._collection.count() if self._collection else 0,
             )
@@ -269,7 +310,7 @@ class ChromaDBStore(VectorStore):
             finally:
                 conn.close()
         except Exception as e:
-            logger.debug("ChromaDB config migration skipped: %s", e)
+            logger.warning("ChromaDB config migration skipped: %s", e)
 
     def add(self, ids: list[str], documents: list[str], metadatas: list[dict] | None = None) -> None:
         self._ensure_initialized()
@@ -280,6 +321,7 @@ class ChromaDBStore(VectorStore):
             self._persist_client()
         except Exception as e:
             logger.warning("ChromaDBStore add failed: %s", e)
+            raise RuntimeError(f"ChromaDBStore add failed: {e}") from e
 
     def query(self, query_texts: list[str], n_results: int = 10, where: dict | None = None) -> dict:
         self._ensure_initialized()
@@ -298,12 +340,14 @@ class ChromaDBStore(VectorStore):
                 kwargs["where"] = where
             return self._collection.query(**kwargs)
         except Exception as e:
-            logger.debug("ChromaDBStore query failed: %s", e)
+            logger.warning("ChromaDBStore query failed: %s", e)
             return {"ids": [[]], "documents": [[]], "metadatas": [[]], "distances": [[]]}
 
     def delete(self, ids: list[str]) -> None:
         self._ensure_initialized()
         if self._collection is None:
+            return
+        if not ids:
             return
         try:
             self._collection.delete(ids=ids)
@@ -338,8 +382,10 @@ class ChromaDBStore(VectorStore):
         try:
             if self._client and hasattr(self._client, "persist"):
                 self._client.persist()
-        except Exception:
-            pass
+                self._persist_pending = False
+        except Exception as e:
+            logger.warning("ChromaDB persist failed: %s", e)
+            self._persist_pending = True
 
 
 class QdrantStore(VectorStore):
@@ -374,7 +420,7 @@ class QdrantStore(VectorStore):
                     collection_name=self._collection_name,
                     vectors_config=VectorParams(size=384, distance=Distance.COSINE),
                 )
-            logger.debug("Qdrant collection initialized: %s", self._collection_name)
+            logger.warning("Qdrant collection initialized: %s", self._collection_name)
         except ImportError:
             logger.warning("qdrant-client not installed — Qdrant vector search unavailable")
         except Exception as e:
@@ -435,7 +481,7 @@ class QdrantStore(VectorStore):
                 "distances": distances,
             }
         except Exception as e:
-            logger.debug("QdrantStore query failed: %s", e)
+            logger.warning("QdrantStore query failed: %s", e)
             return {"ids": [[]], "documents": [[]], "metadatas": [[]], "distances": [[]]}
 
     def delete(self, ids: list[str]) -> None:

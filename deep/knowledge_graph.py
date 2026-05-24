@@ -21,6 +21,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from omnimem.utils.migration import SchemaMigrator
+
 logger = logging.getLogger(__name__)
 
 
@@ -156,18 +158,60 @@ def extract_entities(text: str) -> list[str]:
         entities.add(subj)
         entities.add(obj)
 
+    # ★ 裸中文人名检测（无需上下文标记）
+    # 使用与 _classify_entity_poleo 相同的姓氏列表
+    _cn_surnames_ent = (
+        "王李张刘陈杨黄赵周吴徐孙马胡朱郭何罗高林郑梁谢唐许冯宋韩邓彭曹曾田萧"
+        "潘袁蔡蒋余于杜叶程苏魏吕丁任卢姚钟姜崔谭陆汪范金石廖贾夏韦付方白邹孟"
+        "熊秦邱江尹薛闫段雷侯龙史陶黎贺顾毛郝龚邵万钱严覃武戴莫孔向汤温康施文"
+        "牛樊葛邢安齐易乔伍庞颜倪庄聂章鲁岳翟殷詹申欧耿关兰焦俞左柳甘祝包宁尚"
+        "司马欧阳上官皇甫诸葛令狐司徒"
+    )
+    _concept_words_set = {
+        "问题", "方法", "方案", "结果", "数据", "功能", "配置", "部署",
+        "测试", "需求", "设计", "架构", "实现", "开发", "优化", "模块",
+        "系统", "服务", "接口", "组件", "引擎", "管道", "通道", "版本",
+        "发布", "编辑", "文档", "搜索", "索引", "缓存", "进程", "线程",
+    }
+    # 扫描所有2-4字中文序列，检测是否为人名
+    # 使用滑动窗口，逐字从姓氏位置开始匹配
+    chars = list(text)
+    seen_names = set()
+    # 句子连接词/动词/介词 — 不应出现在人名中
+    _name_break_chars = set("的在了和是就也都很到说要去了不有这那个什么怎么可以需要通过使用进行包括负责参与处理完成检查确认执行部署配置优化升级返回发送接收")
+    for i in range(len(chars)):
+        if chars[i] not in _cn_surnames_ent:
+            continue
+        for name_len in (3, 2):  # 中文名通常 2-3 字
+            if i + name_len > len(chars):
+                continue
+            cand = "".join(chars[i:i + name_len])
+            if not re.match(r"^[\u4e00-\u9fff]+$", cand):
+                continue
+            # 末尾字符不应是句连接词
+            if cand[-1] in _name_break_chars:
+                continue
+            if cand in entities or cand in seen_names:
+                continue
+            if cand in _concept_words_set:
+                continue
+            entities.add(cand)
+            seen_names.add(cand)
+            break
+
     # 去除太短的实体
     return [e for e in entities if len(e) >= 2]
 
 
-def extract_triples(text: str) -> list[tuple[str, str, str]]:
+def extract_triples(text: str, use_llm: bool = True) -> list[tuple[str, str, str]]:
     """从文本中提取 (主语, 关系, 宾语) 三元组。
 
-    Returns:
-        List of (subject, predicate, object) tuples
+    优先使用正则提取，结果不足时回退到 LLM 提取。
+    Returns: List of (subject, predicate, object) tuples
     """
     triples: list[tuple[str, str, str]] = []
 
+    # 1. 正则提取（快速）
     for pattern, predicate in _RELATION_PATTERNS:
         matches = re.findall(pattern, text)
         for match in matches:
@@ -183,11 +227,74 @@ def extract_triples(text: str) -> list[tuple[str, str, str]]:
             if isinstance(match, tuple) and len(match) >= 2:
                 subj, obj = match[0], match[1]
                 if subj and obj and subj != obj:
-                    triples.append((subj, predicate, obj))
+                    triples.append((subj, predicate + "_not", obj))
+
+    # 2. LLM 回退：正则结果不足 2 条且文本较长时使用
+    if use_llm and len(triples) < 2 and len(text) > 30:
+        try:
+            llm_triples = _extract_triples_llm(text)
+            # 去重合并
+            existing = {(s.lower(), p.lower(), o.lower()) for s, p, o in triples}
+            for s, p, o in llm_triples:
+                key = (s.lower(), p.lower(), o.lower())
+                if key not in existing:
+                    triples.append((s, p, o))
+                    existing.add(key)
+        except Exception as e:
+            logger.debug("LLM triple extraction failed, using regex only: %s", e)
 
     return triples
 
 
+def _extract_triples_llm(text: str) -> list[tuple[str, str, str]]:
+    """使用 LLM 从文本中抽取知识三元组（轻量级，仅在正则不足时调用）。"""
+    import yaml
+    from openai import OpenAI
+
+    # 读取 API 配置
+    config_path = Path.home() / ".hermes" / "config.yaml"
+    if not config_path.exists():
+        return []
+    with open(config_path) as f:
+        cfg = yaml.safe_load(f)
+    providers = cfg.get("providers", {})
+    ds = providers.get("openai", {})
+    if not ds.get("api_key"):
+        return []
+
+    client = OpenAI(api_key=ds["api_key"], base_url=ds.get("base_url", ""))
+
+    prompt = f"""从以下文本中抽取知识三元组 (subject, predicate, object)。
+要求：
+- 抽取 1-3 个最重要的三元组
+- subject/object 是有意义的实体（技术名、工具、概念、人名、地名）
+- predicate 是中文或英文关系词（使用、属于、推荐、避免、解决、配置、导致等）
+- 跳过信息量不足的文本
+
+文本：
+{text[:500]}
+
+返回 JSON 数组：[{{"s": "...", "p": "...", "o": "..."}}]
+只返回 JSON。"""
+
+    resp = client.chat.completions.create(
+        model="deepseek-v4-flash",
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.3,
+        max_tokens=500,
+    )
+    raw = resp.choices[0].message.content or ""
+
+    import json
+    m = re.search(r"\[\s\S]*\]", raw)
+    if not m:
+        return []
+    items = json.loads(m.group())
+    return [
+        (item["s"].strip(), item["p"].strip(), item["o"].strip())
+        for item in items
+        if item.get("s") and item.get("p") and item.get("o")
+    ]
 def infer_relations(existing_triples: list[dict[str, Any]]) -> list[tuple[str, str, str]]:
     """基于已有三元组推理隐含关系。
 
@@ -253,20 +360,25 @@ class KnowledgeGraph:
         self._conn.execute("PRAGMA busy_timeout=5000")
 
         # 三元组表（含时序有效性）
-        self._conn.execute("""
-            CREATE TABLE IF NOT EXISTS triples (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                subject TEXT NOT NULL,
-                predicate TEXT NOT NULL,
-                object TEXT NOT NULL,
-                source_memory_id TEXT,
-                confidence REAL DEFAULT 1.0,
-                is_negation INTEGER DEFAULT 0,
-                valid_from TEXT,
-                valid_to TEXT,
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
+        migrator = SchemaMigrator(self._conn)
+        migrator.migrate(
+            table_name="triples",
+            create_sql="""
+                CREATE TABLE IF NOT EXISTS triples (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    subject TEXT NOT NULL,
+                    predicate TEXT NOT NULL,
+                    object TEXT NOT NULL,
+                    source_memory_id TEXT,
+                    confidence REAL DEFAULT 1.0,
+                    is_negation INTEGER DEFAULT 0,
+                    valid_from TEXT,
+                    valid_to TEXT,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+                )
+            """,
+            migrations=[],
+        )
         self._conn.execute("""
             CREATE INDEX IF NOT EXISTS idx_subject ON triples(subject)
         """)
@@ -278,15 +390,19 @@ class KnowledgeGraph:
         """)
 
         # 实体表
-        self._conn.execute("""
-            CREATE TABLE IF NOT EXISTS entities (
-                name TEXT PRIMARY KEY,
-                entity_type TEXT DEFAULT 'unknown',
-                mention_count INTEGER DEFAULT 1,
-                first_seen TEXT,
-                last_seen TEXT
-            )
-        """)
+        migrator.migrate(
+            table_name="entities",
+            create_sql="""
+                CREATE TABLE IF NOT EXISTS entities (
+                    name TEXT PRIMARY KEY,
+                    entity_type TEXT DEFAULT 'unknown',
+                    mention_count INTEGER DEFAULT 1,
+                    first_seen TEXT,
+                    last_seen TEXT
+                )
+            """,
+            migrations=[],
+        )
 
         self._conn.commit()
 
@@ -314,7 +430,7 @@ class KnowledgeGraph:
                         (subject, predicate, obj),
                     ).fetchone()
                     if existing:
-                        logger.debug(
+                        logger.warning(
                             "Triple blocked by negation: %s %s %s", subject, predicate, obj
                         )
                         return -1
@@ -348,7 +464,7 @@ class KnowledgeGraph:
 
                 return cursor.lastrowid if cursor.lastrowid is not None else -1
             except Exception as e:
-                logger.debug("Triple add failed: %s", e)
+                logger.warning("Triple add failed: %s", e)
                 return -1
 
     def add_triple_with_negation_check(
@@ -451,7 +567,8 @@ class KnowledgeGraph:
                         (subject,),
                     ).fetchall()
                 return self._rows_to_dicts(rows)
-            except Exception:
+            except Exception as e:
+                logger.warning("query_by_subject failed for %s: %s", subject, e)
                 return []
 
         return self._cached(f"subj:{subject}:{include_expired}", _fetch)  # type: ignore[no-any-return]
@@ -473,7 +590,8 @@ class KnowledgeGraph:
                         (obj,),
                     ).fetchall()
                 return self._rows_to_dicts(rows)
-            except Exception:
+            except Exception as e:
+                logger.warning("query_by_object failed for %s: %s", obj, e)
                 return []
 
         return self._cached(f"obj:{obj}:{include_expired}", _fetch)  # type: ignore[no-any-return]
@@ -487,7 +605,8 @@ class KnowledgeGraph:
                 (predicate, limit),
             ).fetchall()
             return self._rows_to_dicts(rows)
-        except Exception:
+        except Exception as e:
+            logger.warning("query_by_predicate failed for %s: %s", predicate, e)
             return []
 
     def get_neighbors(self, entity: str, depth: int = 1) -> list[dict[str, Any]]:
@@ -569,7 +688,8 @@ class KnowledgeGraph:
                 local_triples.extend(self.query_by_object(subj))
                 local_triples.extend(self.query_by_subject(obj))
                 local_triples.extend(self.query_by_object(obj))
-            except Exception:
+            except Exception as e:
+                logger.warning("extract_and_store local query failed: %s", e)
                 continue
 
             inferred = infer_relations(local_triples)
@@ -624,7 +744,8 @@ class KnowledgeGraph:
                     (f"%{escaped}%", f"%{escaped}%", limit),
                 ).fetchall()
                 return self._rows_to_dicts(rows)
-            except Exception:
+            except Exception as e:
+                logger.warning("graph_search keyword query failed: %s", e)
                 return []
 
         # 对每个实体进行扩展搜索
@@ -644,6 +765,97 @@ class KnowledgeGraph:
 
         return unique[:limit]
 
+    def graph_rag_context(self, entity: str, depth: int = 1) -> str:
+        """Graph RAG: 生成实体子图的可读上下文文本。
+
+        将子图中的三元组格式化为自然语言描述，可直接注入LLM上下文窗口。
+        参考 Cognee/Zep 的 Graph RAG 模式。
+
+        Args:
+            entity: 起始实体名
+            depth: 扩展深度（1-hop/2-hop）
+
+        Returns:
+            格式化的子图上下文文本，无结果返回空字符串
+        """
+        neighbors = self.get_neighbors(entity, depth=max(depth, 1))
+        if not neighbors:
+            # 尝试用部分匹配
+            try:
+                assert self._conn is not None
+                escaped = entity.replace("%", "\\%").replace("_", "\\_")
+                rows = self._conn.execute(
+                    "SELECT * FROM triples WHERE subject LIKE ? ESCAPE '\\' LIMIT 5",
+                    (f"%{escaped}%",),
+                ).fetchall()
+                neighbors = self._rows_to_dicts(rows)
+            except Exception as e:
+                logger.warning("graph_rag_context partial match failed: %s", e)
+
+        if not neighbors:
+            return ""
+
+        # 按关系类型分组
+        grouped: dict[str, list[tuple[str, str]]] = {}
+        for t in neighbors:
+            subj = t.get("subject", "")
+            obj = t.get("object", "")
+            pred = t.get("predicate", "")
+            if subj and obj:
+                grouped.setdefault(pred, []).append((subj, obj))
+            elif subj:
+                grouped.setdefault("related", []).append((subj, "?"))
+
+        # 生成自然语言上下文
+        lines = []
+        relation_labels = {
+            "uses": "使用", "belongs_to": "属于", "causes": "导致",
+            "replaces": "替代", "connects_to": "关联到", "contains": "包含",
+            "located_in": "位于", "better_than": "优于",
+            "not_uses": "不使用", "differs_from": "不同于",
+            "related": "相关于",
+        }
+        seen_pairs: set[tuple[str, str, str]] = set()
+        for pred, pairs in grouped.items():
+            label = relation_labels.get(pred, pred)
+            for subj, obj in pairs[:3]:  # Max 3 per relation type
+                key = (subj, pred, obj)
+                if key in seen_pairs:
+                    continue
+                seen_pairs.add(key)
+                if obj == "?":
+                    lines.append(f"- {subj} {label}")
+                else:
+                    lines.append(f"- {subj} {label} {obj}")
+
+        if not lines:
+            return ""
+        return f"[Knowledge Graph: {entity}]\n" + "\n".join(lines)
+
+    def graph_rag_search(self, query: str, max_depth: int = 2, limit: int = 10) -> str:
+        """完整的 Graph RAG 搜索：提取实体→扩展子图→生成上下文文本。
+
+        Args:
+            query: 自然语言查询
+            max_depth: 扩展深度
+            limit: 最多返回的三元组数
+
+        Returns:
+            Graph RAG 上下文字符串，可注入LLM
+        """
+        query_entities = extract_entities(query)
+        if not query_entities:
+            return ""
+
+        contexts = []
+        for entity in query_entities[:3]:
+            ctx = self.graph_rag_context(entity, depth=max_depth)
+            if ctx:
+                contexts.append(ctx)
+
+        return "\n\n".join(contexts)
+
+
     # ─── 实体操作 ─────────────────────────────────────────────
 
     def get_entity(self, name: str) -> dict[str, Any] | None:
@@ -655,7 +867,8 @@ class KnowledgeGraph:
                 keys = ["name", "entity_type", "mention_count", "first_seen", "last_seen"]
                 return dict(zip(keys, row, strict=False))
             return None
-        except Exception:
+        except Exception as e:
+            logger.warning("get_entity failed for %s: %s", name, e)
             return None
 
     def get_all_entities(self, limit: int = 100) -> list[dict[str, Any]]:
@@ -668,7 +881,106 @@ class KnowledgeGraph:
             ).fetchall()
             keys = ["name", "entity_type", "mention_count", "first_seen", "last_seen"]
             return [dict(zip(keys, row, strict=False)) for row in rows]
-        except Exception:
+        except Exception as e:
+            logger.warning("get_all_entities failed: %s", e)
+            return []
+
+    def get_entity_graph(self, limit: int = 100) -> dict[str, list[dict[str, Any]]]:
+        """获取按 POLE+O 类型分组的实体图谱摘要。
+
+        Returns:
+            {"Person": [...], "Organization": [...], "Location": [...],
+             "Event": [...], "Object": [...]}
+        """
+        entities = self.get_all_entities(limit)
+        graph: dict[str, list[dict[str, Any]]] = {
+            "Person": [],
+            "Organization": [],
+            "Location": [],
+            "Event": [],
+            "Object": [],
+        }
+        for e in entities:
+            etype = e.get("entity_type", "Object")
+            if etype in graph:
+                graph[etype].append(e)
+            else:
+                graph["Object"].append(e)
+        return graph
+
+    # ─── 时序图谱 API ──────────────────────────────────────────
+
+    def get_timeline(self, entity: str, limit: int = 50) -> list[dict[str, Any]]:
+        """获取实体的时间线：与其相关的所有三元组按创建时间排序。
+
+        对标 Zep/kektordb 的时序图谱能力 — 追踪实体关系的演变。
+
+        Returns:
+            按 created_at 升序的三元组列表，形成实体关系演变时间线
+        """
+        if not self._conn:
+            return []
+        try:
+            rows = self._conn.execute(
+                "SELECT * FROM triples "
+                "WHERE (subject = ? OR object = ?) AND (valid_to = '' OR valid_to IS NULL) "
+                "ORDER BY created_at ASC LIMIT ?",
+                (entity, entity, limit),
+            ).fetchall()
+            return self._rows_to_dicts(rows)
+        except Exception as e:
+            logger.warning("Timeline query failed: %s", e)
+            return []
+
+    def get_entity_timeline_text(self, entity: str, limit: int = 20) -> str:
+        """生成实体时间线的可读文本，适合注入 LLM 上下文。
+
+        Returns:
+            格式化的时间线文本，无结果返回空字符串
+        """
+        timeline = self.get_timeline(entity, limit=limit)
+        if not timeline:
+            return ""
+
+        relation_labels = {
+            "uses": "开始使用", "belongs_to": "归属", "causes": "引起",
+            "replaces": "取代", "connects_to": "关联到", "contains": "包含",
+            "located_in": "位于", "better_than": "优于",
+        }
+        lines = [f"[{entity} 时间线]"]
+        for t in timeline:
+            created = t.get("created_at", "")[:10]  # 只取日期
+            subj = t.get("subject", "")
+            obj = t.get("object", "")
+            pred = t.get("predicate", "")
+            label = relation_labels.get(pred, pred)
+            lines.append(f"  {created}: {subj} {label} {obj}")
+        return "\n".join(lines)
+
+    def get_recent_changes(self, since_days: int = 7, limit: int = 50) -> list[dict[str, Any]]:
+        """获取最近N天的三元组变更。
+
+        Args:
+            since_days: 最近多少天
+            limit: 最大返回数
+
+        Returns:
+            按创建时间降序的三元组列表
+        """
+        if not self._conn:
+            return []
+        try:
+            from datetime import datetime, timedelta, timezone
+            since = (datetime.now(timezone.utc) - timedelta(days=since_days)).isoformat()
+            rows = self._conn.execute(
+                "SELECT * FROM triples WHERE created_at >= ? "
+                "AND (valid_to = '' OR valid_to IS NULL) "
+                "ORDER BY created_at DESC LIMIT ?",
+                (since, limit),
+            ).fetchall()
+            return self._rows_to_dicts(rows)
+        except Exception as e:
+            logger.warning("Recent changes query failed: %s", e)
             return []
 
     # ─── 统计 ─────────────────────────────────────────────────
@@ -689,8 +1001,8 @@ class KnowledgeGraph:
                     "SELECT predicate, COUNT(*) as cnt FROM triples GROUP BY predicate ORDER BY cnt DESC LIMIT 10"
                 ).fetchall()
                 stats["predicates"] = {r[0]: r[1] for r in pred_rows}
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("get_stats query failed: %s", e)
         return stats
 
     # ─── 图算法 ─────────────────────────────────────────────
@@ -755,7 +1067,7 @@ class KnowledgeGraph:
                 depth += 1
             return []
         except Exception as e:
-            logger.debug("Shortest path failed: %s", e)
+            logger.warning("Shortest path failed: %s", e)
             return []
 
     def connected_components(self, min_size: int = 3, limit: int = 500) -> list[list[str]]:
@@ -804,7 +1116,7 @@ class KnowledgeGraph:
                     components.append(comp)
             return components
         except Exception as e:
-            logger.debug("Connected components failed: %s", e)
+            logger.warning("Connected components failed: %s", e)
             return []
 
     def close(self) -> None:
@@ -842,53 +1154,16 @@ class KnowledgeGraph:
                 )
             self._conn.commit()
         except Exception as e:
-            logger.debug("Entity upsert failed: %s", e)
+            logger.warning("Entity upsert failed: %s", e)
 
     def _infer_entity_type(self, name: str) -> str:
-        """推断实体类型。"""
-        # 技术术语
-        tech_terms = {
-            "Python",
-            "Java",
-            "Go",
-            "Rust",
-            "TypeScript",
-            "React",
-            "Vue",
-            "Docker",
-            "K8s",
-            "Redis",
-            "MySQL",
-            "PostgreSQL",
-            "MongoDB",
-            "Neo4j",
-            "ChromaDB",
-            "SQLite",
-            "API",
-            "SQL",
-            "REST",
-            "GraphQL",
-        }
-        if name in tech_terms:
-            return "technology"
+        """推断实体类型 → POLE+O 五类 (Person/Organization/Location/Event/Object)。
 
-        # CamelCase → 可能是类名/组件名
-        if re.match(r"^[A-Z][a-z]+(?:[A-Z][a-z]+)+$", name):
-            return "component"
-
-        # 全大写 → 缩写
-        if re.match(r"^[A-Z]{2,}$", name):
-            return "abbreviation"
-
-        # kebab-case → 工具/包名
-        if re.match(r"^[a-z]+(?:-[a-z]+)+$", name):
-            return "package"
-
-        # 中文 → 默认概念
-        if re.match(r"^[\u4e00-\u9fff]+$", name):
-            return "concept"
-
-        return "unknown"
+        统一使用 _classify_entity_poleo 规则引擎，与 extract_entities_llm 保持一致。
+        """
+        poleo = _classify_entity_poleo(name)
+        poleo_label = _POLEO_TYPES.get(poleo, "Object")
+        return poleo_label
 
     def _get_all_triples(self, limit: int = 5000) -> list[dict[str, Any]]:
         """获取所有有效三元组。"""
@@ -899,7 +1174,8 @@ class KnowledgeGraph:
                 (limit,),
             ).fetchall()
             return self._rows_to_dicts(rows)
-        except Exception:
+        except Exception as e:
+            logger.warning("_get_all_triples failed: %s", e)
             return []
 
     def _rows_to_dicts(self, rows: list[Any]) -> list[dict[str, Any]]:
@@ -917,3 +1193,145 @@ class KnowledgeGraph:
             "created_at",
         ]
         return [dict(zip(keys, row, strict=False)) for row in rows]
+
+
+# ─── POLE+O 实体分类 (参考 neo4j-labs/agent-memory) ────────
+
+_POLEO_TYPES: dict[str, str] = {
+    "person": "Person",
+    "org": "Organization",
+    "location": "Location",
+    "event": "Event",
+    "object": "Object",
+}
+
+
+def _classify_entity_poleo(name: str) -> str:
+    """快速规则分类实体到 POLE+O 类型。LLM 提取后可覆盖此分类。
+
+    优先级: Location/Organization已知 > Person > 后缀匹配Organization > Location > Event > Object
+    """
+    # ── 已知地名（优先级最高，避免姓氏误判）──
+    known_locations = {"北京", "上海", "深圳", "杭州", "广州", "成都", "浙江", "金华",
+                       "中国", "美国", "日本", "旧金山", "硅谷"}
+    if name in known_locations:
+        return "location"
+
+    # ── 已知组织名（优先级高于人名模式）──
+    known_orgs = {"OpenAI", "Google", "Meta", "Microsoft", "Apple", "Amazon",
+                  "Anthropic", "Nous Research", "Hermes", "GitHub"}
+    if name in known_orgs:
+        return "org"
+
+    # ── Person: 中文人名 + 角色称谓 ──
+    # 常见中文姓氏（含复姓）前缀 + 2-3字
+    _cn_surnames = (
+        "王李张刘陈杨黄赵周吴徐孙马胡朱郭何罗高林郑梁谢唐许冯宋韩邓彭曹曾田萧"
+        "潘袁蔡蒋余于杜叶程苏魏吕丁任卢姚钟姜崔谭陆汪范金石廖贾夏韦付方白邹孟"
+        "熊秦邱江尹薛闫段雷侯龙史陶黎贺顾毛郝龚邵万钱严覃武戴莫孔向汤温康施文"
+        "牛樊葛邢安齐易乔伍庞颜倪庄聂章鲁岳翟殷詹申欧耿关兰焦俞左柳甘祝包宁尚"
+        "司马欧阳上官皇甫诸葛令狐司徒"
+    )
+    if len(name) >= 2 and len(name) <= 4 and re.match(r"^[\u4e00-\u9fff]+$", name):
+        # 排除明确非人名的概念词
+        concept_words = {
+            "问题", "方法", "方案", "结果", "数据", "功能", "配置", "部署",
+            "测试", "需求", "设计", "架构", "实现", "开发", "优化", "模块",
+            "系统", "服务", "接口", "组件", "引擎", "管道", "通道",
+        }
+        # 姓氏匹配 或 结尾为常见人名后缀
+        if name[0] in _cn_surnames and name not in concept_words:
+            return "person"
+        # 称谓后缀: 总/工/老师/经理/教授/博士/老板/先生/女士
+        if re.search(r"(总|工|老师|经理|教授|博士|老板|先生|女士|同学)$", name):
+            return "person"
+
+    # 英文人名: First Last (CamelCase with space concept)
+    if re.match(r"^[A-Z][a-z]+ [A-Z][a-z]+$", name):
+        return "person"
+
+    # ── Organization ──
+    org_suffixes = (
+        "公司|团队|部门|组|实验室|小组|工作室|组织|中心|研究院|研究所|"
+        "学院|大学|集团|银行|基金|协会|联盟|社区|平台"
+    )
+    if re.search(f"({org_suffixes})$", name):
+        return "org"
+
+    # ── Location ──
+    location_suffixes = "市|省|区|县|镇|乡|村|街道|路|大厦|广场|园区|国家|大陆|岛|湾|湖|山|海"
+    if re.search(f"({location_suffixes})$", name):
+        return "location"
+
+    # ── Event ──
+    event_keywords = (
+        "会议|峰会|大会|发布会|上线|部署|测试|回归|修复|审查|合并|"
+        "发布|版本|里程碑|迭代|冲刺|评审|复盘|事故|故障|演练"
+    )
+    if re.search(f"({event_keywords})", name):
+        return "event"
+
+    # ── Object (默认) ──
+    return "object"
+
+
+def extract_entities_llm(
+    texts: list[str],
+    llm_call: Callable[[str], str] | None = None,
+) -> tuple[list[str], list[tuple[str, str, str]]]:
+    """使用 LLM 深度提取实体和三元组（POLE+O 分类版）。
+
+    设计: 批量处理，后台异步触发，不影响主路径的正则快速提取。
+    无 LLM 客户端时回退到规则分类。
+
+    Args:
+        texts: 待提取的记忆文本列表
+        llm_call: LLM 调用函数（接收prompt返回text），可选
+
+    Returns:
+        (entities, triples) — entities 带 POLE+O 分类前缀
+    """
+    if not texts or not llm_call:
+        all_entities: set[str] = set()
+        all_triples: list[tuple[str, str, str]] = []
+        for text in texts:
+            all_entities.update(extract_entities(text))
+            all_triples.extend(extract_triples(text))
+        classified = [f"{_classify_entity_poleo(e)}:{e}" for e in all_entities]
+        return classified, all_triples
+
+    prompt = (
+        "Extract entities and relationships from the following texts. "
+        "Classify each entity into: Person, Organization, Location, Event, Object. "
+        "Return JSON: "
+        '{"entities": [{"name": "...", "type": "..."}], '
+        '"triples": [["subject", "predicate", "object"]]}'
+        "\n\nTexts:\n"
+    )
+    combined = "\n---\n".join(texts[:5])
+    prompt += combined[:3000]
+
+    try:
+        response = llm_call(prompt)
+        json_match = re.search(r"\{.*\}", response, re.DOTALL)
+        if not json_match:
+            raise ValueError("No JSON in response")
+        data = json.loads(json_match.group())
+        entities = data.get("entities", [])
+        triples_data = data.get("triples", [])
+
+        classified_entities = [
+            f"{e.get('type', 'Object')}:{e.get('name', '')}" for e in entities
+        ]
+        llm_triples = [
+            (t[0], t[1], t[2]) for t in triples_data if len(t) >= 3
+        ]
+        return classified_entities, llm_triples
+    except Exception as e:
+        logger.warning("LLM entity extraction failed, fallback regex: %s", e)
+        all_entities = set()
+        all_triples = []
+        for text in texts:
+            all_entities.update(extract_entities(text))
+            all_triples.extend(extract_triples(text))
+        return [f"Object:{e}" for e in all_entities], all_triples

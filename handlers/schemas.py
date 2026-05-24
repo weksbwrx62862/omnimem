@@ -13,9 +13,12 @@ def get_tool_schemas() -> list[dict[str, Any]]:
             "name": "omni_memorize",
             "description": (
                 "Store a memory in OmniMem. Use for important facts, decisions, "
-                "corrections, user preferences, or any information worth recalling "
-                "in future sessions. Specify the type (fact/preference/correction/"
-                "skill/procedural) and confidence level (1-5)."
+                "corrections, user preferences, agent actions, reasoning chains, "
+                "or any information worth recalling in future sessions. "
+                "Specify the type (fact/preference/correction/skill/procedural/"
+                "event/action/reasoning) and confidence level (1-5). "
+                "ACTION: agent tool calls, decisions, operations. "
+                "REASONING: lessons learned, debugging insights, pitfalls."
             ),
             "parameters": {
                 "type": "object",
@@ -33,6 +36,8 @@ def get_tool_schemas() -> list[dict[str, Any]]:
                             "skill",
                             "procedural",
                             "event",
+                            "action",
+                            "reasoning",
                         ],
                         "default": "fact",
                         "description": "Type of memory",
@@ -179,6 +184,8 @@ def get_tool_schemas() -> list[dict[str, Any]]:
                             "sync_instances",
                             "export_memories",
                             "import_memories",
+                            "wiki_upgrade",
+                            "forgetting_heat",
                         ],
                         "description": "Governance action to perform",
                     },
@@ -284,6 +291,69 @@ def get_tool_schemas() -> list[dict[str, Any]]:
                     },
                 },
                 "required": ["action", "target"],
+            },
+        },
+        {
+            "name": "omni_record_action",
+            "description": (
+                "Record an agent action: tool call, decision, subagent spawn, "
+                "or error handling. Captures what the agent did, why, the outcome, "
+                "and lessons learned. Use for building an action memory that helps "
+                "the agent learn from past execution patterns."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action_type": {
+                        "type": "string",
+                        "enum": ["tool_call", "decision", "spawn", "error_handling"],
+                        "description": "Type of action",
+                        "default": "tool_call",
+                    },
+                    "tool_name": {
+                        "type": "string",
+                        "description": "Name of the tool called",
+                    },
+                    "tool_args_summary": {
+                        "type": "string",
+                        "description": "Brief summary of tool arguments",
+                    },
+                    "tool_result_summary": {
+                        "type": "string",
+                        "description": "Brief summary of tool result",
+                    },
+                    "decision_rationale": {
+                        "type": "string",
+                        "description": "Why this action was chosen",
+                    },
+                    "outcome": {
+                        "type": "string",
+                        "enum": ["success", "failure", "partial", "unknown"],
+                        "description": "Result of the action",
+                        "default": "unknown",
+                    },
+                    "lesson_learned": {
+                        "type": "string",
+                        "description": "What was learned from this action",
+                    },
+                    "parent_task_id": {
+                        "type": "string",
+                        "description": "Task ID this action belongs to",
+                    },
+                    "agent_role": {
+                        "type": "string",
+                        "description": "Agent role: leaf, orchestrator, reviewer",
+                    },
+                    "duration_ms": {
+                        "type": "integer",
+                        "description": "Execution duration in milliseconds",
+                    },
+                    "turn_index": {
+                        "type": "integer",
+                        "description": "Turn number when this action occurred",
+                    },
+                },
+                "required": ["action_type"],
             },
         },
     ]

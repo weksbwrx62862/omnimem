@@ -24,6 +24,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from omnimem.utils.experimental import experimental_class
+from omnimem.utils.migration import SchemaMigrator
+
 logger = logging.getLogger(__name__)
 
 
@@ -74,6 +77,7 @@ class TrainingData:
 # ─── LoRATrainer ──────────────────────────────────────────────
 
 
+@experimental_class
 class LoRATrainer:
     """LoRA 微调管线。
 
@@ -151,33 +155,42 @@ class LoRATrainer:
         self._conn.execute("PRAGMA busy_timeout=5000")
 
         # 适配器表
-        self._conn.execute("""
-            CREATE TABLE IF NOT EXISTS adapters (
-                adapter_id TEXT PRIMARY KEY,
-                shade TEXT,
-                rank INTEGER,
-                alpha INTEGER,
-                target_modules TEXT,
-                version INTEGER DEFAULT 1,
-                trained_at TEXT,
-                training_samples INTEGER DEFAULT 0,
-                status TEXT DEFAULT 'empty',
-                path TEXT
-            )
-        """)
+        migrator = SchemaMigrator(self._conn)
+        migrator.migrate(
+            table_name="adapters",
+            create_sql="""
+                CREATE TABLE IF NOT EXISTS adapters (
+                    adapter_id TEXT PRIMARY KEY,
+                    shade TEXT,
+                    rank INTEGER,
+                    alpha INTEGER,
+                    target_modules TEXT,
+                    version INTEGER DEFAULT 1,
+                    trained_at TEXT,
+                    training_samples INTEGER DEFAULT 0,
+                    status TEXT DEFAULT 'empty',
+                    path TEXT
+                )
+            """,
+            migrations=[],
+        )
 
         # 训练数据表
-        self._conn.execute("""
-            CREATE TABLE IF NOT EXISTS training_data (
-                data_id TEXT PRIMARY KEY,
-                content TEXT NOT NULL,
-                source_type TEXT,
-                source_ids TEXT,
-                shade TEXT DEFAULT 'default',
-                submitted_at TEXT,
-                used_in_training INTEGER DEFAULT 0
-            )
-        """)
+        migrator.migrate(
+            table_name="training_data",
+            create_sql="""
+                CREATE TABLE IF NOT EXISTS training_data (
+                    data_id TEXT PRIMARY KEY,
+                    content TEXT NOT NULL,
+                    source_type TEXT,
+                    source_ids TEXT,
+                    shade TEXT DEFAULT 'default',
+                    submitted_at TEXT,
+                    used_in_training INTEGER DEFAULT 0
+                )
+            """,
+            migrations=[],
+        )
 
         self._conn.commit()
 
@@ -211,7 +224,7 @@ class LoRATrainer:
                 if adapter.shade in self._shades:
                     self._shades[adapter.shade].adapter_id = adapter.adapter_id
         except Exception as e:
-            logger.debug("LoRA adapter restore failed: %s", e)
+            logger.warning("LoRA adapter restore failed: %s", e)
 
     # ─── 训练数据管理 ────────────────────────────────────────
 
@@ -640,5 +653,5 @@ class LoRATrainer:
                     "UPDATE training_data SET used_in_training = 1 WHERE used_in_training = 0"
                 )
                 self._conn.commit()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("LoRATrainer _mark_data_used failed: %s", e)

@@ -34,12 +34,13 @@ _PRIVACY_ORDER = {level: i for i, level in enumerate(_PRIVACY_LEVELS)}
 class PrivacyManager:
     """隐私分级管理，支持 secret 级加密存储。"""
 
-    def __init__(self, default_level: str = "personal", session_id: str = ""):
+    def __init__(self, default_level: str = "personal", session_id: str = "",
+                 kms_manager: Any = None):
         self._default_level = default_level
         self._overrides: dict[str, str] = {}
         self._store: Any | None = None  # ★ 延迟绑定存储层，用于回填
-        # OPT-1: 初始化加密器
-        self._encryption = MemoryEncryption(session_seed=session_id)
+        # OPT-1: 初始化加密器，优先使用 KMS 密钥
+        self._encryption = MemoryEncryption(session_seed=session_id, kms_manager=kms_manager)
 
     def bind_store(self, store: Any) -> None:
         """绑定存储层，用于从持久化数据回填隐私级别。"""

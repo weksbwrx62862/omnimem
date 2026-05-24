@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import logging
 from abc import ABC, abstractmethod
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 class LLMBackend(ABC):
@@ -80,7 +83,8 @@ class OllamaBackend(LLMBackend):
             with urllib.request.urlopen(req, timeout=120) as resp:
                 result = json.loads(resp.read())
                 return result.get("response")
-        except Exception:
+        except Exception as e:
+            logger.warning("OllamaBackend call failed: %s", e)
             return None
 
     def call_sync(self, prompt, system=None, max_tokens=1024, temperature=0.7):
@@ -121,7 +125,8 @@ class AnthropicBackend(LLMBackend):
             with urllib.request.urlopen(req, timeout=120) as resp:
                 result = json.loads(resp.read())
                 return result.get("content", [{}])[0].get("text")
-        except Exception:
+        except Exception as e:
+            logger.warning("AnthropicBackend call failed: %s", e)
             return None
 
     def call_sync(self, prompt, system=None, max_tokens=1024, temperature=0.7):

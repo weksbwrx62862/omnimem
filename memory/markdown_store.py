@@ -85,7 +85,7 @@ class MarkdownStore:
                     return {**fm, "content": content, "file_path": str(file_path)}
             return {"content": text, "file_path": str(file_path)}
         except Exception as e:
-            logger.debug("Failed to read %s: %s", file_path, e)
+            logger.warning("Failed to read %s: %s", file_path, e)
             return None
 
     def list_memories(self, wing: str = "", hall: str = "", room: str = "") -> list[Path]:

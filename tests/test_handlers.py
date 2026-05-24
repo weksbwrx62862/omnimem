@@ -122,10 +122,10 @@ def _mock_provider(**overrides: Any) -> MagicMock:
 class TestGetToolSchemas(unittest.TestCase):
     """get_tool_schemas 测试。"""
 
-    def test_returns_seven_tools(self) -> None:
-        """应返回 7 个工具 schema。"""
+    def test_returns_eight_tools(self) -> None:
+        """应返回 8 个工具 schema（含 omni_record_action）。"""
         schemas = get_tool_schemas()
-        self.assertEqual(len(schemas), 7)
+        self.assertEqual(len(schemas), 8)
 
     def test_all_have_name(self) -> None:
         """每个 schema 都应有 name。"""
@@ -152,6 +152,7 @@ class TestGetToolSchemas(unittest.TestCase):
             "omni_govern",
             "omni_detail",
             "memory",
+            "omni_record_action",
         }
         self.assertEqual(names, expected)
 
@@ -498,6 +499,7 @@ class TestHandleRecall(unittest.TestCase):
         """开启图谱检索通道 → 图谱结果被合并。"""
         results = [{"memory_id": "kg-001", "content": "test", "score": 0.80, "_source": ""}]
         kg_mock = MagicMock()
+        kg_mock.graph_rag_search.side_effect = RuntimeError  # 强制回退到 graph_search
         kg_mock.graph_search.return_value = [
             {"subject": "Alice", "predicate": "uses", "object": "Python", "confidence": 0.90},
         ]

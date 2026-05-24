@@ -8,9 +8,20 @@ from __future__ import annotations
 import json
 import logging
 import re
+from datetime import datetime, timezone
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+# ★ 时序关键词：检测查询是否包含时间相关语义，优先使用时序图谱
+_TEMPORAL_KEYWORDS = (
+    "现在", "之前", "之后", "上个月", "下个月", "去年", "今年", "目前",
+    "当前", "最近", "以前", "后来", "后来呢", "什么时候", "什么时候开始",
+    "什么时候结束", "什么时候换", "什么时候改", "变化", "变了", "换了",
+    "更新了", "升级了", "改成了", "变成了", "之前是", "原来是", "以前是",
+    "last", "now", "before", "after", "previously", "currently",
+    "used to", "changed", "updated", "replaced",
+)
 
 # ★ R26优化：提取公共正则常量，避免4处硬编码重复
 _CJK_KEYWORD_RE = re.compile(
@@ -80,13 +91,35 @@ def handle_recall(provider: Any, args: dict[str, Any]) -> str:
     mode = args.get("mode", "rag")
     max_tokens = args.get("max_tokens", 1500)
     user_id = args.get("user_id", "default")
+    enable_trace = args.get("enable_trace", False)  # ★ 新增：是否记录检索轨迹
+    
     if hasattr(provider, "_rbac") and not provider._rbac.check_permission(user_id, "read"):
         return json.dumps({"status": "blocked", "reason": f"User '{user_id}' lacks 'read' permission"})
 
     # ★ R27优化：预提取查询关键词，避免同一函数内4次重复正则匹配与CJK切分
     _query_keywords = _extract_query_keywords(query)
 
-    results = provider._retriever.search(query, max_tokens=max_tokens, mode=mode)
+    # ★ OPT: 检索超时保护 — ThreadPoolExecutor 替代直接调用
+    recall_timeout = provider._config.get("recall_timeout_ms", 5000) / 1000.0
+    from concurrent.futures import ThreadPoolExecutor
+    import time as _time
+    _recall_start = _time.monotonic()
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(
+            provider._retriever.search, query,
+            max_tokens=max_tokens, mode=mode,
+            enable_trace=enable_trace,  # ★ 新增：传递 enable_trace
+        )
+        try:
+            results = future.result(timeout=recall_timeout)
+        except TimeoutError:
+            future.cancel()
+            logger.warning("OmniMem recall timed out (%.1fs), returning empty", recall_timeout)
+            results = []
+        except Exception as e:
+            logger.error("OmniMem recall failed: %s", e)
+            results = []
+    _recall_latency_ms = (_time.monotonic() - _recall_start) * 1000.0
 
     # ★ llm 模式补充通道：从 store 做内容搜索，弥补向量/BM25 可能遗漏的
     # 但需要过滤：只保留与 query 有关键词重叠的结果，避免噪音
@@ -128,29 +161,73 @@ def handle_recall(provider: Any, args: dict[str, Any]) -> str:
     # 图谱检索通道
     if provider._knowledge_graph:
         try:
-            graph_results = provider._knowledge_graph.graph_search(query, max_depth=2, limit=10)
-            if graph_results:
-                for gr in graph_results[:5]:
-                    gr["content"] = (
-                        f"{gr.get('subject', '')} {gr.get('predicate', '')} {gr.get('object', '')}"
-                    )
-                    gr["type"] = "graph_triple"
-                    gr["confidence"] = gr.get("confidence", 0.5)
-                results.extend(graph_results[:5])
-        except (RuntimeError, ValueError) as e:
-            logger.warning("OmniMem graph recall failed: %s", e)
+            # Graph RAG: 生成子图上下文文本（可读性强于原始三元组）
+            graph_rag_ctx = provider._knowledge_graph.graph_rag_search(
+                query, max_depth=2
+            )
+            if graph_rag_ctx:
+                results.append({
+                    "content": graph_rag_ctx,
+                    "type": "graph_rag",
+                    "confidence": 0.6,
+                    "score": 0.5,
+                    "_source": "graph_rag",
+                })
+        except (RuntimeError, ValueError, AttributeError) as e:
+            # Fallback: 原始三元组搜索
+            try:
+                graph_results = provider._knowledge_graph.graph_search(
+                    query, max_depth=2, limit=10
+                )
+                if graph_results:
+                    for gr in graph_results[:5]:
+                        gr["content"] = (
+                            f"{gr.get('subject', '')} {gr.get('predicate', '')} {gr.get('object', '')}"
+                        )
+                        gr["type"] = "graph_triple"
+                        gr["confidence"] = gr.get("confidence", 0.5)
+                    results.extend(graph_results[:5])
+            except (RuntimeError, ValueError) as e2:
+                logger.warning("OmniMem graph recall failed: %s", e2)
+
+    # ★ 时序图谱检索通道：当查询包含时间关键词时，补充时序图谱结果
+    _has_temporal_intent = any(kw in query for kw in _TEMPORAL_KEYWORDS)
+    if _has_temporal_intent and hasattr(provider, "_temporal_kg") and provider._temporal_kg:
+        try:
+            from omnimem.deep.knowledge_graph import extract_entities as _kg_extract_entities
+            query_entities = _kg_extract_entities(query)
+            if query_entities:
+                temporal_ctx = provider._temporal_kg.temporal_rag_context(
+                    query_entities
+                )
+                if temporal_ctx:
+                    results.append({
+                        "content": temporal_ctx,
+                        "type": "temporal_kg",
+                        "confidence": 0.7,
+                        "score": 0.55,
+                        "_source": "temporal_kg",
+                    })
+        except (RuntimeError, ValueError, AttributeError, ImportError) as e:
+            logger.warning("OmniMem temporal KG recall failed: %s", e)
 
     results = provider._temporal_decay.apply(results)
     results = provider._privacy.filter(results, session_id=provider._session_id)
 
     # ★ 主存储验证：过滤掉向量/BM25索引中残留但主存储已删除的条目
-    # sync- 条目被归档后主存储已无，但向量/BM25索引中可能残留
+    # 封存记忆（archived/forgotten）不删除，降权 + 标记 sealed 保留可召回
     valid_results = []
     for r in results:
         mid = r.get("memory_id", "")
-        if mid and not provider._store.get(mid):
-            # 主存储中不存在 → 索引残留，跳过
-            continue
+        if mid:
+            entry = provider._store.get(mid)
+            if not entry:
+                # 主存储中不存在 → 索引残留，跳过
+                continue
+            if entry.get("archived"):
+                # 封存记忆：不跳过，降权 + 标记 sealed
+                r["score"] = r.get("score", 0) * 0.3  # 降权到 30%
+                r["sealed"] = True
         valid_results.append(r)
     results = valid_results
 
@@ -178,6 +255,10 @@ def handle_recall(provider: Any, args: dict[str, Any]) -> str:
             if query_keywords and any(kw in content for kw in query_keywords):
                 filtered.append(r)
             continue
+        # ★ temporal_kg: 时序图谱结果，已按时间意图过滤，直接通过
+        if source == "temporal_kg":
+            filtered.append(r)
+            continue
         # ★ RRF 融合结果: score = rrf_score
         # rrf_score < 0.015 的已在 rrf.py 中过滤
         # 但如果 rrf_score 很低（0.015-0.025），可能是单路低排名的噪音
@@ -195,64 +276,44 @@ def handle_recall(provider: Any, args: dict[str, Any]) -> str:
         filtered.append(r)
     results = filtered
 
-    if not results:
-        # ★ R17修复QUAL-2：向量+BM25均无结果时，fallback到store关键词匹配
-        # ★ R34优化：优先使用 search_by_content（FTS5全文搜索），回退到 store.search + 关键词匹配
+    if len(results) < 5:
         query_keywords = _query_keywords
         if query_keywords:
-            # 优先路径：FTS5 全文搜索
+            existing_ids = {r.get("memory_id", "") for r in results}
+            # 优先：FTS5 全文搜索
             try:
                 fts_results = provider._store.search_by_content(query, limit=10)
                 for sf in fts_results:
                     sf_mid = sf.get("memory_id", "")
-                    sf["_source"] = "store_fts_fallback"
-                    sf["score"] = sf.get("score", 0) or 0.2
-                    results.append(sf)
-                    if len(results) >= 5:
-                        break
-            except Exception as e:
-                logger.debug("OmniMem FTS fallback failed: %s", e)
-            # 补充路径：store.search + 关键词匹配
-            if len(results) < 3:
-                store_all = provider._store.search(limit=50)
-                for sf in store_all:
-                    sf_mid = sf.get("memory_id", "")
-                    if sf_mid in {r.get("memory_id", "") for r in results}:
-                        continue
-                    sf_content = sf.get("content", "").lower()
-                    keyword_hits = sum(1 for kw in query_keywords if kw in sf_content)
-                    if keyword_hits >= 1:
-                        sf["_source"] = "store_fallback"
-                        sf["score"] = min(0.15 + keyword_hits * 0.05, 0.35)
-                        results.append(sf)
-                        if len(results) >= 5:
-                            break
-
-    # ★ R25优化：结果不足时补充 store 关键词匹配
-    # 解决中英混合查询时语义检索遗漏问题（如 "基础设施管理" 搜不到 "Terraform"）
-    if len(results) < 3:
-        query_keywords = _query_keywords
-        existing_ids = {r.get("memory_id", "") for r in results}
-        if query_keywords:
-            try:
-                store_all = provider._store.search(limit=50)
-                for sf in store_all:
-                    sf_mid = sf.get("memory_id", "")
-                    if sf_mid in existing_ids:
-                        continue
-                    sf_content = sf.get("content", "").lower()
-                    # 关键词命中或原文包含查询核心词
-                    keyword_hits = sum(1 for kw in query_keywords if kw in sf_content)
-                    if keyword_hits >= 1:
-                        sf["_source"] = "store_supplement"
-                        sf["score"] = sf.get("score", 0) or min(0.12 + keyword_hits * 0.03, 0.25)
+                    if sf_mid not in existing_ids:
+                        sf["_source"] = "store_fts_fallback"
+                        sf["score"] = sf.get("score", 0) or 0.2
                         results.append(sf)
                         existing_ids.add(sf_mid)
                         if len(results) >= 5:
                             break
             except Exception as e:
-                logger.warning("OmniMem store supplement fallback failed: %s", e)
-        if not results:
+                logger.warning("OmniMem FTS fallback failed: %s", e)
+            # 补充：store 全量扫描 + 关键词匹配
+            if len(results) < 5:
+                try:
+                    store_all = provider._store.search(limit=50)
+                    for sf in store_all:
+                        sf_mid = sf.get("memory_id", "")
+                        if sf_mid in existing_ids:
+                            continue
+                        sf_content = sf.get("content", "").lower()
+                        keyword_hits = sum(1 for kw in query_keywords if kw in sf_content)
+                        if keyword_hits >= 1:
+                            sf["_source"] = "store_fallback"
+                            sf["score"] = min(0.15 + keyword_hits * 0.05, 0.35)
+                            results.append(sf)
+                            existing_ids.add(sf_mid)
+                            if len(results) >= 5:
+                                break
+                except Exception as e:
+                    logger.warning("OmniMem store fallback failed: %s", e)
+    if not results:
             return json.dumps(
                 {
                     "status": "no_results",
@@ -264,12 +325,44 @@ def handle_recall(provider: Any, args: dict[str, Any]) -> str:
     # ★ 经 ContextManager 精炼 — 精简摘要 + 保留原文供 detail 拉取
     refined = provider._context_manager.refine_recall_results(results, max_tokens=max_tokens)
 
+    # ★ 新增：提取检索轨迹
+    trace_data = None
+    if enable_trace and results:
+        trace_data = results[-1].pop("_trace", None)
+
+    # ★ 质量评估：enable_trace=True 时自动记录检索质量
+    quality_data = None
+    if enable_trace and hasattr(provider, "_quality_evaluator") and provider._quality_evaluator:
+        try:
+            from omnimem.retrieval.quality_eval import RetrievalQualityEvaluator
+            from dataclasses import asdict
+            relevant_ids = RetrievalQualityEvaluator.infer_relevant_ids(results)
+            metrics = provider._quality_evaluator.evaluate(
+                query=query,
+                results=results,
+                relevant_ids=relevant_ids,
+                latency_ms=_recall_latency_ms,
+            )
+            provider._quality_evaluator.record_evaluation(metrics)
+            quality_data = asdict(metrics)
+        except Exception as e:
+            logger.warning("质量评估记录失败: %s", e)
+
     provider._audit_logger.log(
         "recall",
         details={"query": query, "mode": mode, "count": len(refined)},
         result="success",
         instance_id=getattr(provider, "_instance_id", None),
     )
+
+    # ★ 召回反馈循环：记录每条被召回的记忆，用于遗忘曲线和排序优化
+    for r in refined:
+        mid = r.get("memory_id", "")
+        if mid:
+            try:
+                provider._forgetting.record_access(mid)
+            except Exception as e:
+                logger.debug("recall feedback record_access failed for %s: %s", mid, e)
 
     return json.dumps(
         {
@@ -278,6 +371,8 @@ def handle_recall(provider: Any, args: dict[str, Any]) -> str:
             "count": len(refined),
             "memories": refined,
             "hint": "Use omni_detail with a memory_id to fetch full content.",
+            **({"trace": trace_data} if trace_data else {}),
+            **({"_quality": quality_data} if quality_data else {}),
         },
         ensure_ascii=False,
     )

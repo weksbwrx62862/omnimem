@@ -19,9 +19,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from omnimem.utils.experimental import experimental_class
+from omnimem.utils.migration import SchemaMigrator
+
 logger = logging.getLogger(__name__)
 
 
+@experimental_class
 class KVCacheManager:
     """KV Cache 预填充管理器。
 
@@ -65,17 +69,22 @@ class KVCacheManager:
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA synchronous=NORMAL")
         self._conn.execute("PRAGMA busy_timeout=5000")
-        self._conn.execute("""
-            CREATE TABLE IF NOT EXISTS kv_cache_entries (
-                cache_key TEXT PRIMARY KEY,
-                content TEXT NOT NULL,
-                metadata TEXT,
-                access_count INTEGER DEFAULT 0,
-                preloaded_at TEXT,
-                last_accessed TEXT,
-                source_memory_ids TEXT
-            )
-        """)
+        migrator = SchemaMigrator(self._conn)
+        migrator.migrate(
+            table_name="kv_cache_entries",
+            create_sql="""
+                CREATE TABLE IF NOT EXISTS kv_cache_entries (
+                    cache_key TEXT PRIMARY KEY,
+                    content TEXT NOT NULL,
+                    metadata TEXT,
+                    access_count INTEGER DEFAULT 0,
+                    preloaded_at TEXT,
+                    last_accessed TEXT,
+                    source_memory_ids TEXT
+                )
+            """,
+            migrations=[],
+        )
         self._conn.execute("""
             CREATE INDEX IF NOT EXISTS idx_access_count ON kv_cache_entries(access_count DESC)
         """)
@@ -113,7 +122,7 @@ class KVCacheManager:
                 self._access_counts[key] = access_count
             logger.info("KV Cache: restored %d entries from disk", len(self._cache))
         except Exception as e:
-            logger.debug("KV Cache restore failed: %s", e)
+            logger.warning("KV Cache restore failed: %s", e)
 
     # ─── 公开接口 ─────────────────────────────────────────────
 
@@ -248,8 +257,8 @@ class KVCacheManager:
             try:
                 self._conn.execute("DELETE FROM kv_cache_entries")
                 self._conn.commit()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("KVCacheManager clear failed: %s", e)
 
     def get_stats(self) -> dict[str, Any]:
         """获取 KV Cache 统计。"""
@@ -330,5 +339,5 @@ class KVCacheManager:
                         (count, now, key),
                     )
                 self._conn.commit()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("KVCacheManager _flush_access_counts failed: %s", e)

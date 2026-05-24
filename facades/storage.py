@@ -38,7 +38,10 @@ class StorageFacade:
 
     def init_l2(self) -> None:
         self._wing_room = WingRoomManager(self._data_dir / "palace")
-        self._store = DrawerClosetStore(self._data_dir / "palace")
+        self._store = DrawerClosetStore(
+            self._data_dir / "palace",
+            write_buffer_threshold=self._config.get("write_buffer_threshold", 20),
+        )
         self._index = ThreeLevelIndex(self._data_dir / "index")
         self._md_store = MarkdownStore(self._data_dir / "palace")
 
