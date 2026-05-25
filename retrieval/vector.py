@@ -264,6 +264,8 @@ class VectorRetriever:
                 doc_count = self._store.count()
                 logger.info("ChromaDB initialized in %.1fs, docs=%d", time.time() - t0, doc_count)
                 _emit(f"[OmniMem] ChromaDB 就绪: {doc_count} 条文档")
+                logger.info("VectorRetriever [%s] initialized in %.1fs, docs=%d", self._backend, time.time() - t0, doc_count)
+                _emit(f"[OmniMem] {self._backend} 就绪: {doc_count} 条文档")
         except Exception as e:
             success = False
             logger.warning("VectorRetriever warmup failed (non-fatal): %s", e)

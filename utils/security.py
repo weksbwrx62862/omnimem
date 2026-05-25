@@ -258,6 +258,10 @@ class SecurityValidator:
                             if c.isalpha() or ('\u4e00' <= c <= '\u9fff'))
             if alpha_count == 0 and len(meaningful) > 2:
                 return True  # No alphabetic/CJK chars at all
+            # ★ R46修复：有足够有意义文本时不因特殊字符多而拒绝
+            # 例如 "R46-test: 特殊字符测试 !@#$%..." 虽然噪音比高但有实质内容
+            if alpha_count >= 8:
+                return False  # 有足够有意义的文字，不过滤
             # If more than threshold is noise
             if noise_chars / len(meaningful) > cls._TRIVIAL_MAX_NOISE_RATIO:
                 return True

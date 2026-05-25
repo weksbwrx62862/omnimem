@@ -315,6 +315,34 @@ class MetaStore:
                     (q, q, limit),
                 ).fetchall()
                 return [self._row_to_dict(r) for r in rows]
+                # R46修复：转义内容中的双引号（FTS5 用 "" 表示字面量双引号）
+                escaped = query.replace('"', '""') if query else ''
+                safe_query = f'"{escaped}"'
+                try:
+                    rows = self._conn.execute(
+                        """SELECT m.* FROM memories_fts f
+                           JOIN memories m ON m.rowid = f.rowid
+                           WHERE memories_fts MATCH ?
+                           ORDER BY rank
+                           LIMIT ?""",
+                        (safe_query, limit),
+                    ).fetchall()
+                    if rows:
+                        return [self._row_to_dict(r) for r in rows]
+                except Exception:
+                    # FTS5 查询失败（特殊字符等），降级到 LIKE
+                    logger.debug("FTS5 match failed, falling back to LIKE for query: %s", query[:50])
+            # LIKE 查询（FTS5 不可用、失败、或返回空结果时的降级路径）
+            escaped_query = query.replace("%", "\\%").replace("_", "\\_")
+            q = f"%{escaped_query}%"
+            rows = self._conn.execute(
+                """SELECT * FROM memories
+                   WHERE summary LIKE ? ESCAPE '\\' OR content_preview LIKE ? ESCAPE '\\'
+                   ORDER BY stored_at DESC
+                   LIMIT ?""",
+                (q, q, limit),
+            ).fetchall()
+            return [self._row_to_dict(r) for r in rows]
         except Exception as e:
             logger.warning("MetaStore search_by_content failed: %s", e)
             raise

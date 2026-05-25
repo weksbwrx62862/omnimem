@@ -195,6 +195,10 @@ class DrawerClosetStore:
             if memory_id in self._closet_index:
                 self._touch(memory_id)
                 return dict(self._closet_index[memory_id])
+            # ★ R46修复：MetaStore 命中时也加入 LRU 缓存（保持 LRU 语义）
+            self._closet_index[memory_id] = meta_result
+            self._touch(memory_id)
+            self._evict_if_needed()
             return meta_result
 
         # 内存索引

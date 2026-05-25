@@ -123,6 +123,18 @@ def handle_memorize(provider: Any, args: dict[str, Any], llm_memory_manager: LLM
     # ★ 精确内容去重：在合并候选列表中检查完全相同内容
     for m in candidates:
         if m.get("content", "").strip() == content.strip():
+    # ★ R46修复：始终执行 FTS5 精确搜索（防止向量检索遗漏 + ChromaDB 索引延迟）
+    fts_results = provider._store.search_by_content(content, limit=10)
+    existing_ids = {m.get("memory_id", "") for m in candidates}
+    for m in fts_results:
+        if m.get("memory_id", "") not in existing_ids:
+            candidates.append(m)
+
+    # ★ 精确内容去重：在合并候选列表中检查完全相同内容
+    # R46修复：字段名 content_preview（meta_store 返回的字段名）
+    for m in candidates:
+        stored_content = m.get("content_preview", "") or m.get("content", "")
+        if stored_content.strip() == content.strip():
             return json.dumps(
                 {
                     "status": "duplicate_skipped",

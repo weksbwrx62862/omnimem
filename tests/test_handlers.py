@@ -584,7 +584,7 @@ class TestHandleGovern(unittest.TestCase):
         """归档操作。"""
         result = handle_govern(self.provider, {"action": "archive", "target": "mem-001"})
         data = json.loads(result)
-        self.assertEqual(data["status"], "archived")
+        self.assertEqual(data["status"], "sealed")
         self.provider._forgetting.archive.assert_called_once_with("mem-001")
 
     def test_govern_reactivate(self) -> None:

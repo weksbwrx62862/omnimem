@@ -21,7 +21,9 @@ class SemanticDedupService:
         if len(content) <= 20:
             exact = candidates or self._store.search_by_content(content, limit=5)
             for m in exact:
-                if m.get("content", "").strip() == content.strip():
+                # R46修复：字段名 content_preview（meta_store 返回的字段名）
+                stored = m.get("content_preview", "") or m.get("content", "")
+                if stored.strip() == content.strip():
                     return {
                         "action": "skip",
                         "existing_id": m.get("memory_id", ""),

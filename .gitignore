@@ -91,3 +91,4 @@ nul
 
 # Claude Code local config
 .claude/
+*.pyc
