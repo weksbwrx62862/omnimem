@@ -53,28 +53,28 @@ with torch.no_grad():
 
 
 ## Performance
-In the following table, we provide various pre-trained Cross-Encoders together with their performance on the [TREC Deep Learning 2019](https://microsoft.github.io/TREC-2019-Deep-Learning/) and the [MS Marco Passage Reranking](https://github.com/microsoft/MSMARCO-Passage-Ranking/) dataset. 
+In the following table, we provide various pre-trained Cross-Encoders together with their performance on the [TREC Deep Learning 2019](https://microsoft.github.io/TREC-2019-Deep-Learning/) and the [MS Marco Passage Reranking](https://github.com/microsoft/MSMARCO-Passage-Ranking/) dataset.
 
 
 | Model-Name        | NDCG@10 (TREC DL 19) | MRR@10 (MS Marco Dev)  | Docs / Sec |
-| ------------- |:-------------| -----| --- | 
-| **Version 2 models** | | | 
+| ------------- |:-------------| -----| --- |
+| **Version 2 models** | | |
 | cross-encoder/ms-marco-TinyBERT-L2-v2 | 69.84 | 32.56 | 9000
 | cross-encoder/ms-marco-MiniLM-L2-v2 | 71.01 | 34.85 | 4100
 | cross-encoder/ms-marco-MiniLM-L4-v2 | 73.04 | 37.70 | 2500
 | cross-encoder/ms-marco-MiniLM-L6-v2 | 74.30 | 39.01 | 1800
 | cross-encoder/ms-marco-MiniLM-L12-v2 | 74.31 | 39.02 | 960
-| **Version 1 models** | | | 
+| **Version 1 models** | | |
 | cross-encoder/ms-marco-TinyBERT-L2  | 67.43 | 30.15  | 9000
 | cross-encoder/ms-marco-TinyBERT-L4  | 68.09 | 34.50  | 2900
 | cross-encoder/ms-marco-TinyBERT-L6 |  69.57 | 36.13  | 680
 | cross-encoder/ms-marco-electra-base | 71.99 | 36.41 | 340
-| **Other models** | | | 
-| nboost/pt-tinybert-msmarco | 63.63 | 28.80 | 2900 
-| nboost/pt-bert-base-uncased-msmarco | 70.94 | 34.75 | 340 
-| nboost/pt-bert-large-msmarco | 73.36 | 36.48 | 100 
-| Capreolus/electra-base-msmarco | 71.23 | 36.89 | 340 
-| amberoad/bert-multilingual-passage-reranking-msmarco | 68.40 | 35.54 | 330 
+| **Other models** | | |
+| nboost/pt-tinybert-msmarco | 63.63 | 28.80 | 2900
+| nboost/pt-bert-base-uncased-msmarco | 70.94 | 34.75 | 340
+| nboost/pt-bert-large-msmarco | 73.36 | 36.48 | 100
+| Capreolus/electra-base-msmarco | 71.23 | 36.89 | 340
+| amberoad/bert-multilingual-passage-reranking-msmarco | 68.40 | 35.54 | 330
 | sebastian-hofstaetter/distilbert-cat-margin_mse-T2-msmarco | 72.82 | 37.88 | 720
- 
+
  Note: Runtime was computed on a V100 GPU.

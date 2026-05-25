@@ -13,13 +13,13 @@ import time
 from pathlib import Path
 from typing import Any
 
+from omnimem.retrieval.vector_factory import create_vector_store
 from omnimem.retrieval.vector_store import (
     ChromaDBStore,
     VectorStore,
     _CachedEmbeddingFunction,
     _emit,
 )
-from omnimem.retrieval.vector_factory import create_vector_store
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +27,12 @@ logger = logging.getLogger(__name__)
 class VectorRetriever:
     """向量检索，委托 VectorStore 抽象接口。"""
 
-    def __init__(self, backend: str = "chromadb", data_dir: Path | None = None, embedding_model_path: str = ""):
+    def __init__(
+        self,
+        backend: str = "chromadb",
+        data_dir: Path | None = None,
+        embedding_model_path: str = "",
+    ):
         self._backend = backend
         self._data_dir = data_dir or Path("/tmp/omnimem/retrieval")
         self._store: VectorStore | None = None
@@ -48,11 +53,16 @@ class VectorRetriever:
         self._data_dir.mkdir(parents=True, exist_ok=True)
         if self._backend == "faiss":
             from omnimem.retrieval.faiss_store import FAISSStore
+
             try:
                 cache_path = self._data_dir / "embedding_cache.json"
-                self._embedding_fn = _CachedEmbeddingFunction(cache_path=cache_path, model_path=self._embedding_model_path)
+                self._embedding_fn = _CachedEmbeddingFunction(
+                    cache_path=cache_path, model_path=self._embedding_model_path
+                )
             except Exception as e:
-                logger.warning("Failed to create CachedEmbeddingFunction for faiss: %s, using default", e)
+                logger.warning(
+                    "Failed to create CachedEmbeddingFunction for faiss: %s, using default", e
+                )
                 self._embedding_fn = None
             self._store = FAISSStore(
                 persist_dir=self._data_dir / "faiss",
@@ -61,7 +71,9 @@ class VectorRetriever:
         elif self._backend == "chromadb":
             try:
                 cache_path = self._data_dir / "embedding_cache.json"
-                self._embedding_fn = _CachedEmbeddingFunction(cache_path=cache_path, model_path=self._embedding_model_path)
+                self._embedding_fn = _CachedEmbeddingFunction(
+                    cache_path=cache_path, model_path=self._embedding_model_path
+                )
             except Exception as e:
                 logger.warning("Failed to create CachedEmbeddingFunction: %s, using default", e)
                 self._embedding_fn = None
@@ -259,7 +271,9 @@ class VectorRetriever:
                 self._embedding_fn(["warmup"])
                 elapsed = time.time() - t0
                 logger.info("SentenceTransformer model loaded in %.1fs", elapsed)
-                _emit(f"[OmniMem] 嵌入模型就绪 ({elapsed:.1f}s), 内存缓存: {self._embedding_fn.cache_size} 条")
+                _emit(
+                    f"[OmniMem] 嵌入模型就绪 ({elapsed:.1f}s), 内存缓存: {self._embedding_fn.cache_size} 条"
+                )
             if self._store is not None:
                 doc_count = self._store.count()
                 logger.info("ChromaDB initialized in %.1fs, docs=%d", time.time() - t0, doc_count)
@@ -309,8 +323,7 @@ class VectorRetriever:
                 # 查询所有以 memory_id 开头的 ID（含分块）
                 all_ids = self._store._collection.get(ids=None, include=[])["ids"]
                 ids_to_delete = [
-                    i for i in all_ids
-                    if i == memory_id or i.startswith(f"{memory_id}_chunk")
+                    i for i in all_ids if i == memory_id or i.startswith(f"{memory_id}_chunk")
                 ]
                 if ids_to_delete:
                     self._store.delete(ids_to_delete)
@@ -408,9 +421,7 @@ class VectorRetriever:
                 else 0
             )
             has_star_chunk = (
-                len(chunks) >= 2
-                and best_score > avg_score + score_std
-                and best_score > 0.6
+                len(chunks) >= 2 and best_score > avg_score + score_std and best_score > 0.6
             )
 
             if has_star_chunk:

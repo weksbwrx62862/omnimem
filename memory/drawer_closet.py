@@ -401,7 +401,9 @@ class DrawerClosetStore:
             self._meta_store.update_field(memory_id, **fields)
         return updated
 
-    def _update_drawer_privacy(self, memory_id: str, privacy: str, new_wing: Optional[str] = None) -> None:
+    def _update_drawer_privacy(
+        self, memory_id: str, privacy: str, new_wing: Optional[str] = None
+    ) -> None:
         """更新 Drawer 磁盘文件中的 privacy 和 wing 字段。"""
         drawer_path = self._id_to_path.get(memory_id)
         if not drawer_path or not drawer_path.exists():
