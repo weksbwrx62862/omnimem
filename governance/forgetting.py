@@ -43,6 +43,7 @@ from typing import Any, Optional
 
 from omnimem.utils.migration import SchemaMigrator
 from omnimem.governance.fsrs_engine import FSRSEngine, FSRSItem, FSRSParameters, get_fsrs_engine
+from omnimem.governance.memory_strength import MemoryStrengthEvaluator, ScoringWeights, get_evaluator
 
 logger = logging.getLogger(__name__)
 
@@ -88,6 +89,9 @@ class ForgettingCurve:
 
         # ★ Phase 2: FSRS 引擎
         self._fsrs = get_fsrs_engine()
+
+        # ★ Phase 3: 记忆强度评估器
+        self._evaluator = get_evaluator()
 
     def _init_db(self) -> None:
         """初始化遗忘数据库。"""
@@ -1124,6 +1128,129 @@ class ForgettingCurve:
             logger.warning("get_fsrs_stats failed: %s", e)
 
         return stats
+
+    # ── Phase 3: 记忆强度评估方法 ──────────────────────────────────────────────
+
+    def evaluate_memory_strength(self, memory_id: str) -> dict[str, Any]:
+        """评估单个记忆的强度
+
+        Args:
+            memory_id: 记忆 ID
+
+        Returns:
+            包含强度向量、综合评分、等级的字典
+        """
+        assert self._conn is not None
+
+        try:
+            row = self._conn.execute(
+                """SELECT recall_count, created_at, last_accessed
+                   FROM forgetting_state WHERE memory_id = ?""",
+                (memory_id,)
+            ).fetchone()
+
+            if not row:
+                return {"memory_id": memory_id, "error": "not found"}
+
+            recall_count, created_at, last_accessed = row
+
+            # 获取 FSRS 保持率
+            fsrs_retention = self.calculate_fsrs_retention(memory_id)
+
+            # 估算 FSRS 稳定性和难度
+            fsrs_stability = min(100.0, (recall_count or 0) * 2.0)
+            fsrs_difficulty = 0.5  # 默认中等难度
+
+            # 使用评估器
+            return self._evaluator.evaluate_memory(
+                memory_id=memory_id,
+                recall_count=recall_count or 0,
+                created_at=created_at,
+                last_accessed=last_accessed,
+                fsrs_retention=fsrs_retention,
+                fsrs_stability=fsrs_stability,
+                fsrs_difficulty=fsrs_difficulty,
+            )
+
+        except Exception as e:
+            logger.warning("evaluate_memory_strength failed for %s: %s", memory_id, e)
+            return {"memory_id": memory_id, "error": str(e)}
+
+    def evaluate_all_memories(self, limit: int = 100) -> dict[str, Any]:
+        """评估所有记忆的强度
+
+        Args:
+            limit: 最大评估数量
+
+        Returns:
+            包含评估结果和分布统计的字典
+        """
+        assert self._conn is not None
+
+        results = []
+
+        try:
+            rows = self._conn.execute(
+                """SELECT memory_id, recall_count, created_at, last_accessed
+                   FROM forgetting_state
+                   ORDER BY recall_count DESC
+                   LIMIT ?""",
+                (limit,)
+            ).fetchall()
+
+            for memory_id, recall_count, created_at, last_accessed in rows:
+                # 获取 FSRS 保持率
+                fsrs_retention = self.calculate_fsrs_retention(memory_id)
+
+                # 估算 FSRS 稳定性和难度
+                fsrs_stability = min(100.0, (recall_count or 0) * 2.0)
+                fsrs_difficulty = 0.5
+
+                result = self._evaluator.evaluate_memory(
+                    memory_id=memory_id,
+                    recall_count=recall_count or 0,
+                    created_at=created_at,
+                    last_accessed=last_accessed,
+                    fsrs_retention=fsrs_retention,
+                    fsrs_stability=fsrs_stability,
+                    fsrs_difficulty=fsrs_difficulty,
+                )
+                results.append(result)
+
+            # 获取分布统计
+            distribution = self._evaluator.get_distribution(results)
+
+            return {
+                "evaluated": len(results),
+                "distribution": distribution,
+                "top_memories": sorted(results, key=lambda x: x.get("score", 0), reverse=True)[:10],
+                "bottom_memories": sorted(results, key=lambda x: x.get("score", 0))[:10],
+            }
+
+        except Exception as e:
+            logger.warning("evaluate_all_memories failed: %s", e)
+            return {"error": str(e)}
+
+    def get_memory_grade(self, memory_id: str) -> str:
+        """获取记忆等级
+
+        Args:
+            memory_id: 记忆 ID
+
+        Returns:
+            等级 (S/A/B/C/D)
+        """
+        result = self.evaluate_memory_strength(memory_id)
+        return result.get("grade", "D")
+
+    def get_strength_distribution(self) -> dict[str, Any]:
+        """获取记忆强度分布统计
+
+        Returns:
+            包含等级分布、平均分数等统计
+        """
+        result = self.evaluate_all_memories(limit=1000)
+        return result.get("distribution", {})
 
     def get_status(self) -> dict[str, Any]:
         """获取遗忘状态概览（含热度分类和升级候选）。"""
