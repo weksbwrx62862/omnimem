@@ -44,6 +44,7 @@ from typing import Any, Optional
 from omnimem.utils.migration import SchemaMigrator
 from omnimem.governance.fsrs_engine import FSRSEngine, FSRSItem, FSRSParameters, get_fsrs_engine
 from omnimem.governance.memory_strength import MemoryStrengthEvaluator, ScoringWeights, get_evaluator
+from omnimem.governance.semantic_importance import SemanticImportanceEvaluator, get_semantic_evaluator
 
 logger = logging.getLogger(__name__)
 
@@ -92,6 +93,9 @@ class ForgettingCurve:
 
         # ★ Phase 3: 记忆强度评估器
         self._evaluator = get_evaluator()
+
+        # ★ Phase 4: 语义重要性评估器
+        self._semantic_evaluator = get_semantic_evaluator()
 
     def _init_db(self) -> None:
         """初始化遗忘数据库。"""
@@ -1251,6 +1255,103 @@ class ForgettingCurve:
         """
         result = self.evaluate_all_memories(limit=1000)
         return result.get("distribution", {})
+
+    # ── Phase 4: 语义重要性评估方法 ──────────────────────────────────────────────
+
+    def evaluate_semantic_importance(self, memory_id: str) -> dict[str, Any]:
+        """评估记忆的语义重要性
+
+        Args:
+            memory_id: 记忆 ID
+
+        Returns:
+            包含语义特征和综合重要性的字典
+        """
+        assert self._conn is not None
+
+        try:
+            # 获取记忆内容
+            content = self._get_memory_content(memory_id)
+
+            # 使用语义评估器
+            return self._semantic_evaluator.evaluate_importance(memory_id, content)
+
+        except Exception as e:
+            logger.warning("evaluate_semantic_importance failed for %s: %s", memory_id, e)
+            return {"memory_id": memory_id, "error": str(e)}
+
+    def _get_memory_content(self, memory_id: str) -> Optional[str]:
+        """获取记忆内容
+
+        Args:
+            memory_id: 记忆 ID
+
+        Returns:
+            记忆内容，失败返回 None
+        """
+        # 从 index.db 获取记忆内容
+        index_db = self._governance_dir.parent / "index" / "index.db"
+        if not index_db.exists():
+            return None
+
+        try:
+            conn = sqlite3.connect(str(index_db))
+            row = conn.execute(
+                "SELECT content FROM memories WHERE id = ? LIMIT 1",
+                (memory_id,)
+            ).fetchone()
+            conn.close()
+
+            if row and row[0]:
+                return row[0]
+        except Exception:
+            pass
+
+        return None
+
+    def get_semantic_importance_distribution(self) -> dict[str, Any]:
+        """获取语义重要性分布统计
+
+        Returns:
+            包含重要性分布的字典
+        """
+        assert self._conn is not None
+
+        distribution = {
+            "high": 0,    # > 0.7
+            "medium": 0,  # 0.4 - 0.7
+            "low": 0,     # < 0.4
+            "total": 0,
+            "avg_importance": 0.0,
+        }
+
+        try:
+            rows = self._conn.execute(
+                "SELECT memory_id FROM forgetting_state"
+            ).fetchall()
+
+            distribution["total"] = len(rows)
+            importances = []
+
+            for (memory_id,) in rows:
+                result = self.evaluate_semantic_importance(memory_id)
+                importance = result.get("importance", 0.5)
+                importances.append(importance)
+
+                if importance > 0.7:
+                    distribution["high"] += 1
+                elif importance > 0.4:
+                    distribution["medium"] += 1
+                else:
+                    distribution["low"] += 1
+
+            if importances:
+                distribution["avg_importance"] = sum(importances) / len(importances)
+
+        except Exception as e:
+            logger.warning("get_semantic_importance_distribution failed: %s", e)
+
+        return distribution
 
     def get_status(self) -> dict[str, Any]:
         """获取遗忘状态概览（含热度分类和升级候选）。"""
