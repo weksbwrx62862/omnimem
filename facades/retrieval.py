@@ -80,6 +80,11 @@ class RetrievalFacade:
     def feedback(self) -> FeedbackCollector:
         return self._feedback
 
+    @property
+    def prefetch_executor(self) -> ThreadPoolExecutor:
+        """获取预取执行器"""
+        return self._prefetch_executor
+
     def warmup(self) -> None:
         """预热：启动时预加载所有检索组件。"""
         try:
