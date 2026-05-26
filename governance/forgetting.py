@@ -42,6 +42,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from omnimem.utils.migration import SchemaMigrator
+from omnimem.governance.fsrs_engine import FSRSEngine, FSRSItem, FSRSParameters, get_fsrs_engine
 
 logger = logging.getLogger(__name__)
 
@@ -84,6 +85,9 @@ class ForgettingCurve:
         self._init_db()
         # ★ 冷启动标记：首次运行时跳过历史数据
         self._ensure_pipeline_marker()
+
+        # ★ Phase 2: FSRS 引擎
+        self._fsrs = get_fsrs_engine()
 
     def _init_db(self) -> None:
         """初始化遗忘数据库。"""
@@ -959,6 +963,167 @@ class ForgettingCurve:
             elif min_days <= days < max_days:
                 return str(stage)
         return "active"
+
+    # ── Phase 2: FSRS 相关方法 ──────────────────────────────────────────────────
+
+    def calculate_fsrs_retention(self, memory_id: str) -> float:
+        """使用 FSRS 计算记忆保持率
+
+        Args:
+            memory_id: 记忆 ID
+
+        Returns:
+            保持率 (0-1)
+        """
+        assert self._conn is not None
+
+        try:
+            row = self._conn.execute(
+                """SELECT recall_count, created_at, last_accessed
+                   FROM forgetting_state WHERE memory_id = ?""",
+                (memory_id,)
+            ).fetchone()
+
+            if not row:
+                return 1.0
+
+            recall_count, created_at, last_accessed = row
+            now = datetime.now(timezone.utc)
+
+            # 计算创建天数
+            if created_at:
+                created_dt = datetime.fromisoformat(created_at.replace('+00:00', ''))
+                if created_dt.tzinfo is None:
+                    created_dt = created_dt.replace(tzinfo=timezone.utc)
+                days_since_creation = max(1, (now - created_dt).days)
+            else:
+                days_since_creation = 1
+
+            # 计算最后检索距今天数
+            if last_accessed:
+                accessed_dt = datetime.fromisoformat(last_accessed.replace('+00:00', ''))
+                if accessed_dt.tzinfo is None:
+                    accessed_dt = accessed_dt.replace(tzinfo=timezone.utc)
+                last_recall_days_ago = max(0, (now - accessed_dt).days)
+            else:
+                last_recall_days_ago = days_since_creation
+
+            # 使用 FSRS 计算保持率
+            return self._fsrs.calculate_retention_from_recall(
+                recall_count or 0, days_since_creation, last_recall_days_ago
+            )
+
+        except Exception as e:
+            logger.warning("calculate_fsrs_retention failed for %s: %s", memory_id, e)
+            return 0.5
+
+    def suggest_review_time(self, memory_id: str, desired_retention: float = 0.9) -> Optional[datetime]:
+        """建议下次复习时间
+
+        Args:
+            memory_id: 记忆 ID
+            desired_retention: 目标保持率
+
+        Returns:
+            建议复习时间，失败返回 None
+        """
+        assert self._conn is not None
+
+        try:
+            row = self._conn.execute(
+                """SELECT recall_count, created_at, last_accessed
+                   FROM forgetting_state WHERE memory_id = ?""",
+                (memory_id,)
+            ).fetchone()
+
+            if not row:
+                return None
+
+            recall_count, created_at, last_accessed = row
+            now = datetime.now(timezone.utc)
+
+            # 创建 FSRSItem
+            item = FSRSItem()
+            item.reps = recall_count or 0
+
+            if created_at:
+                created_dt = datetime.fromisoformat(created_at.replace('+00:00', ''))
+                if created_dt.tzinfo is None:
+                    created_dt = created_dt.replace(tzinfo=timezone.utc)
+
+            if last_accessed:
+                accessed_dt = datetime.fromisoformat(last_accessed.replace('+00:00', ''))
+                if accessed_dt.tzinfo is None:
+                    accessed_dt = accessed_dt.replace(tzinfo=timezone.utc)
+                item.last_review = accessed_dt
+
+            # 估算稳定性
+            if recall_count and recall_count > 0:
+                item.stability = min(100.0, recall_count * 2.0)
+            else:
+                item.stability = 0.5
+
+            # 计算建议复习时间
+            return self._fsrs.suggest_review(item, now, desired_retention)
+
+        except Exception as e:
+            logger.warning("suggest_review_time failed for %s: %s", memory_id, e)
+            return None
+
+    def get_fsrs_stats(self) -> dict[str, Any]:
+        """获取 FSRS 统计信息
+
+        Returns:
+            包含保持率分布、平均稳定性等统计信息
+        """
+        assert self._conn is not None
+
+        stats = {
+            "total_memories": 0,
+            "avg_retention": 0.0,
+            "avg_stability": 0.0,
+            "retention_distribution": {
+                "high": 0,    # > 0.8
+                "medium": 0,  # 0.5 - 0.8
+                "low": 0,     # < 0.5
+            }
+        }
+
+        try:
+            rows = self._conn.execute(
+                "SELECT memory_id, recall_count FROM forgetting_state"
+            ).fetchall()
+
+            stats["total_memories"] = len(rows)
+            retentions = []
+            stabilities = []
+
+            for memory_id, recall_count in rows:
+                # 计算保持率
+                retention = self.calculate_fsrs_retention(memory_id)
+                retentions.append(retention)
+
+                # 估算稳定性
+                stability = min(100.0, (recall_count or 0) * 2.0)
+                stabilities.append(stability)
+
+                # 分类
+                if retention > 0.8:
+                    stats["retention_distribution"]["high"] += 1
+                elif retention > 0.5:
+                    stats["retention_distribution"]["medium"] += 1
+                else:
+                    stats["retention_distribution"]["low"] += 1
+
+            if retentions:
+                stats["avg_retention"] = sum(retentions) / len(retentions)
+            if stabilities:
+                stats["avg_stability"] = sum(stabilities) / len(stabilities)
+
+        except Exception as e:
+            logger.warning("get_fsrs_stats failed: %s", e)
+
+        return stats
 
     def get_status(self) -> dict[str, Any]:
         """获取遗忘状态概览（含热度分类和升级候选）。"""
