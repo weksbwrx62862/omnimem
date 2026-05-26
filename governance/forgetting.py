@@ -6,11 +6,21 @@
   - archived (30-90天): 仅摘要可用，原文归档
   - forgotten (90天+): 仅L0索引可用，需要显式召回
 
-热度分类（基于时间窗口内检索频次）:
+★ Phase 1 优化 (2026-05-26):
+  - 热度计算: 基于频率密度 (density = recall_7d / min(7, days_alive))
+    - hot: density >= 1.0 (平均每天1次以上)
+    - warm: density >= 0.3 (平均3天1次)
+    - neutral: 有检索但未达warm
+    - cold: 7天内零检索
+  - 自动升级: consolidating/archived 阶段的高频记忆自动回到 active
+  - 第三阶段: T+30d Wiki 交叉引用扫描 + 自动晋升
+  - 数据库索引: stage+created_at, heat+heat_updated_at, heat+recall_count
+
+热度分类（基于频率密度）:
   - neutral: 新记忆，未经过筛选
-  - hot: 24h 内被检索 ≥1 次
-  - warm: 7d 内检索不足但不为零
-  - cold: 24h 内零检索
+  - hot: 7天内平均每天检索≥1次
+  - warm: 7天内平均3天检索1次
+  - cold: 7天内零检索
 
 归档操作:
   - archive(memory_id): 将记忆从 active 降级到 archived
@@ -134,6 +144,19 @@ class ForgettingCurve:
         self._conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_access_log_mid_at ON access_log(memory_id, accessed_at)"
         )
+
+        # ★ Phase 1 优化：添加复合索引提升查询性能
+        # forgetting_state 表索引
+        self._conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_forgetting_stage_created ON forgetting_state(stage, created_at)"
+        )
+        self._conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_forgetting_heat_updated ON forgetting_state(heat, heat_updated_at)"
+        )
+        self._conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_forgetting_heat_recall ON forgetting_state(heat, recall_count)"
+        )
+
         self._conn.commit()
 
     # ── 自适应衰减阈值 ──────────────────────────────────────────────────────
@@ -516,17 +539,24 @@ class ForgettingCurve:
     # ── 三阶段筛选引擎 ────────────────────────────────────────────────────────
 
     def run_first_screening(self) -> dict[str, int]:
-        """T+24h 首次筛选：扫描创建满 24h 的 neutral 记忆，按检索次数标记 hot/cold。
+        """T+24h 首次筛选：基于频率密度计算热度等级。
+
+        ★ Phase 1 优化：引入频率密度 + warm 过渡态
+        热度等级:
+        - hot: 7天内平均每天检索≥1次 (density >= 1.0)
+        - warm: 7天内平均3天检索1次 (density >= 0.3)
+        - neutral: 有检索但未达warm
+        - cold: 7天内零检索
 
         ★ 冷启动保护：跳过管道启动前创建的历史数据。
 
         Returns:
-            {"hot": N, "cold": N, "skipped": N}
+            {"hot": N, "warm": N, "neutral": N, "cold": N, "skipped": N}
         """
         assert self._conn is not None
         now = datetime.now(timezone.utc)
         cutoff_24h = (now - timedelta(hours=24)).isoformat()
-        counts = {"hot": 0, "cold": 0, "skipped": 0}
+        counts = {"hot": 0, "warm": 0, "neutral": 0, "cold": 0, "skipped": 0}
 
         # ★ 冷启动：只处理管道启动后创建的记忆
         pipeline_start = self._get_pipeline_start_time()
@@ -535,27 +565,51 @@ class ForgettingCurve:
             if pipeline_start:
                 rows = self._conn.execute(
                     """SELECT memory_id, created_at FROM forgetting_state
-                       WHERE heat = 'neutral' AND created_at <= ? AND created_at >= ?""",
+                       WHERE created_at <= ? AND created_at >= ?""",
                     (cutoff_24h, pipeline_start),
                 ).fetchall()
             else:
                 rows = self._conn.execute(
                     """SELECT memory_id, created_at FROM forgetting_state
-                       WHERE heat = 'neutral' AND created_at <= ?""",
+                       WHERE created_at <= ?""",
                     (cutoff_24h,),
                 ).fetchall()
 
             for memory_id, created_at in rows:
-                # 查询 24h 内检索次数（小时级精度）
-                recall_in_24h = self.get_recall_count_in_window(memory_id, days=1)
-                if recall_in_24h >= 1:
-                    self.set_heat(memory_id, "hot")
-                    counts["hot"] += 1
-                else:
-                    self.set_heat(memory_id, "cold")
-                    counts["cold"] += 1
+                # 计算记忆存活天数
+                created_dt = datetime.fromisoformat(created_at.replace('+00:00', ''))
+                if created_dt.tzinfo is None:
+                    created_dt = created_dt.replace(tzinfo=timezone.utc)
+                days_alive = max(1, (now - created_dt).days)
 
-            logger.info("T+24h first screening: hot=%d, cold=%d", counts["hot"], counts["cold"])
+                # 查询 7 天内检索次数
+                recall_7d = self.get_recall_count_in_window(memory_id, days=7)
+
+                # ★ 频率密度 = 检索次数 / min(7, 存活天数)
+                density = recall_7d / min(7, days_alive)
+
+                # ★ 基于频率密度判断热度
+                if density >= 1.0:
+                    new_heat = "hot"
+                elif density >= 0.3:
+                    new_heat = "warm"
+                elif recall_7d == 0:
+                    new_heat = "cold"
+                else:
+                    new_heat = "neutral"
+
+                # 更新热度
+                old_heat = self.get_heat(memory_id)
+                if new_heat != old_heat:
+                    self.set_heat(memory_id, new_heat)
+                    counts[new_heat] += 1
+                else:
+                    counts[new_heat] += 1
+
+            logger.info(
+                "T+24h first screening: hot=%d, warm=%d, neutral=%d, cold=%d",
+                counts["hot"], counts["warm"], counts["neutral"], counts["cold"]
+            )
         except Exception as e:
             logger.warning("run_first_screening failed: %s", e)
 
@@ -600,14 +654,154 @@ class ForgettingCurve:
         return result
 
     def run_third_consolidation(self) -> dict[str, Any]:
-        """T+30d 最终巩固：扫描 Wiki 页面交叉引用，更新 confidence。
+        """T+30d 最终巩固：扫描 Wiki 页面交叉引用，自动晋升候选记忆。
+
+        ★ Phase 1 优化：实现第三阶段逻辑
+
+        流程:
+        1. 查找 hot+高频且已存在30天以上的记忆
+        2. 检查是否已被其他 Wiki 引用
+        3. 被多次引用 → 自动晋升
 
         Returns:
-            {"promoted": N, "monitored": N}
+            {"promoted": N, "monitored": N, "candidates": N}
         """
-        # Wiki 页面交叉引用扫描需要读取 Wiki 文件系统
-        # 此处只做 placeholder，实际由 WikiUpgradePipeline 的 lint 逻辑处理
-        return {"promoted": 0, "monitored": 0}
+        assert self._conn is not None
+        result: dict[str, Any] = {"promoted": 0, "monitored": 0, "candidates": 0}
+        now = datetime.now(timezone.utc)
+        cutoff_30d = (now - timedelta(days=30)).isoformat()
+
+        try:
+            # 查找候选记忆：hot + 高频访问 + 存在30天以上
+            rows = self._conn.execute(
+                """SELECT memory_id, recall_count, heat
+                   FROM forgetting_state
+                   WHERE heat = 'hot'
+                     AND created_at <= ?
+                     AND recall_count >= 5""",
+                (cutoff_30d,)
+            ).fetchall()
+
+            result["candidates"] = len(rows)
+
+            for memory_id, recall_count, heat in rows:
+                # 检查 Wiki 引用次数
+                ref_count = self._count_wiki_references(memory_id)
+
+                if ref_count >= 2:
+                    # 被多次引用 → 自动晋升
+                    self._promote_to_wiki(memory_id)
+                    result["promoted"] += 1
+                    logger.info("Promoted %s to wiki (refs=%d)", memory_id, ref_count)
+                else:
+                    # 继续监控
+                    result["monitored"] += 1
+                    # 如果完全没有引用，可能需要降级热度
+                    if ref_count == 0 and recall_count < 10:
+                        self.set_heat(memory_id, "warm")
+
+            logger.info(
+                "Third consolidation: candidates=%d, promoted=%d, monitored=%d",
+                result["candidates"], result["promoted"], result["monitored"]
+            )
+
+        except Exception as e:
+            logger.warning("run_third_consolidation failed: %s", e)
+
+        return result
+
+    def _count_wiki_references(self, memory_id: str) -> int:
+        """统计 Wiki 页面对该记忆的引用次数。
+
+        搜索策略：
+        1. 检查 memory_id 是否被引用
+        2. 检查记忆内容的前50字符是否被引用
+
+        Returns:
+            引用次数
+        """
+        import os
+
+        wiki_dir = self._governance_dir.parent / "palace"
+        if not wiki_dir.exists():
+            return 0
+
+        # 获取记忆内容摘要
+        memory_summary = self._get_memory_summary(memory_id)
+        if not memory_summary:
+            return 0
+
+        ref_count = 0
+        try:
+            for root, dirs, files in os.walk(str(wiki_dir)):
+                for file in files:
+                    if file.endswith('.md'):
+                        filepath = os.path.join(root, file)
+                        try:
+                            with open(filepath) as f:
+                                content = f.read()
+                            # 检查 memory_id 或内容摘要
+                            if memory_id in content or memory_summary[:50] in content:
+                                ref_count += 1
+                        except Exception:
+                            pass
+        except Exception as e:
+            logger.warning("_count_wiki_references failed: %s", e)
+
+        return ref_count
+
+    def _get_memory_summary(self, memory_id: str) -> str:
+        """获取记忆内容摘要（用于 Wiki 引用检查）。"""
+        # 从 index.db 获取记忆摘要
+        index_db = self._governance_dir.parent / "index" / "index.db"
+        if not index_db.exists():
+            return ""
+
+        try:
+            conn = sqlite3.connect(str(index_db))
+            row = conn.execute(
+                "SELECT content FROM memories WHERE id = ? LIMIT 1",
+                (memory_id,)
+            ).fetchone()
+            conn.close()
+
+            if row and row[0]:
+                # 返回前 100 字符作为摘要
+                return row[0][:100]
+        except Exception:
+            pass
+
+        return ""
+
+    def _promote_to_wiki(self, memory_id: str) -> bool:
+        """晋升记忆到 Wiki。
+
+        操作：
+        1. 标记 upgraded_to_wiki = 1
+        2. 更新阶段为 consolidating
+
+        Returns:
+            是否成功
+        """
+        assert self._conn is not None
+
+        try:
+            self._conn.execute(
+                """UPDATE forgetting_state
+                   SET upgraded_to_wiki = 1
+                   WHERE memory_id = ?""",
+                (memory_id,)
+            )
+            self._set_stage(memory_id, "consolidating")
+            self._pending_writes += 1
+            self._maybe_commit()
+
+            logger.info("Promoted memory %s to wiki", memory_id)
+            return True
+
+        except Exception as e:
+            logger.warning("_promote_to_wiki failed for %s: %s", memory_id, e)
+            return False
 
     def run_warm_cooling(self) -> int:
         """warm 降温：30 天内零检索的 warm 记忆降级为 cold。
@@ -632,17 +826,68 @@ class ForgettingCurve:
             logger.warning("run_warm_cooling failed: %s", e)
         return demoted
 
+    def _check_for_reactivation(self) -> int:
+        """自动升级检查：consolidating/archived 阶段的记忆如果被频繁访问，自动回到 active。
+
+        ★ Phase 1 优化：消除单向降级限制
+
+        规则：
+        - consolidating 记忆：7天内检索 ≥ 3 次 → 升级回 active
+        - archived 记忆：7天内检索 ≥ 5 次 → 升级回 active
+
+        Returns:
+            升级的记忆数量
+        """
+        assert self._conn is not None
+        reactivated = 0
+
+        try:
+            # 检查 consolidating 记忆
+            rows = self._conn.execute(
+                """SELECT memory_id FROM forgetting_state
+                   WHERE stage = 'consolidating'"""
+            ).fetchall()
+
+            for (memory_id,) in rows:
+                recall_7d = self.get_recall_count_in_window(memory_id, days=7)
+                if recall_7d >= 3:
+                    self._set_stage(memory_id, "active")
+                    reactivated += 1
+                    logger.info("Reactivated %s from consolidating (recall_7d=%d)", memory_id, recall_7d)
+
+            # 检查 archived 记忆
+            rows = self._conn.execute(
+                """SELECT memory_id FROM forgetting_state
+                   WHERE stage = 'archived'"""
+            ).fetchall()
+
+            for (memory_id,) in rows:
+                recall_7d = self.get_recall_count_in_window(memory_id, days=7)
+                if recall_7d >= 5:
+                    self._set_stage(memory_id, "active")
+                    reactivated += 1
+                    logger.info("Reactivated %s from archived (recall_7d=%d)", memory_id, recall_7d)
+
+            if reactivated > 0:
+                logger.info("Reactivation check: %d memories upgraded to active", reactivated)
+
+        except Exception as e:
+            logger.warning("_check_for_reactivation failed: %s", e)
+
+        return reactivated
+
     # ── 归档周期（整合三阶段筛选） ────────────────────────────────────────────
 
     def run_archive_cycle(self) -> int:
         """后台运行：执行三阶段筛选 + 过期记忆降级 + access_log 清理。
 
         ★ 改造：
-        1. T+24h 首次筛选（含冷启动保护）
-        2. T+7d 二次筛选（窗口增量）
-        3. warm→cold 降温（30天零检索）
-        4. 原有加速遗忘逻辑（小时级精度）
-        5. access_log 清理（90天前）
+        1. Phase 1 新增：自动升级检查（高频访问记忆回到 active）
+        2. T+24h 首次筛选（含冷启动保护）
+        3. T+7d 二次筛选（窗口增量）
+        4. warm→cold 降温（30天零检索）
+        5. 原有加速遗忘逻辑（小时级精度）
+        6. access_log 清理（90天前）
 
         Returns:
             归档的记忆数量
@@ -650,9 +895,14 @@ class ForgettingCurve:
         now = datetime.now(timezone.utc)
         archived_count = 0
 
+        # ★ Phase 1 优化：自动升级检查
+        # consolidating/archived 阶段的记忆如果被频繁访问，自动回到 active
+        self._check_for_reactivation()
+
         # 三阶段筛选 + warm 降温
         self.run_first_screening()
         self.run_second_screening()
+        self.run_third_consolidation()  # ★ Phase 1 新增：T+30d Wiki 晋升
         self.run_warm_cooling()
 
         # ★ access_log 清理：90天前的旧记录
