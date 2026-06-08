@@ -17,12 +17,10 @@ from __future__ import annotations
 
 import json
 import logging
-import math
 import os
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from typing import Optional, Any
-from pathlib import Path
+from datetime import datetime
+from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -30,17 +28,19 @@ logger = logging.getLogger(__name__)
 @dataclass
 class ReviewRecord:
     """复习记录"""
+
     memory_id: str
-    rating: int              # 评分 (1=Again, 2=Hard, 3=Good, 4=Easy)
-    elapsed_days: int        # 距上次复习的天数
+    rating: int  # 评分 (1=Again, 2=Hard, 3=Good, 4=Easy)
+    elapsed_days: int  # 距上次复习的天数
     retention_before: float  # 复习前的保持率
-    retention_after: float   # 复习后的保持率
+    retention_after: float  # 复习后的保持率
     timestamp: datetime = field(default_factory=datetime.now)
 
 
 @dataclass
 class ParameterHistory:
     """参数历史记录"""
+
     timestamp: datetime
     parameters: list[float]
     loss: float
@@ -73,11 +73,25 @@ class PersonalizedFSRS:
 
         # 默认参数 (FSRS v4)
         self._default_params = [
-            0.4, 0.6, 2.4, 5.8,  # 初始稳定性
-            4.93, 0.94,           # 初始难度参数
-            0.86, 0.01, 1.49, 0.14, 0.94, 2.18,  # 稳定性增长
-            0.05, 0.34, 1.26, 0.29, 2.61,  # 难度调整
-            9.0, 0.5,             # 遗忘曲线参数 (α, β)
+            0.4,
+            0.6,
+            2.4,
+            5.8,  # 初始稳定性
+            4.93,
+            0.94,  # 初始难度参数
+            0.86,
+            0.01,
+            1.49,
+            0.14,
+            0.94,
+            2.18,  # 稳定性增长
+            0.05,
+            0.34,
+            1.26,
+            0.29,
+            2.61,  # 难度调整
+            9.0,
+            0.5,  # 遗忘曲线参数 (α, β)
         ]
 
         # 当前参数
@@ -105,12 +119,16 @@ class PersonalizedFSRS:
         """保存参数"""
         try:
             os.makedirs(os.path.dirname(self._param_file), exist_ok=True)
-            with open(self._param_file, 'w') as f:
-                json.dump({
-                    "parameters": self._current_params,
-                    "updated_at": datetime.now().isoformat(),
-                    "history_count": len(self._history),
-                }, f, indent=2)
+            with open(self._param_file, "w") as f:
+                json.dump(
+                    {
+                        "parameters": self._current_params,
+                        "updated_at": datetime.now().isoformat(),
+                        "history_count": len(self._history),
+                    },
+                    f,
+                    indent=2,
+                )
             logger.info("Saved personalized parameters")
         except Exception as e:
             logger.warning("Failed to save parameters: %s", e)
@@ -245,12 +263,14 @@ class PersonalizedFSRS:
         self._save_params()
 
         # 记录历史
-        self._history.append(ParameterHistory(
-            timestamp=datetime.now(),
-            parameters=self._current_params.copy(),
-            loss=best_loss,
-            sample_count=len(review_data),
-        ))
+        self._history.append(
+            ParameterHistory(
+                timestamp=datetime.now(),
+                parameters=self._current_params.copy(),
+                loss=best_loss,
+                sample_count=len(review_data),
+            )
+        )
 
         return {
             "status": "success",
@@ -335,7 +355,9 @@ class PersonalizedFSRS:
             "current_loss": current_loss,
             "default_loss": default_loss,
             "improvement": default_loss - current_loss,
-            "improvement_pct": ((default_loss - current_loss) / default_loss * 100) if default_loss > 0 else 0,
+            "improvement_pct": ((default_loss - current_loss) / default_loss * 100)
+            if default_loss > 0
+            else 0,
         }
 
 
