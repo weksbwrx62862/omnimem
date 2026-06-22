@@ -18,7 +18,7 @@ from __future__ import annotations
 import logging
 import math
 import sqlite3
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -54,7 +54,8 @@ class RetrievalQualityEvaluator:
         self._conn = sqlite3.connect(str(self._db_path), check_same_thread=False)
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA busy_timeout=5000")
-        self._conn.execute("""
+        self._conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS quality_evaluations (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 query TEXT NOT NULL,
@@ -66,7 +67,8 @@ class RetrievalQualityEvaluator:
                 result_count INTEGER,
                 timestamp TEXT NOT NULL
             )
-        """)
+        """
+        )
         self._conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_quality_timestamp ON quality_evaluations(timestamp)"
         )
@@ -280,54 +282,68 @@ class RetrievalQualityEvaluator:
         latency = trend["latency_ms"]
 
         if precision < 0.3:
-            suggestions.append({
-                "parameter": "min_rrf",
-                "action": "increase",
-                "description": f"精确率偏低（{precision:.2f}），建议提高 min_rrf 阈值以过滤低质量结果",
-                "suggested_value": "0.045",
-            })
+            suggestions.append(
+                {
+                    "parameter": "min_rrf",
+                    "action": "increase",
+                    "description": f"精确率偏低（{precision:.2f}），建议提高 min_rrf 阈值以过滤低质量结果",
+                    "suggested_value": "0.045",
+                }
+            )
 
         if recall < 0.3:
-            suggestions.append({
-                "parameter": "min_rrf",
-                "action": "decrease",
-                "description": f"召回率偏低（{recall:.2f}），建议降低 min_rrf 阈值以召回更多结果",
-                "suggested_value": "0.025",
-            })
-            suggestions.append({
-                "parameter": "top_k",
-                "action": "increase",
-                "description": f"召回率偏低（{recall:.2f}），建议增加 top_k 以扩大检索范围",
-                "suggested_value": "15",
-            })
+            suggestions.append(
+                {
+                    "parameter": "min_rrf",
+                    "action": "decrease",
+                    "description": f"召回率偏低（{recall:.2f}），建议降低 min_rrf 阈值以召回更多结果",
+                    "suggested_value": "0.025",
+                }
+            )
+            suggestions.append(
+                {
+                    "parameter": "top_k",
+                    "action": "increase",
+                    "description": f"召回率偏低（{recall:.2f}），建议增加 top_k 以扩大检索范围",
+                    "suggested_value": "15",
+                }
+            )
 
         if mrr < 0.3:
-            suggestions.append({
-                "parameter": "rrf_vector_weight",
-                "action": "increase",
-                "description": f"MRR 偏低（{mrr:.2f}），建议提高向量检索权重（语义匹配优先）",
-                "suggested_value": "4.0",
-            })
-            suggestions.append({
-                "parameter": "rrf_bm25_weight",
-                "action": "decrease",
-                "description": f"MRR 偏低（{mrr:.2f}），建议降低 BM25 权重（减少关键词噪音）",
-                "suggested_value": "0.8",
-            })
+            suggestions.append(
+                {
+                    "parameter": "rrf_vector_weight",
+                    "action": "increase",
+                    "description": f"MRR 偏低（{mrr:.2f}），建议提高向量检索权重（语义匹配优先）",
+                    "suggested_value": "4.0",
+                }
+            )
+            suggestions.append(
+                {
+                    "parameter": "rrf_bm25_weight",
+                    "action": "decrease",
+                    "description": f"MRR 偏低（{mrr:.2f}），建议降低 BM25 权重（减少关键词噪音）",
+                    "suggested_value": "0.8",
+                }
+            )
 
         if latency > 2000:
-            suggestions.append({
-                "parameter": "top_k",
-                "action": "decrease",
-                "description": f"检索延迟偏高（{latency:.0f}ms），建议减少 top_k 以降低延迟",
-                "suggested_value": "5",
-            })
-            suggestions.append({
-                "parameter": "query_cache_ttl",
-                "action": "enable",
-                "description": f"检索延迟偏高（{latency:.0f}ms），建议启用查询缓存以减少重复计算",
-                "suggested_value": "120",
-            })
+            suggestions.append(
+                {
+                    "parameter": "top_k",
+                    "action": "decrease",
+                    "description": f"检索延迟偏高（{latency:.0f}ms），建议减少 top_k 以降低延迟",
+                    "suggested_value": "5",
+                }
+            )
+            suggestions.append(
+                {
+                    "parameter": "query_cache_ttl",
+                    "action": "enable",
+                    "description": f"检索延迟偏高（{latency:.0f}ms），建议启用查询缓存以减少重复计算",
+                    "suggested_value": "120",
+                }
+            )
 
         return {
             "suggestions": suggestions,
