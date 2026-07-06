@@ -25,9 +25,11 @@ class StoreProtocol(Protocol):
         vc: str = "",
         memory_id: str = "",
         **kwargs: Any,
-    ) -> str: ...
+    ) -> str:
+        ...
 
-    def get(self, memory_id: str) -> dict[str, Any] | None: ...
+    def get(self, memory_id: str) -> dict[str, Any] | None:
+        ...
 
     def search(
         self,
@@ -35,9 +37,11 @@ class StoreProtocol(Protocol):
         room: str = "",
         memory_type: str = "",
         limit: int = 50,
-    ) -> list[dict[str, Any]]: ...
+    ) -> list[dict[str, Any]]:
+        ...
 
-    def search_by_content(self, query: str, limit: int = 20) -> list[dict[str, Any]]: ...
+    def search_by_content(self, query: str, limit: int = 20) -> list[dict[str, Any]]:
+        ...
 
 
 @runtime_checkable
@@ -59,14 +63,16 @@ class IndexProtocol(Protocol):
         stored_at: str = "",
         provenance: str = "",
         metadata: str = "",
-    ) -> None: ...
+    ) -> None:
+        ...
 
 
 @runtime_checkable
 class RetrieverProtocol(Protocol):
     """混合检索协议 — HybridRetriever 的结构化子类型。"""
 
-    def add(self, content: str, memory_id: str, metadata: dict[str, Any]) -> None: ...
+    def add(self, content: str, memory_id: str, metadata: dict[str, Any]) -> None:
+        ...
 
     def search(
         self,
@@ -76,11 +82,14 @@ class RetrieverProtocol(Protocol):
         top_k: int = 10,
         store: Any = None,
         enable_trace: bool = False,
-    ) -> list[dict[str, Any]]: ...
+    ) -> list[dict[str, Any]]:
+        ...
 
-    def warmup(self) -> None: ...
+    def warmup(self) -> None:
+        ...
 
-    def flush(self) -> None: ...
+    def flush(self) -> None:
+        ...
 
 
 @runtime_checkable
@@ -92,7 +101,8 @@ class DedupProtocol(Protocol):
         content: str,
         memory_type: str,
         candidates: list[dict[str, Any]] | None = None,
-    ) -> dict[str, Any]: ...
+    ) -> dict[str, Any]:
+        ...
 
 
 @runtime_checkable
@@ -115,4 +125,5 @@ class ProviderProtocol(Protocol):
     _consolidation: Any
     _kv_cache: Any
 
-    def _should_store(self, content: str) -> bool: ...
+    def _should_store(self, content: str) -> bool:
+        ...

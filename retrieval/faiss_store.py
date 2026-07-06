@@ -15,13 +15,10 @@ import json
 import logging
 import sqlite3
 import threading
-import time
 from pathlib import Path
-from typing import Any
 
 import faiss
 import numpy as np
-
 from omnimem.retrieval.vector_store import VectorStore, _CachedEmbeddingFunction
 
 logger = logging.getLogger(__name__)
@@ -55,13 +52,15 @@ class FAISSStore(VectorStore):
                 return
             # 初始化 SQLite 元数据库
             self._meta_conn = sqlite3.connect(str(self._meta_path), check_same_thread=False)
-            self._meta_conn.execute("""
+            self._meta_conn.execute(
+                """
                 CREATE TABLE IF NOT EXISTS metadata (
                     id TEXT PRIMARY KEY,
                     document TEXT,
                     meta_json TEXT
                 )
-            """)
+            """
+            )
             self._meta_conn.execute("PRAGMA journal_mode=WAL")
             self._meta_conn.commit()
 
@@ -70,7 +69,9 @@ class FAISSStore(VectorStore):
                 try:
                     self._index = faiss.read_index(str(self._index_path))
                     # 重建 id_map from SQLite (按 rowid 顺序对应 FAISS 内部 idx)
-                    rows = self._meta_conn.execute("SELECT id FROM metadata ORDER BY rowid").fetchall()
+                    rows = self._meta_conn.execute(
+                        "SELECT id FROM metadata ORDER BY rowid"
+                    ).fetchall()
                     self._id_map = [r[0] for r in rows]
                     logger.info("FAISSStore: loaded index with %d vectors", self._index.ntotal)
                 except Exception as e:
@@ -96,7 +97,9 @@ class FAISSStore(VectorStore):
                 vectors = np.array(embeddings, dtype=np.float32)
                 if vectors.ndim == 2 and vectors.shape[1] > 0:
                     self._dimension = vectors.shape[1]
-                    self._index = faiss.IndexFlatIP(self._dimension)  # Inner Product (余弦相似度需归一化)
+                    self._index = faiss.IndexFlatIP(
+                        self._dimension
+                    )  # Inner Product (余弦相似度需归一化)
                     faiss.normalize_L2(vectors)
                     self._index.add(vectors)
                     logger.info("FAISSStore: rebuilt index from %d cached embeddings", len(texts))
@@ -127,7 +130,9 @@ class FAISSStore(VectorStore):
         faiss.normalize_L2(vectors)
         return vectors
 
-    def add(self, ids: list[str], documents: list[str], metadatas: list[dict] | None = None) -> None:
+    def add(
+        self, ids: list[str], documents: list[str], metadatas: list[dict] | None = None
+    ) -> None:
         self._ensure_initialized()
         if not ids:
             return
@@ -170,7 +175,9 @@ class FAISSStore(VectorStore):
 
     def _rebuild_with_new_dim(self) -> None:
         """维度变化时从 SQLite 重建索引。"""
-        rows = self._meta_conn.execute("SELECT id, document FROM metadata ORDER BY rowid").fetchall()
+        rows = self._meta_conn.execute(
+            "SELECT id, document FROM metadata ORDER BY rowid"
+        ).fetchall()
         if not rows:
             return
         texts = [r[1] for r in rows]
@@ -224,7 +231,12 @@ class FAISSStore(VectorStore):
                     all_metas.append(q_metas)
                     all_dists.append(q_dists)
 
-                return {"ids": all_ids, "documents": all_docs, "metadatas": all_metas, "distances": all_dists}
+                return {
+                    "ids": all_ids,
+                    "documents": all_docs,
+                    "metadatas": all_metas,
+                    "distances": all_dists,
+                }
 
             except Exception as e:
                 logger.warning("FAISSStore query failed: %s", e)
@@ -246,7 +258,9 @@ class FAISSStore(VectorStore):
 
     def _rebuild_index(self) -> None:
         """从 SQLite 重建 FAISS 索引（删除后必需）。"""
-        rows = self._meta_conn.execute("SELECT id, document FROM metadata ORDER BY rowid").fetchall()
+        rows = self._meta_conn.execute(
+            "SELECT id, document FROM metadata ORDER BY rowid"
+        ).fetchall()
         self._id_map = [r[0] for r in rows]
         if not rows:
             self._index = faiss.IndexFlatIP(self._dimension)

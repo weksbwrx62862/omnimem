@@ -47,7 +47,7 @@ _TYPE_TO_HALL = {
     "skill": "skills",
     "procedural": "procedures",
     "event": "events",
-    "action": "actions",       # Agent 行为记忆
+    "action": "actions",  # Agent 行为记忆
     "reasoning": "reasoning",  # 推理链条记忆
 }
 
@@ -233,7 +233,7 @@ class WingRoomManager:
 
     def tree(self, wing: str = "", hall: str = "") -> dict[str, Any]:
         """展示目录树 — 内化 OpenViking tree()。
-        
+
         Returns:
             嵌套字典表示的目录树：
             {
@@ -258,12 +258,12 @@ class WingRoomManager:
 
     def grep_rooms(self, pattern: str) -> list[dict[str, str]]:
         """搜索 Room 名称 — 内化 OpenViking grep()。
-        
+
         在所有 Wing/Hall 下搜索匹配 pattern 的 Room 名称。
-        
+
         Args:
             pattern: 搜索模式（子串匹配，不区分大小写）
-        
+
         Returns:
             [{"wing": str, "hall": str, "room": str}, ...]
         """

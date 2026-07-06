@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import tempfile
 from pathlib import Path
 
 import pytest
@@ -15,6 +14,7 @@ class TestTraceChain:
     @pytest.fixture
     def chain(self, omni_tmp_path):
         from omnimem.core.trace_chain import TraceChain
+
         tc = TraceChain(omni_tmp_path)
         yield tc
         tc.close()
