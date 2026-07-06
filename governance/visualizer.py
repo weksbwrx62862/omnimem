@@ -11,10 +11,8 @@ MemoryVisualizer — 记忆系统可视化模块。
 
 from __future__ import annotations
 
-import json
 import logging
-from typing import Optional, Any
-from datetime import datetime
+from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -263,7 +261,7 @@ class MemoryVisualizer:
             </div>
             """
 
-        html += '</div></div>'
+        html += "</div></div>"
         return html
 
     def _generate_bar_chart(self, title: str, labels: list, values: list, colors: list) -> str:
@@ -280,10 +278,15 @@ class MemoryVisualizer:
             </div>
             """
 
-        html += '</div>'
+        html += "</div>"
         return html
 
-    def save_dashboard(self, stats: dict[str, Any], filename: str = "dashboard.html", output_dir: Optional[str] = None) -> str:
+    def save_dashboard(
+        self,
+        stats: dict[str, Any],
+        filename: str = "dashboard.html",
+        output_dir: Optional[str] = None,
+    ) -> str:
         """保存仪表盘到文件
 
         Args:
@@ -295,13 +298,14 @@ class MemoryVisualizer:
             文件路径
         """
         import os
+
         target_dir = output_dir or self._output_dir
         os.makedirs(target_dir, exist_ok=True)
 
         filepath = os.path.join(target_dir, filename)
         html = self.generate_dashboard(stats)
 
-        with open(filepath, 'w', encoding='utf-8') as f:
+        with open(filepath, "w", encoding="utf-8") as f:
             f.write(html)
 
         logger.info("Dashboard saved to %s", filepath)
