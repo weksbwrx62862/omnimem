@@ -22,6 +22,7 @@ import tarfile
 import threading
 import time
 
+
 # ★ 抑制 ChromaDB 0.6.x telemetry PostHog capture() 签名不兼容的噪音日志
 class _ChromaDBTelemetryFilter(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
@@ -32,6 +33,7 @@ class _ChromaDBTelemetryFilter(logging.Filter):
             return False
         return True
 
+
 _tf = _ChromaDBTelemetryFilter()
 for _ln in ("chromadb.telemetry.product.posthog", "chromadb.telemetry"):
     logging.getLogger(_ln).addFilter(_tf)
@@ -41,30 +43,43 @@ from pathlib import Path
 from typing import Any
 
 from agent.memory_provider import MemoryProvider
-
 from omnimem.compression.pipeline import CompressionPipeline
 from omnimem.config import OmniMemConfig
+from omnimem.core.action_memory import ActionMemoryService
 from omnimem.core.attachment import build_attachments
 from omnimem.core.dedup import SemanticDedupService
+from omnimem.core.distillation import DistillationEngine
 from omnimem.core.llm_memory_manager import LLMMemoryManager
+from omnimem.core.memory_monitor import MemoryMonitor
 from omnimem.core.tool_router import (
     ToolRouter,
-    handle_compact,
-    handle_reflect,
-    handle_detail,
+    apply_sync_change,
     build_system_prompt,
+    call_llm_for_reflect,
+    handle_compact,
+    handle_detail,
+    handle_reflect,
+    init_llm_client,
+    l3_recall,
+    make_llm_call_fn,
+    retry_index_add,
+    retry_kg_extract,
+    retry_retriever_add,
     run_prefetch,
     run_queue_prefetch,
-    l3_recall,
-    init_llm_client,
-    make_llm_call_fn,
-    call_llm_for_reflect,
-    retry_index_add,
-    retry_retriever_add,
-    retry_kg_extract,
-    apply_sync_change,
+)
+from omnimem.core.tool_router import (
     get_config_schema as _get_config_schema_impl,
+)
+from omnimem.core.tool_router import (
     save_config as _save_config_impl,
+)
+from omnimem.facades import (
+    DeepMemoryFacade,
+    GovernanceFacade,
+    RetrievalFacade,
+    StorageFacade,
+    SyncFacade,
 )
 from omnimem.governance.vector_clock import VectorClock
 from omnimem.handlers.compat_handler import CompatHandler
@@ -75,16 +90,6 @@ from omnimem.handlers.recall import handle_recall as _handle_recall_impl
 from omnimem.handlers.record_action import handle_record_action as _handle_record_action_impl
 from omnimem.handlers.schemas import get_tool_schemas as _get_tool_schemas
 from omnimem.utils.security import SecurityValidator
-from omnimem.core.memory_monitor import MemoryMonitor
-from omnimem.core.distillation import DistillationEngine
-from omnimem.core.action_memory import ActionMemoryService
-from omnimem.facades import (
-    StorageFacade,
-    RetrievalFacade,
-    GovernanceFacade,
-    DeepMemoryFacade,
-    SyncFacade,
-)
 
 logger = logging.getLogger(__name__)
 
@@ -172,7 +177,11 @@ class OmniMemProvider(MemoryProvider):  # type: ignore[misc]
             try:
                 __import__(module)
             except ImportError:
-                logger.warning("OmniMem 可选依赖 %s 缺失，将降级到 BM25-only 模式。安装: pip install %s", module, pip_name)
+                logger.warning(
+                    "OmniMem 可选依赖 %s 缺失，将降级到 BM25-only 模式。安装: pip install %s",
+                    module,
+                    pip_name,
+                )
 
         return True
 
@@ -235,7 +244,9 @@ class OmniMemProvider(MemoryProvider):  # type: ignore[misc]
         self._memory_monitor.start()
 
         # ─── 阶段2: 后台异步预热（重活丢到 worker 线程，不阻塞对话启动） ───
-        t_bg = threading.Thread(target=self._background_warmup, daemon=True, name="omnimem_bg_warmup")
+        t_bg = threading.Thread(
+            target=self._background_warmup, daemon=True, name="omnimem_bg_warmup"
+        )
         t_bg.start()
 
         try:
@@ -286,12 +297,15 @@ class OmniMemProvider(MemoryProvider):  # type: ignore[misc]
             # ★ OPT: index.db 全量同步 — 直接 SQLite 交叉比对
             try:
                 import sqlite3 as _sql
+
                 meta_path = self._store._meta_store._db_path
                 index_path = self._index._db_path
                 meta_db = _sql.connect(str(meta_path), check_same_thread=False)
                 idx_db = _sql.connect(str(index_path), check_same_thread=False)
                 # 获取两组 ID
-                meta_rows = meta_db.execute("SELECT memory_id, wing, type, room, summary, confidence, privacy, stored_at, content_preview FROM memories").fetchall()
+                meta_rows = meta_db.execute(
+                    "SELECT memory_id, wing, type, room, summary, confidence, privacy, stored_at, content_preview FROM memories"
+                ).fetchall()
                 idx_rows = idx_db.execute("SELECT memory_id FROM memory_index").fetchall()
                 meta_ids = {r[0] for r in meta_rows}
                 idx_ids = {r[0] for r in idx_rows}
@@ -307,26 +321,43 @@ class OmniMemProvider(MemoryProvider):  # type: ignore[misc]
                         mid = r[0]
                         if mid in missing:
                             meta_map[mid] = {
-                                'wing': r[1] or 'personal',
-                                'hall': r[2] or 'facts',
-                                'room': r[3] or 'default',
-                                'summary': r[4] or '',
-                                'type': r[2] or 'fact',
-                                'confidence': r[5] or 3,
-                                'privacy': r[6] or 'personal',
-                                'stored_at': r[7] or '',
-                                'content': r[8] or r[4] or '',
+                                "wing": r[1] or "personal",
+                                "hall": r[2] or "facts",
+                                "room": r[3] or "default",
+                                "summary": r[4] or "",
+                                "type": r[2] or "fact",
+                                "confidence": r[5] or 3,
+                                "privacy": r[6] or "personal",
+                                "stored_at": r[7] or "",
+                                "content": r[8] or r[4] or "",
                             }
                     for mid, m in meta_map.items():
                         idx_db.execute(
                             "INSERT INTO memory_index (memory_id, wing, hall, room, summary, content, type, confidence, privacy, scope, stored_at, provenance) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
-                            (mid, m['wing'], m['hall'], m['room'], m['summary'], m['content'],
-                             m['type'], m['confidence'], m['privacy'], m['wing'], m['stored_at'], '{}'))
+                            (
+                                mid,
+                                m["wing"],
+                                m["hall"],
+                                m["room"],
+                                m["summary"],
+                                m["content"],
+                                m["type"],
+                                m["confidence"],
+                                m["privacy"],
+                                m["wing"],
+                                m["stored_at"],
+                                "{}",
+                            ),
+                        )
                 idx_db.commit()
                 idx_db.close()
                 meta_db.close()
                 if stale or missing:
-                    logger.info("OmniMem: index.db synced — cleaned %d stale, added %d missing", len(stale), len(missing))
+                    logger.info(
+                        "OmniMem: index.db synced — cleaned %d stale, added %d missing",
+                        len(stale),
+                        len(missing),
+                    )
             except Exception as _e:
                 logger.warning("OmniMem index.db sync skipped (non-fatal): %s", _e)
         except Exception as e:
@@ -339,13 +370,17 @@ class OmniMemProvider(MemoryProvider):  # type: ignore[misc]
             try:
                 health = self._retriever._check_vector_health()
                 vec_count = health.get("vector_count", -1)
-                if vec_count == 0 and hasattr(self, '_index') and self._index:
+                if vec_count == 0 and hasattr(self, "_index") and self._index:
                     indexed_entries = self._index.search_l1(limit=5000)
                     if indexed_entries:
-                        logger.warning("OmniMem: vector index empty but %d entries in meta_store, triggering rebuild", len(indexed_entries))
+                        logger.warning(
+                            "OmniMem: vector index empty but %d entries in meta_store, triggering rebuild",
+                            len(indexed_entries),
+                        )
                         result = self._retriever.rebuild_all_from_entries(indexed_entries)
                         logger.info("OmniMem: vector rebuild complete: %s", result)
                         from omnimem.retrieval.vector_store import _emit
+
                         _emit("[OmniMem] 向量索引已自动重建")
             except Exception as e:
                 logger.warning("OmniMem: vector health check failed: %s", e)
@@ -361,7 +396,8 @@ class OmniMemProvider(MemoryProvider):  # type: ignore[misc]
                     fixed = self._auditor.repair(audit)
                     logger.info(
                         "OmniMem startup audit: %d inconsistencies found, %d repaired",
-                        audit["total_issues"], fixed,
+                        audit["total_issues"],
+                        fixed,
                     )
         except Exception as e:
             logger.warning("OmniMem startup audit skipped (non-fatal): %s", e)
@@ -377,29 +413,43 @@ class OmniMemProvider(MemoryProvider):  # type: ignore[misc]
 
     def _init_retrieval(self) -> None:
         self._retrieval = RetrievalFacade(self._data_dir, self._config, self._storage)
-        if hasattr(self._retrieval.retriever, '_vector_breaker'):
+        if hasattr(self._retrieval.retriever, "_vector_breaker"):
+
             def _on_circuit_recover():
                 try:
                     health = self._retrieval.retriever._check_vector_health()
                     if health.get("vector_count", -1) <= 0:
-                        logger.warning("OmniMem: CircuitBreaker recovered but vector still empty, triggering rebuild")
-                        if hasattr(self, '_index') and self._index:
+                        logger.warning(
+                            "OmniMem: CircuitBreaker recovered but vector still empty, triggering rebuild"
+                        )
+                        if hasattr(self, "_index") and self._index:
                             indexed_entries = self._index.search_l1(limit=5000)
                             if indexed_entries:
-                                result = self._retrieval.retriever.rebuild_all_from_entries(indexed_entries)
-                                logger.info("OmniMem: vector rebuild after circuit recovery: %s", result)
+                                result = self._retrieval.retriever.rebuild_all_from_entries(
+                                    indexed_entries
+                                )
+                                logger.info(
+                                    "OmniMem: vector rebuild after circuit recovery: %s", result
+                                )
                 except Exception as e:
                     logger.warning("OmniMem: circuit recovery rebuild failed: %s", e)
+
             self._retrieval.retriever._vector_breaker._on_recover = _on_circuit_recover
 
     def _init_governance_sync_services(self) -> None:
         self._governance = GovernanceFacade(
-            self._data_dir, self._config, self._session_id,
-            self._storage, self._retrieval.retriever,
+            self._data_dir,
+            self._config,
+            self._session_id,
+            self._storage,
+            self._retrieval.retriever,
         )
         self._sync = SyncFacade(
-            self._data_dir, self._config, self._session_id,
-            self._storage, self._retrieval,
+            self._data_dir,
+            self._config,
+            self._session_id,
+            self._storage,
+            self._retrieval,
         )
         self._sync.bind_provenance(self._governance.provenance)
 
@@ -417,6 +467,7 @@ class OmniMemProvider(MemoryProvider):  # type: ignore[misc]
         )
         # ★ OPT: 初始化 MermaidCanvas + CompressionPipeline
         from omnimem.compression.mermaid_canvas import MermaidCanvas
+
         self._mermaid_canvas = MermaidCanvas(self._data_dir, config=self._config)
         self._compression_pipeline = CompressionPipeline(
             llm_call_fn=self._make_llm_call_fn(),
@@ -432,8 +483,12 @@ class OmniMemProvider(MemoryProvider):  # type: ignore[misc]
         )
         self._dedup_service = SemanticDedupService(self._store, self._retriever)
         self._action_memory = ActionMemoryService(
-            self._store, self._index, self._retriever,
-            self._wing_room, self._provenance, self._forgetting,
+            self._store,
+            self._index,
+            self._retriever,
+            self._wing_room,
+            self._provenance,
+            self._forgetting,
         )
         self._tool_router = ToolRouter(
             memorize_fn=self._handle_memorize,
@@ -447,14 +502,16 @@ class OmniMemProvider(MemoryProvider):  # type: ignore[misc]
         )
         # ★ OPT: 初始化 TraceChain 全链路溯源
         from omnimem.core.trace_chain import TraceChain
+
         self._trace_chain = TraceChain(self._data_dir)
         # ★ OPT: 初始化 PipelineScheduler（L2/L3 自动调度）
         from omnimem.core.pipeline_scheduler import PipelineScheduler
+
         self._pipeline_scheduler = PipelineScheduler(
             config=self._config,
             logger=logger,
-            bg_executor=self._bg_executor if hasattr(self, '_bg_executor') else None,
-            reflect_fn=self._handle_reflect if hasattr(self, '_handle_reflect') else None,
+            bg_executor=self._bg_executor if hasattr(self, "_bg_executor") else None,
+            reflect_fn=self._handle_reflect if hasattr(self, "_handle_reflect") else None,
         )
 
         # ★ 显式属性赋值（替代 __getattr__ 动态代理）
@@ -489,13 +546,16 @@ class OmniMemProvider(MemoryProvider):  # type: ignore[misc]
         self._lora_trainer = self._sync.lora_trainer
         # ★ 质量评估器：检索质量指标计算 + 持久化 + 自动调优建议
         from omnimem.retrieval.quality_eval import RetrievalQualityEvaluator
+
         self._quality_evaluator = RetrievalQualityEvaluator(
-            self._data_dir, config=self._config,
+            self._data_dir,
+            config=self._config,
         )
 
     def _init_reflect(self) -> None:
         self._deep = DeepMemoryFacade(
-            self._data_dir, self._config,
+            self._data_dir,
+            self._config,
             recall_fn=self._l3_recall,
             llm_fn=self._call_llm_for_reflect,
             llm_client=self._llm_client,
@@ -565,7 +625,9 @@ class OmniMemProvider(MemoryProvider):  # type: ignore[misc]
 
     def __getattr__(self, name: str) -> Any:
         if name in self._FACADE_ATTR_MAP:
-            logger.warning("OmniMemProvider.__getattr__('%s') is deprecated, use explicit attribute", name)
+            logger.warning(
+                "OmniMemProvider.__getattr__('%s') is deprecated, use explicit attribute", name
+            )
             facade_attr, sub_attr = self._FACADE_ATTR_MAP[name]
             facade = object.__getattribute__(self, facade_attr)
             return getattr(facade, sub_attr)
@@ -608,7 +670,7 @@ class OmniMemProvider(MemoryProvider):  # type: ignore[misc]
         )
         self._system_prompt_cache_turn = cache_turn
         self._system_prompt_cache_value = cache_value
-        if hasattr(self, '_retrieval') and hasattr(self._retrieval, 'retriever'):
+        if hasattr(self, "_retrieval") and hasattr(self._retrieval, "retriever"):
             try:
                 health = self._retrieval.retriever._check_vector_health()
                 if health.get("vector_count", -1) <= 0 or health.get("breaker_state") == "open":
@@ -657,14 +719,10 @@ class OmniMemProvider(MemoryProvider):  # type: ignore[misc]
         try:
             result, new_cache = future.result(timeout=prefetch_timeout)
         except TimeoutError:
-            logger.warning(
-                "OmniMem prefetch timed out after %ds", prefetch_timeout
-            )
+            logger.warning("OmniMem prefetch timed out after %ds", prefetch_timeout)
             return ""
         except Exception as e:
-            logger.warning(
-                "OmniMem prefetch failed (non-blocking): %s", e
-            )
+            logger.warning("OmniMem prefetch failed (non-blocking): %s", e)
             self.queue_prefetch(query, session_id=session_id)
             return ""
 
@@ -740,7 +798,7 @@ class OmniMemProvider(MemoryProvider):  # type: ignore[misc]
                     lambda: distill.distill_recent_facts(turn_count=self._turn_count)
                 )
                 # ★ OPT: 蒸馏完成后延迟触发 L2 场景归纳
-                if hasattr(self, '_pipeline_scheduler') and self._pipeline_scheduler:
+                if hasattr(self, "_pipeline_scheduler") and self._pipeline_scheduler:
                     self._pipeline_scheduler.schedule_l2_after_l1(self._session_id)
 
         # ★ P0方案二：统一后台任务执行器替代每轮新建 threading.Thread
@@ -806,7 +864,11 @@ class OmniMemProvider(MemoryProvider):  # type: ignore[misc]
             except Exception as e:
                 logger.warning("OmniMem sync failed: %s", e)
         # ★ 质量评估自动调优：每 30 轮检查质量趋势并应用调优建议
-        if turn_number % 30 == 0 and hasattr(self, "_quality_evaluator") and self._quality_evaluator:
+        if (
+            turn_number % 30 == 0
+            and hasattr(self, "_quality_evaluator")
+            and self._quality_evaluator
+        ):
             try:
                 suggestions = self._quality_evaluator.get_auto_tune_suggestions()
                 for s in suggestions.get("suggestions", []):
@@ -822,7 +884,11 @@ class OmniMemProvider(MemoryProvider):  # type: ignore[misc]
                             logger.info("已应用调优: min_rrf = %.3f", new_val)
                         except (ValueError, AttributeError) as e:
                             logger.warning("应用 min_rrf 调优失败: %s", e)
-                    elif param == "rrf_vector_weight" and hasattr(self, "_retriever") and self._retriever:
+                    elif (
+                        param == "rrf_vector_weight"
+                        and hasattr(self, "_retriever")
+                        and self._retriever
+                    ):
                         try:
                             new_val = float(suggested_value)
                             if "vector" in self._retriever._channels:
@@ -831,7 +897,11 @@ class OmniMemProvider(MemoryProvider):  # type: ignore[misc]
                                 logger.info("已应用调优: vector_weight = %.1f", new_val)
                         except (ValueError, AttributeError) as e:
                             logger.warning("应用 vector_weight 调优失败: %s", e)
-                    elif param == "rrf_bm25_weight" and hasattr(self, "_retriever") and self._retriever:
+                    elif (
+                        param == "rrf_bm25_weight"
+                        and hasattr(self, "_retriever")
+                        and self._retriever
+                    ):
                         try:
                             new_val = float(suggested_value)
                             if "bm25" in self._retriever._channels:
@@ -880,7 +950,10 @@ class OmniMemProvider(MemoryProvider):  # type: ignore[misc]
                         self._store.delete(mid)
                     except Exception:
                         pass
-                logger.info("OmniMem: cleaned %d archived entries from retrieval indices + file system", len(archived_list))
+                logger.info(
+                    "OmniMem: cleaned %d archived entries from retrieval indices + file system",
+                    len(archived_list),
+                )
             except Exception as e:
                 logger.warning("OmniMem archive cleanup skipped: %s", e)
 
@@ -907,7 +980,11 @@ class OmniMemProvider(MemoryProvider):  # type: ignore[misc]
         self._retriever.flush()
 
         # ★ P0方案六：治理巡检（每 10 轮执行一次一致性审计）
-        if self._turn_count % self._config.get("audit_interval_turns", 50) == 0 and hasattr(self, "_auditor") and self._auditor:
+        if (
+            self._turn_count % self._config.get("audit_interval_turns", 50) == 0
+            and hasattr(self, "_auditor")
+            and self._auditor
+        ):
             try:
                 health = self._auditor.quick_health_check()
                 if not health["healthy"]:
@@ -936,7 +1013,7 @@ class OmniMemProvider(MemoryProvider):  # type: ignore[misc]
 
         # ★ P0方案二：关闭统一后台任务执行器
         # ★ OPT: 刷新 PipelineScheduler（L2/L3 未完成任务）
-        if hasattr(self, '_pipeline_scheduler') and self._pipeline_scheduler:
+        if hasattr(self, "_pipeline_scheduler") and self._pipeline_scheduler:
             self._pipeline_scheduler.flush_session(self._session_id)
         if hasattr(self, "_bg_executor") and self._bg_executor:
             self._bg_executor.shutdown(wait=True)
@@ -1091,7 +1168,9 @@ class OmniMemProvider(MemoryProvider):  # type: ignore[misc]
         return self._vector_clock  # type: ignore[no-any-return]
 
     def _apply_sync_change(self, change: dict[str, Any]) -> bool:
-        return apply_sync_change(change, self._store, self._index, self._retriever, self._forgetting)
+        return apply_sync_change(
+            change, self._store, self._index, self._retriever, self._forgetting
+        )
 
     def _handle_memorize(self, args: dict[str, Any]) -> str:
         """委托到 handlers/memorize.py。"""
@@ -1219,6 +1298,7 @@ class OmniMemProvider(MemoryProvider):  # type: ignore[misc]
         if self._llm_client and not getattr(self._llm_client, "_api_key", "").strip():
             try:
                 from omnimem.utils.llm_client import AsyncLLMClient
+
                 hermes_creds = AsyncLLMClient.load_credentials_from_hermes_config()
                 if hermes_creds.get("api_key") and hermes_creds.get("base_url"):
                     logger.info("OmniMem: using Hermes main config LLM credentials for Reflect")
@@ -1238,7 +1318,8 @@ class OmniMemProvider(MemoryProvider):  # type: ignore[misc]
 
     def _call_llm_for_reflect(self, prompt: str, system: str, max_tokens: int = 800) -> str | None:
         return call_llm_for_reflect(
-            prompt, system,
+            prompt,
+            system,
             llm_client=self._llm_client if hasattr(self, "_llm_client") else None,
             reflect_cache=self._reflect_cache,
             max_tokens=max_tokens,

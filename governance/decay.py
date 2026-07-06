@@ -25,8 +25,8 @@ HALF_LIVES = {
     "event": 90,
     "skill": 365,
     "procedural": 365,
-    "action": 30,       # 行为记忆快衰减 — 操作时效性强
-    "reasoning": 90,    # 经验推理中衰减 — 踩坑经验有时效
+    "action": 30,  # 行为记忆快衰减 — 操作时效性强
+    "reasoning": 90,  # 经验推理中衰减 — 踩坑经验有时效
 }
 
 
