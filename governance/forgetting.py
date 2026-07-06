@@ -35,16 +35,19 @@
 from __future__ import annotations
 
 import logging
-import math
 import sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
 
+from omnimem.governance.fsrs_engine import FSRSItem, get_fsrs_engine
+from omnimem.governance.memory_strength import (
+    get_evaluator,
+)
+from omnimem.governance.semantic_importance import (
+    get_semantic_evaluator,
+)
 from omnimem.utils.migration import SchemaMigrator
-from omnimem.governance.fsrs_engine import FSRSEngine, FSRSItem, FSRSParameters, get_fsrs_engine
-from omnimem.governance.memory_strength import MemoryStrengthEvaluator, ScoringWeights, get_evaluator
-from omnimem.governance.semantic_importance import SemanticImportanceEvaluator, get_semantic_evaluator
 
 logger = logging.getLogger(__name__)
 
@@ -74,9 +77,11 @@ class ForgettingCurve:
         self._db_path = self._governance_dir / "forgetting.db"
         self._conn: sqlite3.Connection | None = None
         self._pending_writes = 0
-        self._active_days = getattr(config, 'forgetting_active_days', 7) if config else 7
-        self._consolidating_days = getattr(config, 'forgetting_consolidating_days', 30) if config else 30
-        self._archived_days = getattr(config, 'forgetting_archived_days', 90) if config else 90
+        self._active_days = getattr(config, "forgetting_active_days", 7) if config else 7
+        self._consolidating_days = (
+            getattr(config, "forgetting_consolidating_days", 30) if config else 30
+        )
+        self._archived_days = getattr(config, "forgetting_archived_days", 90) if config else 90
         self._stages: dict[str, tuple[int, int | None]] = {
             "active": (0, self._active_days),
             "consolidating": (self._active_days, self._consolidating_days),
@@ -119,10 +124,7 @@ class ForgettingCurve:
         )
         # ★ 兼容旧表：逐列添加，已有则跳过（查 PRAGMA table_info 避免异常）
         existing_cols = {
-            row[1]
-            for row in self._conn.execute(
-                "PRAGMA table_info(forgetting_state)"
-            ).fetchall()
+            row[1] for row in self._conn.execute("PRAGMA table_info(forgetting_state)").fetchall()
         }
         _new_columns = [
             ("recall_count", "INTEGER DEFAULT 0"),
@@ -136,9 +138,7 @@ class ForgettingCurve:
             if col_name in existing_cols:
                 continue
             # 列名来自硬编码常量，非用户输入，安全使用 f-string
-            self._conn.execute(
-                f"ALTER TABLE forgetting_state ADD COLUMN {col_name} {col_type}"
-            )
+            self._conn.execute(f"ALTER TABLE forgetting_state ADD COLUMN {col_name} {col_type}")
 
         # ★ access_log 表 —— 记录每次检索的时间戳，支持时间窗口查询
         migrator.migrate(
@@ -173,7 +173,9 @@ class ForgettingCurve:
 
     # ── 自适应衰减阈值 ──────────────────────────────────────────────────────
 
-    def _compute_adaptive_stages(self, memory_type: str, recall_count: int) -> dict[str, tuple[int, int | None]]:
+    def _compute_adaptive_stages(
+        self, memory_type: str, recall_count: int
+    ) -> dict[str, tuple[int, int | None]]:
         """基于记忆类型和访问频率计算自适应衰减阶段。
 
         规则：
@@ -212,7 +214,9 @@ class ForgettingCurve:
         final_multiplier = max(multiplier, freq_multiplier)
 
         adaptive_active = max(1, int(base_active * final_multiplier))
-        adaptive_consolidating = max(adaptive_active + 1, int(base_consolidating * final_multiplier))
+        adaptive_consolidating = max(
+            adaptive_active + 1, int(base_consolidating * final_multiplier)
+        )
         adaptive_archived = max(adaptive_consolidating + 1, int(base_archived * final_multiplier))
 
         return {
@@ -222,7 +226,9 @@ class ForgettingCurve:
             "forgotten": (adaptive_archived, None),
         }
 
-    def set_stage_config(self, memory_type: str, active_days: int, consolidating_days: int, archived_days: int) -> None:
+    def set_stage_config(
+        self, memory_type: str, active_days: int, consolidating_days: int, archived_days: int
+    ) -> None:
         """为指定记忆类型设置自定义阶段阈值。
 
         Args:
@@ -231,10 +237,16 @@ class ForgettingCurve:
             consolidating_days: consolidating 阶段天数上限
             archived_days: archived 阶段天数上限
         """
-        if active_days <= 0 or consolidating_days <= active_days or archived_days <= consolidating_days:
+        if (
+            active_days <= 0
+            or consolidating_days <= active_days
+            or archived_days <= consolidating_days
+        ):
             logger.warning(
                 "set_stage_config 参数无效: active=%d, consolidating=%d, archived=%d（需满足 0 < active < consolidating < archived）",
-                active_days, consolidating_days, archived_days,
+                active_days,
+                consolidating_days,
+                archived_days,
             )
             return
         self._stage_config[memory_type] = {
@@ -244,7 +256,10 @@ class ForgettingCurve:
         }
         logger.info(
             "已为记忆类型 '%s' 设置自定义阈值: active=%d, consolidating=%d, archived=%d",
-            memory_type, active_days, consolidating_days, archived_days,
+            memory_type,
+            active_days,
+            consolidating_days,
+            archived_days,
         )
 
     # ── 冷启动 & access_log 清理 ────────────────────────────────────────────
@@ -302,9 +317,7 @@ class ForgettingCurve:
         assert self._conn is not None
         try:
             cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
-            cursor = self._conn.execute(
-                "DELETE FROM access_log WHERE accessed_at < ?", (cutoff,)
-            )
+            cursor = self._conn.execute("DELETE FROM access_log WHERE accessed_at < ?", (cutoff,))
             deleted = cursor.rowcount
             self._conn.commit()
             if deleted > 0:
@@ -589,7 +602,7 @@ class ForgettingCurve:
 
             for memory_id, created_at in rows:
                 # 计算记忆存活天数
-                created_dt = datetime.fromisoformat(created_at.replace('+00:00', ''))
+                created_dt = datetime.fromisoformat(created_at.replace("+00:00", ""))
                 if created_dt.tzinfo is None:
                     created_dt = created_dt.replace(tzinfo=timezone.utc)
                 days_alive = max(1, (now - created_dt).days)
@@ -620,7 +633,10 @@ class ForgettingCurve:
 
             logger.info(
                 "T+24h first screening: hot=%d, warm=%d, neutral=%d, cold=%d",
-                counts["hot"], counts["warm"], counts["neutral"], counts["cold"]
+                counts["hot"],
+                counts["warm"],
+                counts["neutral"],
+                counts["cold"],
             )
         except Exception as e:
             logger.warning("run_first_screening failed: %s", e)
@@ -691,7 +707,7 @@ class ForgettingCurve:
                    WHERE heat = 'hot'
                      AND created_at <= ?
                      AND recall_count >= 5""",
-                (cutoff_30d,)
+                (cutoff_30d,),
             ).fetchall()
 
             result["candidates"] = len(rows)
@@ -714,7 +730,9 @@ class ForgettingCurve:
 
             logger.info(
                 "Third consolidation: candidates=%d, promoted=%d, monitored=%d",
-                result["candidates"], result["promoted"], result["monitored"]
+                result["candidates"],
+                result["promoted"],
+                result["monitored"],
             )
 
         except Exception as e:
@@ -747,7 +765,7 @@ class ForgettingCurve:
         try:
             for root, dirs, files in os.walk(str(wiki_dir)):
                 for file in files:
-                    if file.endswith('.md'):
+                    if file.endswith(".md"):
                         filepath = os.path.join(root, file)
                         try:
                             with open(filepath) as f:
@@ -772,8 +790,7 @@ class ForgettingCurve:
         try:
             conn = sqlite3.connect(str(index_db))
             row = conn.execute(
-                "SELECT content FROM memories WHERE id = ? LIMIT 1",
-                (memory_id,)
+                "SELECT content FROM memories WHERE id = ? LIMIT 1", (memory_id,)
             ).fetchone()
             conn.close()
 
@@ -802,7 +819,7 @@ class ForgettingCurve:
                 """UPDATE forgetting_state
                    SET upgraded_to_wiki = 1
                    WHERE memory_id = ?""",
-                (memory_id,)
+                (memory_id,),
             )
             self._set_stage(memory_id, "consolidating")
             self._pending_writes += 1
@@ -865,7 +882,9 @@ class ForgettingCurve:
                 if recall_7d >= 3:
                     self._set_stage(memory_id, "active")
                     reactivated += 1
-                    logger.info("Reactivated %s from consolidating (recall_7d=%d)", memory_id, recall_7d)
+                    logger.info(
+                        "Reactivated %s from consolidating (recall_7d=%d)", memory_id, recall_7d
+                    )
 
             # 检查 archived 记忆
             rows = self._conn.execute(
@@ -989,7 +1008,7 @@ class ForgettingCurve:
             row = self._conn.execute(
                 """SELECT recall_count, created_at, last_accessed
                    FROM forgetting_state WHERE memory_id = ?""",
-                (memory_id,)
+                (memory_id,),
             ).fetchone()
 
             if not row:
@@ -1000,7 +1019,7 @@ class ForgettingCurve:
 
             # 计算创建天数
             if created_at:
-                created_dt = datetime.fromisoformat(created_at.replace('+00:00', ''))
+                created_dt = datetime.fromisoformat(created_at.replace("+00:00", ""))
                 if created_dt.tzinfo is None:
                     created_dt = created_dt.replace(tzinfo=timezone.utc)
                 days_since_creation = max(1, (now - created_dt).days)
@@ -1009,7 +1028,7 @@ class ForgettingCurve:
 
             # 计算最后检索距今天数
             if last_accessed:
-                accessed_dt = datetime.fromisoformat(last_accessed.replace('+00:00', ''))
+                accessed_dt = datetime.fromisoformat(last_accessed.replace("+00:00", ""))
                 if accessed_dt.tzinfo is None:
                     accessed_dt = accessed_dt.replace(tzinfo=timezone.utc)
                 last_recall_days_ago = max(0, (now - accessed_dt).days)
@@ -1025,7 +1044,9 @@ class ForgettingCurve:
             logger.warning("calculate_fsrs_retention failed for %s: %s", memory_id, e)
             return 0.5
 
-    def suggest_review_time(self, memory_id: str, desired_retention: float = 0.9) -> Optional[datetime]:
+    def suggest_review_time(
+        self, memory_id: str, desired_retention: float = 0.9
+    ) -> Optional[datetime]:
         """建议下次复习时间
 
         Args:
@@ -1041,7 +1062,7 @@ class ForgettingCurve:
             row = self._conn.execute(
                 """SELECT recall_count, created_at, last_accessed
                    FROM forgetting_state WHERE memory_id = ?""",
-                (memory_id,)
+                (memory_id,),
             ).fetchone()
 
             if not row:
@@ -1055,12 +1076,12 @@ class ForgettingCurve:
             item.reps = recall_count or 0
 
             if created_at:
-                created_dt = datetime.fromisoformat(created_at.replace('+00:00', ''))
+                created_dt = datetime.fromisoformat(created_at.replace("+00:00", ""))
                 if created_dt.tzinfo is None:
                     created_dt = created_dt.replace(tzinfo=timezone.utc)
 
             if last_accessed:
-                accessed_dt = datetime.fromisoformat(last_accessed.replace('+00:00', ''))
+                accessed_dt = datetime.fromisoformat(last_accessed.replace("+00:00", ""))
                 if accessed_dt.tzinfo is None:
                     accessed_dt = accessed_dt.replace(tzinfo=timezone.utc)
                 item.last_review = accessed_dt
@@ -1091,10 +1112,10 @@ class ForgettingCurve:
             "avg_retention": 0.0,
             "avg_stability": 0.0,
             "retention_distribution": {
-                "high": 0,    # > 0.8
+                "high": 0,  # > 0.8
                 "medium": 0,  # 0.5 - 0.8
-                "low": 0,     # < 0.5
-            }
+                "low": 0,  # < 0.5
+            },
         }
 
         try:
@@ -1150,7 +1171,7 @@ class ForgettingCurve:
             row = self._conn.execute(
                 """SELECT recall_count, created_at, last_accessed
                    FROM forgetting_state WHERE memory_id = ?""",
-                (memory_id,)
+                (memory_id,),
             ).fetchone()
 
             if not row:
@@ -1199,7 +1220,7 @@ class ForgettingCurve:
                    FROM forgetting_state
                    ORDER BY recall_count DESC
                    LIMIT ?""",
-                (limit,)
+                (limit,),
             ).fetchall()
 
             for memory_id, recall_count, created_at, last_accessed in rows:
@@ -1297,8 +1318,7 @@ class ForgettingCurve:
         try:
             conn = sqlite3.connect(str(index_db))
             row = conn.execute(
-                "SELECT content FROM memories WHERE id = ? LIMIT 1",
-                (memory_id,)
+                "SELECT content FROM memories WHERE id = ? LIMIT 1", (memory_id,)
             ).fetchone()
             conn.close()
 
@@ -1318,17 +1338,15 @@ class ForgettingCurve:
         assert self._conn is not None
 
         distribution = {
-            "high": 0,    # > 0.7
+            "high": 0,  # > 0.7
             "medium": 0,  # 0.4 - 0.7
-            "low": 0,     # < 0.4
+            "low": 0,  # < 0.4
             "total": 0,
             "avg_importance": 0.0,
         }
 
         try:
-            rows = self._conn.execute(
-                "SELECT memory_id FROM forgetting_state"
-            ).fetchall()
+            rows = self._conn.execute("SELECT memory_id FROM forgetting_state").fetchall()
 
             distribution["total"] = len(rows)
             importances = []

@@ -15,12 +15,11 @@ Score = w1*√S + w2*R + w3*e^(-λt) + w4*log(F+1) + w5*SI
 
 from __future__ import annotations
 
-import math
 import logging
-from dataclasses import dataclass, field
+import math
+from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Optional, Any
-import sqlite3
+from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -28,11 +27,12 @@ logger = logging.getLogger(__name__)
 @dataclass
 class MemoryStrengthVector:
     """六维记忆强度向量"""
-    stability: float = 0.0        # 稳定性 (天)
-    retrievability: float = 1.0   # 可提取性 (0-1)
-    difficulty: float = 0.5       # 难度 (0-1)
-    recency: float = 0.0          # 新近性 (天)
-    frequency: int = 0            # 访问频率
+
+    stability: float = 0.0  # 稳定性 (天)
+    retrievability: float = 1.0  # 可提取性 (0-1)
+    difficulty: float = 0.5  # 难度 (0-1)
+    recency: float = 0.0  # 新近性 (天)
+    frequency: int = 0  # 访问频率
     semantic_importance: float = 0.5  # 语义重要性 (0-1)
 
     def to_dict(self) -> dict[str, Any]:
@@ -50,19 +50,19 @@ class MemoryStrengthVector:
 @dataclass
 class ScoringWeights:
     """评分权重配置"""
-    stability: float = 0.25       # 稳定性权重
+
+    stability: float = 0.25  # 稳定性权重
     retrievability: float = 0.25  # 可提取性权重
-    recency: float = 0.20         # 新近性权重
-    frequency: float = 0.15       # 频率权重
-    semantic: float = 0.15        # 语义重要性权重
+    recency: float = 0.20  # 新近性权重
+    frequency: float = 0.15  # 频率权重
+    semantic: float = 0.15  # 语义重要性权重
 
     # 衰减参数
-    recency_lambda: float = 0.1   # 新近性衰减系数
+    recency_lambda: float = 0.1  # 新近性衰减系数
 
     def normalize(self) -> ScoringWeights:
         """归一化权重"""
-        total = (self.stability + self.retrievability +
-                 self.recency + self.frequency + self.semantic)
+        total = self.stability + self.retrievability + self.recency + self.frequency + self.semantic
 
         if total == 0:
             return ScoringWeights()
@@ -154,7 +154,7 @@ class MemoryStrengthEvaluator:
             return 365.0  # 从未访问，视为很久以前
 
         try:
-            accessed_dt = datetime.fromisoformat(last_accessed.replace('+00:00', ''))
+            accessed_dt = datetime.fromisoformat(last_accessed.replace("+00:00", ""))
             if accessed_dt.tzinfo is None:
                 accessed_dt = accessed_dt.replace(tzinfo=timezone.utc)
             return max(0.0, (now - accessed_dt).total_seconds() / 86400)
@@ -195,11 +195,11 @@ class MemoryStrengthEvaluator:
 
         # 加权综合
         total_score = (
-            w.stability * stability_score +
-            w.retrievability * retrievability_score +
-            w.recency * recency_score +
-            w.frequency * frequency_score +
-            w.semantic * semantic_score
+            w.stability * stability_score
+            + w.retrievability * retrievability_score
+            + w.recency * recency_score
+            + w.frequency * frequency_score
+            + w.semantic * semantic_score
         )
 
         return round(min(100.0, max(0.0, total_score)), 2)

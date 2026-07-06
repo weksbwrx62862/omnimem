@@ -21,6 +21,7 @@ logger = logging.getLogger(__name__)
 
 class LOCOMOQuestionType(str, Enum):
     """LOCOMO 问题类型枚举。"""
+
     SINGLE_HOP = "single_hop"
     MULTI_HOP = "multi_hop"
     TEMPORAL = "temporal"
@@ -30,6 +31,7 @@ class LOCOMOQuestionType(str, Enum):
 @dataclass
 class LOCOMOQuestion:
     """LOCOMO 单条问题数据。"""
+
     question_id: str
     question: str
     answer: str
@@ -40,6 +42,7 @@ class LOCOMOQuestion:
 @dataclass
 class LOCOMODataset:
     """LOCOMO 数据集容器。"""
+
     questions: list[LOCOMOQuestion] = field(default_factory=list)
     name: str = "locomo"
 
@@ -66,7 +69,7 @@ class LOCOMODataset:
             raise FileNotFoundError(f"LOCOMO 数据集文件不存在: {path}")
 
         try:
-            with open(path, "r", encoding="utf-8") as f:
+            with open(path, encoding="utf-8") as f:
                 data = json.load(f)
         except json.JSONDecodeError as e:
             raise ValueError(f"LOCOMO 数据集 JSON 解析失败: {e}") from e
@@ -78,17 +81,20 @@ class LOCOMODataset:
             except ValueError:
                 logger.warning(
                     "跳过未知问题类型 '%s' (question_id=%s)",
-                    item.get("question_type"), item.get("question_id"),
+                    item.get("question_type"),
+                    item.get("question_id"),
                 )
                 continue
 
-            questions.append(LOCOMOQuestion(
-                question_id=item["question_id"],
-                question=item["question"],
-                answer=item["answer"],
-                question_type=q_type,
-                evidence_ids=item.get("evidence_ids", []),
-            ))
+            questions.append(
+                LOCOMOQuestion(
+                    question_id=item["question_id"],
+                    question=item["question"],
+                    answer=item["answer"],
+                    question_type=q_type,
+                    evidence_ids=item.get("evidence_ids", []),
+                )
+            )
 
         if not questions:
             raise ValueError("LOCOMO 数据集为空或所有问题的类型均无效")
@@ -107,8 +113,7 @@ class LOCOMODataset:
             from datasets import load_dataset
         except ImportError:
             raise ImportError(
-                "加载 HuggingFace 数据集需要 datasets 库，"
-                "请安装: pip install datasets"
+                "加载 HuggingFace 数据集需要 datasets 库，" "请安装: pip install datasets"
             )
 
         try:
@@ -124,15 +129,19 @@ class LOCOMODataset:
             except ValueError:
                 q_type = LOCOMOQuestionType.SINGLE_HOP
 
-            questions.append(LOCOMOQuestion(
-                question_id=item.get("question_id", f"hf-{idx:04d}"),
-                question=item["question"],
-                answer=item.get("answer", ""),
-                question_type=q_type,
-                evidence_ids=item.get("evidence_ids", []),
-            ))
+            questions.append(
+                LOCOMOQuestion(
+                    question_id=item.get("question_id", f"hf-{idx:04d}"),
+                    question=item["question"],
+                    answer=item.get("answer", ""),
+                    question_type=q_type,
+                    evidence_ids=item.get("evidence_ids", []),
+                )
+            )
 
-        logger.info("LOCOMO 数据集从 HuggingFace 加载完成: %d 道题目, split=%s", len(questions), split)
+        logger.info(
+            "LOCOMO 数据集从 HuggingFace 加载完成: %d 道题目, split=%s", len(questions), split
+        )
         return cls(questions=questions, name=f"locomo_hf_{split}")
 
 
@@ -264,17 +273,19 @@ class LOCOMOEvaluator:
             prediction, latency_ms, token_count = self._recall_question(q.question)
             is_correct = self._judge_answer(prediction, q.answer) if prediction else False
 
-            results.append({
-                "question_id": q.question_id,
-                "question_type": q.question_type.value,
-                "question": q.question,
-                "gold_answer": q.answer,
-                "prediction": prediction[:500],
-                "is_correct": is_correct,
-                "latency_ms": round(latency_ms, 3),
-                "token_count": token_count,
-                "evidence_ids": q.evidence_ids,
-            })
+            results.append(
+                {
+                    "question_id": q.question_id,
+                    "question_type": q.question_type.value,
+                    "question": q.question,
+                    "gold_answer": q.answer,
+                    "prediction": prediction[:500],
+                    "is_correct": is_correct,
+                    "latency_ms": round(latency_ms, 3),
+                    "token_count": token_count,
+                    "evidence_ids": q.evidence_ids,
+                }
+            )
 
             if (i + 1) % 10 == 0 or (i + 1) == total:
                 logger.info("LOCOMO 评估进度: %d/%d", i + 1, total)
@@ -300,9 +311,7 @@ class LOCOMOEvaluator:
                 "avg_token_count": 0.0,
             }
 
-        type_stats: dict[str, list[bool]] = {
-            t.value: [] for t in LOCOMOQuestionType
-        }
+        type_stats: dict[str, list[bool]] = {t.value: [] for t in LOCOMOQuestionType}
         latencies: list[float] = []
         token_counts: list[int] = []
 
