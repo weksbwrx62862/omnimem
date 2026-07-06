@@ -11,7 +11,7 @@ rank-bm25>=0.2.0,<0.3.0
 jieba>=0.42.1
 
 # Token 计数
-tiktoken>=0.7.0
+tiktoken>=0.13.0
 
 # YAML 配置解析
 pyyaml>=6.0
