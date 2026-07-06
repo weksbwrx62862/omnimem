@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import hashlib
 import logging
-import os
 import threading
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any
+
 
 # ★ 抑制 ChromaDB 0.6.x telemetry PostHog capture() 签名不兼容的噪音日志
 #    这是 ChromaDB 内部问题，不影响功能，无需暴露给用户
@@ -22,6 +22,7 @@ class _ChromaDBTelemetryFilter(logging.Filter):
             return False
         return True
 
+
 _telemetry_filter = _ChromaDBTelemetryFilter()
 for _logger_name in ("chromadb.telemetry.product.posthog", "chromadb.telemetry"):
     logging.getLogger(_logger_name).addFilter(_telemetry_filter)
@@ -32,12 +33,13 @@ logger = logging.getLogger(__name__)
 
 def _emit(msg: str) -> None:
     """向用户输出状态消息。
-    
+
     优先写入 stderr（CLI 中可见），
     非 TTY 环境（gateway/cron/background）降级为 logger.info。
     """
     try:
         import sys
+
         if sys.stderr.isatty():
             sys.stderr.write(msg + "\n")
             sys.stderr.flush()
@@ -49,7 +51,9 @@ def _emit(msg: str) -> None:
 
 class VectorStore(ABC):
     @abstractmethod
-    def add(self, ids: list[str], documents: list[str], metadatas: list[dict] | None = None) -> None:
+    def add(
+        self, ids: list[str], documents: list[str], metadatas: list[dict] | None = None
+    ) -> None:
         ...
 
     @abstractmethod
@@ -70,7 +74,12 @@ class VectorStore(ABC):
 
 
 class _CachedEmbeddingFunction:
-    def __init__(self, model_name: str = "all-MiniLM-L6-v2", cache_path: Path | None = None, model_path: str = ""):
+    def __init__(
+        self,
+        model_name: str = "all-MiniLM-L6-v2",
+        cache_path: Path | None = None,
+        model_path: str = "",
+    ):
         self._model_name = model_name
         self._model_path = model_path
         self._model = None
@@ -86,7 +95,7 @@ class _CachedEmbeddingFunction:
         return "omnimem_cached_sentence_transformer"
 
     @staticmethod
-    def build_from_config(config: dict[str, Any]) -> "_CachedEmbeddingFunction":
+    def build_from_config(config: dict[str, Any]) -> _CachedEmbeddingFunction:
         """ChromaDB EmbeddingFunction 协议要求的反序列化方法。"""
         return _CachedEmbeddingFunction(
             model_name=config.get("model_name", "all-MiniLM-L6-v2"),
@@ -144,8 +153,9 @@ class _CachedEmbeddingFunction:
 
     def _get_model(self) -> Any:
         if self._model is None:
-            import time
             import os
+            import time
+
             import torch.distributed as dist
 
             if not hasattr(dist, "is_initialized"):
@@ -153,14 +163,14 @@ class _CachedEmbeddingFunction:
             from sentence_transformers import SentenceTransformer
 
             # ★ GFW 修复：使用中国镜像 + CPU 模式
-            if 'HF_ENDPOINT' not in os.environ:
-                os.environ['HF_ENDPOINT'] = 'https://hf-mirror.com'
+            if "HF_ENDPOINT" not in os.environ:
+                os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
 
             model_path = self._model_path or self._model_name
             _emit(f"[OmniMem] 正在加载嵌入模型: {model_path} ...")
             t0 = time.time()
             try:
-                self._model = SentenceTransformer(model_path, device='cpu')
+                self._model = SentenceTransformer(model_path, device="cpu")
                 elapsed = time.time() - t0
                 _emit(f"[OmniMem] 嵌入模型加载完成 ({model_path}, {elapsed:.1f}s, CPU)")
             except Exception as e:
@@ -284,9 +294,7 @@ class ChromaDBStore(VectorStore):
                 return
             conn = sqlite3.connect(str(chroma_db_path))
             try:
-                rows = conn.execute(
-                    "SELECT name, config_json_str FROM collections"
-                ).fetchall()
+                rows = conn.execute("SELECT name, config_json_str FROM collections").fetchall()
                 for name, config_str in rows:
                     if not config_str:
                         continue
@@ -312,7 +320,9 @@ class ChromaDBStore(VectorStore):
         except Exception as e:
             logger.warning("ChromaDB config migration skipped: %s", e)
 
-    def add(self, ids: list[str], documents: list[str], metadatas: list[dict] | None = None) -> None:
+    def add(
+        self, ids: list[str], documents: list[str], metadatas: list[dict] | None = None
+    ) -> None:
         self._ensure_initialized()
         if self._collection is None:
             return
@@ -427,7 +437,9 @@ class QdrantStore(VectorStore):
             logger.warning("Qdrant init failed: %s", e)
         self._initialized = True
 
-    def add(self, ids: list[str], documents: list[str], metadatas: list[dict] | None = None) -> None:
+    def add(
+        self, ids: list[str], documents: list[str], metadatas: list[dict] | None = None
+    ) -> None:
         self._ensure_initialized()
         if self._client is None:
             return

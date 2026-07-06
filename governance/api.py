@@ -10,11 +10,10 @@ MemoryAPI — 记忆系统 REST API 模块。
 
 from __future__ import annotations
 
-import json
 import logging
-from typing import Optional, Any
 from datetime import datetime
 from pathlib import Path
+from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
