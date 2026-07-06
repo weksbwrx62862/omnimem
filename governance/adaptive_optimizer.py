@@ -16,12 +16,12 @@ from __future__ import annotations
 import json
 import logging
 import os
-import time
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from typing import Optional, Any, Callable
-from pathlib import Path
 from collections import deque
+from collections.abc import Callable
+from dataclasses import dataclass, field
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +29,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class PrecisionRecord:
     """精度记录"""
+
     timestamp: datetime
     precision: float
     sample_count: int
@@ -38,6 +39,7 @@ class PrecisionRecord:
 @dataclass
 class OptimizationResult:
     """优化结果"""
+
     mode: str
     precision_before: float
     precision_after: float
@@ -83,9 +85,9 @@ class AdaptiveFSRSOptimizer:
         self._llm_caller = llm_caller
 
         # 缓存
-        self._cache_dir = Path(cache_dir or os.path.expanduser(
-            "~/.hermes/omnimem/governance/adaptive_cache"
-        ))
+        self._cache_dir = Path(
+            cache_dir or os.path.expanduser("~/.hermes/omnimem/governance/adaptive_cache")
+        )
         self._cache_dir.mkdir(parents=True, exist_ok=True)
 
         # 状态
@@ -116,8 +118,11 @@ class AdaptiveFSRSOptimizer:
                     self._gradient_calls = state.get("gradient_calls", 0)
                     self._llm_calls = state.get("llm_calls", 0)
                     self._mode_switches = state.get("mode_switches", 0)
-                logger.info("Loaded optimizer state: mode=%s, precision=%.2f%%",
-                           self._current_mode, self._current_precision * 100)
+                logger.info(
+                    "Loaded optimizer state: mode=%s, precision=%.2f%%",
+                    self._current_mode,
+                    self._current_precision * 100,
+                )
         except Exception as e:
             logger.warning("Failed to load optimizer state: %s", e)
 
@@ -134,7 +139,7 @@ class AdaptiveFSRSOptimizer:
                 "mode_switches": self._mode_switches,
                 "updated_at": datetime.now().isoformat(),
             }
-            with open(state_file, 'w') as f:
+            with open(state_file, "w") as f:
                 json.dump(state, f, indent=2)
         except Exception as e:
             logger.warning("Failed to save optimizer state: %s", e)
@@ -199,7 +204,7 @@ class AdaptiveFSRSOptimizer:
             self._current_mode,
             precision * 100,
             new_precision * 100,
-            result.improvement * 100
+            result.improvement * 100,
         )
 
         return new_params, self._current_mode
@@ -223,8 +228,7 @@ class AdaptiveFSRSOptimizer:
         for record in review_data:
             # 预测保持率
             predicted = engine.forgetting_curve(
-                record.get("elapsed_days", 0),
-                record.get("stability", 1.0)
+                record.get("elapsed_days", 0), record.get("stability", 1.0)
             )
 
             # 实际保持率
@@ -262,7 +266,7 @@ class AdaptiveFSRSOptimizer:
             logger.warning(
                 "Precision below threshold: %.2f%% < %.2f%%",
                 current_precision * 100,
-                self._precision_threshold * 100
+                self._precision_threshold * 100,
             )
             self._switch_mode("llm")
             return
@@ -273,14 +277,14 @@ class AdaptiveFSRSOptimizer:
             precisions = [r.precision for r in recent]
 
             # 检查是否连续下降
-            if all(precisions[i] > precisions[i+1] for i in range(len(precisions)-1)):
+            if all(precisions[i] > precisions[i + 1] for i in range(len(precisions) - 1)):
                 decline = precisions[0] - precisions[-1]
                 if decline > self._decline_threshold:
                     logger.warning(
                         "Precision declining: %.2f%% → %.2f%% (decline=%.2f%%)",
                         precisions[0] * 100,
                         precisions[-1] * 100,
-                        decline * 100
+                        decline * 100,
                     )
                     self._switch_mode("hybrid")
                     return
@@ -316,6 +320,7 @@ class AdaptiveFSRSOptimizer:
 
         # 转换数据格式
         from governance.personalized_fsrs import ReviewRecord
+
         records = [
             ReviewRecord(
                 memory_id=r.get("memory_id", ""),
@@ -381,12 +386,18 @@ class AdaptiveFSRSOptimizer:
 
                 # 选择更好的
                 if llm_precision > gradient_precision:
-                    logger.info("Hybrid: LLM better (%.2f%% > %.2f%%)",
-                               llm_precision * 100, gradient_precision * 100)
+                    logger.info(
+                        "Hybrid: LLM better (%.2f%% > %.2f%%)",
+                        llm_precision * 100,
+                        gradient_precision * 100,
+                    )
                     return llm_params
                 else:
-                    logger.info("Hybrid: Gradient better (%.2f%% >= %.2f%%)",
-                               gradient_precision * 100, llm_precision * 100)
+                    logger.info(
+                        "Hybrid: Gradient better (%.2f%% >= %.2f%%)",
+                        gradient_precision * 100,
+                        llm_precision * 100,
+                    )
                     return gradient_params
 
             except Exception as e:
@@ -451,7 +462,7 @@ parameters = {current_params}
         import re
 
         # 尝试提取参数列表
-        pattern = r'\[[\d\.,\s]+\]'
+        pattern = r"\[[\d\.,\s]+\]"
         match = re.search(pattern, response)
 
         if match:
@@ -487,7 +498,7 @@ parameters = {current_params}
         if mode == "gradient":
             return 0.001  # 极低成本
         elif mode == "llm":
-            return 0.1    # 中等成本 (API 调用)
+            return 0.1  # 中等成本 (API 调用)
         elif mode == "hybrid":
             return 0.101  # 混合成本
         return 0.0
