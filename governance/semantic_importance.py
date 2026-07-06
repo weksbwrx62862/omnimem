@@ -14,12 +14,12 @@ SemanticImportance — 语义重要性评估模块。
 
 from __future__ import annotations
 
-import math
 import logging
-from dataclasses import dataclass, field
-from typing import Optional, Any
-import sqlite3
+import math
 import os
+import sqlite3
+from dataclasses import dataclass
+from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -27,11 +27,12 @@ logger = logging.getLogger(__name__)
 @dataclass
 class SemanticFeatures:
     """语义特征向量"""
-    vector_centrality: float = 0.5    # 向量中心性 (0-1)
-    connection_density: float = 0.5   # 关联密度 (0-1)
-    graph_importance: float = 0.5     # 图结构重要性 (0-1)
-    content_richness: float = 0.5     # 内容丰富度 (0-1)
-    uniqueness: float = 0.5           # 独特性 (0-1)
+
+    vector_centrality: float = 0.5  # 向量中心性 (0-1)
+    connection_density: float = 0.5  # 关联密度 (0-1)
+    graph_importance: float = 0.5  # 图结构重要性 (0-1)
+    content_richness: float = 0.5  # 内容丰富度 (0-1)
+    uniqueness: float = 0.5  # 独特性 (0-1)
 
     def to_dict(self) -> dict[str, float]:
         return {
@@ -46,6 +47,7 @@ class SemanticFeatures:
 @dataclass
 class SemanticWeights:
     """语义重要性权重"""
+
     centrality: float = 0.30
     density: float = 0.25
     graph: float = 0.20
@@ -70,7 +72,9 @@ class SemanticImportanceEvaluator:
         weights: Optional[SemanticWeights] = None,
     ):
         self._db_path = db_path or os.path.expanduser("~/.hermes/omnimem/index/index.db")
-        self._embedding_path = embedding_path or os.path.expanduser("~/.hermes/omnimem/retrieval/embedding_cache.json")
+        self._embedding_path = embedding_path or os.path.expanduser(
+            "~/.hermes/omnimem/retrieval/embedding_cache.json"
+        )
         self._weights = weights or SemanticWeights()
         self._embeddings: dict[str, list[float]] = {}
         self._connections: dict[str, set[str]] = {}
@@ -85,6 +89,7 @@ class SemanticImportanceEvaluator:
         try:
             if os.path.exists(self._embedding_path):
                 import json
+
                 with open(self._embedding_path) as f:
                     self._embeddings = json.load(f)
                 logger.info("Loaded %d embeddings", len(self._embeddings))
@@ -96,9 +101,7 @@ class SemanticImportanceEvaluator:
             kg_path = os.path.expanduser("~/.hermes/omnimem/deep/knowledge_graph.db")
             if os.path.exists(kg_path):
                 conn = sqlite3.connect(kg_path)
-                rows = conn.execute(
-                    "SELECT source_id, target_id FROM relationships"
-                ).fetchall()
+                rows = conn.execute("SELECT source_id, target_id FROM relationships").fetchall()
                 for src, tgt in rows:
                     if src not in self._connections:
                         self._connections[src] = set()
@@ -240,11 +243,11 @@ class SemanticImportanceEvaluator:
         diversity = len(unique_words) / len(words) if words else 0.0
 
         # 结构复杂度 (标点符号和换行)
-        structure_chars = sum(1 for c in content if c in '.,;:!?\\n')
+        structure_chars = sum(1 for c in content if c in ".,;:!?\\n")
         structure_score = min(1.0, structure_chars / 20.0)
 
         # 综合
-        return (length_score * 0.4 + diversity * 0.3 + structure_score * 0.3)
+        return length_score * 0.4 + diversity * 0.3 + structure_score * 0.3
 
     def calculate_uniqueness(self, memory_id: str, content: Optional[str] = None) -> float:
         """计算独特性
@@ -319,11 +322,11 @@ class SemanticImportanceEvaluator:
         w = self._weights
 
         importance = (
-            w.centrality * features.vector_centrality +
-            w.density * features.connection_density +
-            w.graph * features.graph_importance +
-            w.richness * features.content_richness +
-            w.uniqueness * features.uniqueness
+            w.centrality * features.vector_centrality
+            + w.density * features.connection_density
+            + w.graph * features.graph_importance
+            + w.richness * features.content_richness
+            + w.uniqueness * features.uniqueness
         )
 
         return max(0.0, min(1.0, importance))

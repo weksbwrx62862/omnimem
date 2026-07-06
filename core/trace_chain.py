@@ -61,12 +61,16 @@ class TraceChain:
             """,
             migrations=[],
         )
-        self._conn.execute("""
+        self._conn.execute(
+            """
             CREATE INDEX IF NOT EXISTS idx_trace_layer ON trace_nodes(layer)
-        """)
-        self._conn.execute("""
+        """
+        )
+        self._conn.execute(
+            """
             CREATE INDEX IF NOT EXISTS idx_trace_created ON trace_nodes(created_at)
-        """)
+        """
+        )
         self._conn.commit()
 
     def record_derivation(
@@ -128,14 +132,17 @@ class TraceChain:
                         )
 
             self._conn.commit()
-            logger.warning("TraceChain record_derivation: %s → %s (%s)", parent_node_ids, child_node_id, child_layer)
+            logger.warning(
+                "TraceChain record_derivation: %s → %s (%s)",
+                parent_node_ids,
+                child_node_id,
+                child_layer,
+            )
         except Exception as e:
             logger.warning("TraceChain record_derivation failed: %s", e)
             self._conn.rollback()
 
-    def drill_down(
-        self, node_id: str, max_depth: int = 10
-    ) -> list[dict[str, Any]]:
+    def drill_down(self, node_id: str, max_depth: int = 10) -> list[dict[str, Any]]:
         """下钻：从高层节点追溯到低层原文。
 
         递归遍历 parent_ids，返回完整溯源链。
@@ -164,12 +171,15 @@ class TraceChain:
                 _recurse(parent_id, depth + 1)
 
         _recurse(node_id, 0)
-        logger.warning("TraceChain drill_down: node=%s, depth=%d, result_count=%d", node_id, max_depth, len(result))
+        logger.warning(
+            "TraceChain drill_down: node=%s, depth=%d, result_count=%d",
+            node_id,
+            max_depth,
+            len(result),
+        )
         return result
 
-    def drill_up(
-        self, node_id: str, max_depth: int = 10
-    ) -> list[dict[str, Any]]:
+    def drill_up(self, node_id: str, max_depth: int = 10) -> list[dict[str, Any]]:
         """上钻：从低层节点找到所有引用它的高层摘要。
 
         递归遍历 child_ids，返回所有上层节点。
@@ -197,7 +207,12 @@ class TraceChain:
                 _recurse(child_id, depth + 1)
 
         _recurse(node_id, 0)
-        logger.warning("TraceChain drill_up: node=%s, depth=%d, result_count=%d", node_id, max_depth, len(result))
+        logger.warning(
+            "TraceChain drill_up: node=%s, depth=%d, result_count=%d",
+            node_id,
+            max_depth,
+            len(result),
+        )
         return result
 
     def get_ref_path(self, node_id: str) -> str | None:
