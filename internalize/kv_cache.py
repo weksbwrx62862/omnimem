@@ -85,9 +85,11 @@ class KVCacheManager:
             """,
             migrations=[],
         )
-        self._conn.execute("""
+        self._conn.execute(
+            """
             CREATE INDEX IF NOT EXISTS idx_access_count ON kv_cache_entries(access_count DESC)
-        """)
+        """
+        )
         self._conn.commit()
 
         # 从持久化存储中恢复缓存

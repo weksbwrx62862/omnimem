@@ -23,11 +23,11 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
+from omnimem.protocols import RetrieverProtocol
 from omnimem.retrieval.bm25 import BM25Retriever
 from omnimem.retrieval.reranker import CrossEncoderReranker
 from omnimem.retrieval.rrf import RRFFusion
 from omnimem.retrieval.vector import VectorRetriever
-from omnimem.protocols import RetrieverProtocol
 from omnimem.retrieval.vector_store import _emit
 
 logger = logging.getLogger(__name__)
@@ -67,8 +67,10 @@ class CircuitBreaker:
                 self._state = self.HALF_OPEN
                 logger.info("CircuitBreaker: OPEN→HALF_OPEN (cooldown elapsed)")
             else:
-                logger.warning("CircuitBreaker: OPEN, circuit open (%.1fs remaining)",
-                               self._cooldown - (now - self._last_failure_time))
+                logger.warning(
+                    "CircuitBreaker: OPEN, circuit open (%.1fs remaining)",
+                    self._cooldown - (now - self._last_failure_time),
+                )
                 return fallback()
         try:
             result = fn()
@@ -87,7 +89,9 @@ class CircuitBreaker:
             self._last_failure_time = time.time()
             if self._failures >= self._threshold:
                 self._state = self.OPEN
-                logger.error("CircuitBreaker: CLOSED→OPEN (%d consecutive failures)", self._failures)
+                logger.error(
+                    "CircuitBreaker: CLOSED→OPEN (%d consecutive failures)", self._failures
+                )
             return fallback()
 
     def reset(self) -> None:
@@ -164,7 +168,7 @@ class _ReadWriteLock:
             self._writers -= 1
             self._cond.notify_all()
 
-    def __enter__(self) -> "_ReadWriteLock":
+    def __enter__(self) -> _ReadWriteLock:
         self.acquire_write()
         return self
 
@@ -290,14 +294,20 @@ class HybridRetriever:
             self._SYNONYM_MAP = synonym_map
         # ★ 通道注册表：通道名 → (retriever, weight)
         self._channels: dict[str, tuple[RetrieverProtocol, float]] = {}
-        vec = VectorRetriever(backend=vector_backend, data_dir=self._data_dir, embedding_model_path=embedding_model_path)
+        vec = VectorRetriever(
+            backend=vector_backend,
+            data_dir=self._data_dir,
+            embedding_model_path=embedding_model_path,
+        )
         bm25 = BM25Retriever(data_dir=self._data_dir)
         self.register_channel("vector", vec, weight=3.0)
         self.register_channel("bm25", bm25, weight=1.0)
         self._vector = vec  # 向后兼容属性引用
-        self._bm25 = bm25   # 向后兼容属性引用
+        self._bm25 = bm25  # 向后兼容属性引用
         self._rrf = RRFFusion(k=60, min_rrf=0.035)
-        self._reranker = CrossEncoderReranker(model_path=reranker_model_path) if enable_reranker else None
+        self._reranker = (
+            CrossEncoderReranker(model_path=reranker_model_path) if enable_reranker else None
+        )
         self._recall_timeout_ms = recall_timeout_ms
         self._recall_strategy = recall_strategy
         self._query_cache_ttl = query_cache_ttl
@@ -317,6 +327,7 @@ class HybridRetriever:
         if enable_catalog and index and wing_room:
             try:
                 from omnimem.retrieval.catalog import CatalogRetriever
+
                 self._catalog = CatalogRetriever(
                     index=index,
                     wing_room=wing_room,
@@ -331,9 +342,10 @@ class HybridRetriever:
         try:
             import json
             from pathlib import Path
+
             synonyms_path = Path(__file__).parent.parent / "config" / "synonyms.json"
             if synonyms_path.exists():
-                with open(synonyms_path, "r", encoding="utf-8") as f:
+                with open(synonyms_path, encoding="utf-8") as f:
                     data = json.load(f)
                 if isinstance(data, dict):
                     result = {}
@@ -345,12 +357,16 @@ class HybridRetriever:
                     if result:
                         logger.info("Loaded %d synonym entries from %s", len(result), synonyms_path)
                         return result
-            logger.warning("synonyms.json not found or empty at %s, synonym expansion disabled", synonyms_path)
+            logger.warning(
+                "synonyms.json not found or empty at %s, synonym expansion disabled", synonyms_path
+            )
         except Exception as e:
             logger.warning("Failed to load synonyms.json: %s, synonym expansion disabled", e)
         return {}
 
-    def register_channel(self, name: str, retriever: RetrieverProtocol, weight: float = 1.0) -> None:
+    def register_channel(
+        self, name: str, retriever: RetrieverProtocol, weight: float = 1.0
+    ) -> None:
         """注册检索通道。
 
         Args:
@@ -509,6 +525,7 @@ class HybridRetriever:
         """
         # ★ 新增：创建检索轨迹记录器
         from omnimem.retrieval.trace import SearchTrace
+
         trace = SearchTrace(query) if enable_trace else None
 
         # ★ 单通道测试：channels_only 指定时仅使用指定通道检索
@@ -550,11 +567,15 @@ class HybridRetriever:
 
             if self._recall_strategy == "keyword":
                 # 纯关键词模式：仅运行 BM25 通道
-                if "bm25" in self._channels and (not _allowed_channels or "bm25" in _allowed_channels):
+                if "bm25" in self._channels and (
+                    not _allowed_channels or "bm25" in _allowed_channels
+                ):
                     channel_results["bm25"] = self._bm25_search(query, top_k)
             elif self._recall_strategy == "embedding":
                 # 纯向量模式：仅运行向量通道，熔断器保护
-                if "vector" in self._channels and (not _allowed_channels or "vector" in _allowed_channels):
+                if "vector" in self._channels and (
+                    not _allowed_channels or "vector" in _allowed_channels
+                ):
                     if self._vector_breaker.should_skip():
                         logger.warning("CircuitBreaker OPEN: skipping vector search, no results")
                         _emit("[OmniMem] ⚠ 向量检索不可用，已降级到关键词模式")
@@ -578,7 +599,9 @@ class HybridRetriever:
                             continue
                         # 向量通道：熔断器保护
                         if name == "vector" and self._vector_breaker.should_skip():
-                            logger.warning("CircuitBreaker OPEN: skipping vector search, degrading to BM25+Catalog only")
+                            logger.warning(
+                                "CircuitBreaker OPEN: skipping vector search, degrading to BM25+Catalog only"
+                            )
                             _emit("[OmniMem] ⚠ 向量检索不可用，已降级到关键词模式")
                             continue
                         # BM25 通道：使用含同义词扩展的搜索方法
@@ -602,8 +625,12 @@ class HybridRetriever:
                             future.cancel()
                             if name == "vector":
                                 self._vector_breaker.record_failure()
-                            logger.warning("%s search timeout/degraded (%dms): %s",
-                                           name, self._recall_timeout_ms, e)
+                            logger.warning(
+                                "%s search timeout/degraded (%dms): %s",
+                                name,
+                                self._recall_timeout_ms,
+                                e,
+                            )
 
                     # 所有通道超时时关闭线程池
                     if not any(channel_results.values()):
@@ -612,8 +639,9 @@ class HybridRetriever:
                 # ★ 记录各通道检索轨迹
                 if trace:
                     for ch_name, ch_results in channel_results.items():
-                        trace.add_step("channel_search", channel=ch_name,
-                                       output_count=len(ch_results))
+                        trace.add_step(
+                            "channel_search", channel=ch_name, output_count=len(ch_results)
+                        )
 
                 # 降级日志
                 active = [n for n, r in channel_results.items() if r]
@@ -632,10 +660,12 @@ class HybridRetriever:
 
             # ★ 记录 RRF 融合轨迹
             if trace:
-                trace.add_step("rrf_fuse",
-                               input_count=sum(len(r) for r in channel_results.values()),
-                               output_count=len(results))
-            
+                trace.add_step(
+                    "rrf_fuse",
+                    input_count=sum(len(r) for r in channel_results.values()),
+                    output_count=len(results),
+                )
+
             # ★ 过滤 sync_turn 条目（对话片段不应污染记忆检索结果）
             results = [r for r in results if r.get("source") != "sync_turn"]
 
@@ -647,11 +677,11 @@ class HybridRetriever:
 
             # ★ 缓存搜索结果
             self._query_cache[cache_key] = (results, now)
-            
+
             # ★ 新增：将轨迹附加到最后一个结果
             if trace and results:
                 results[-1]["_trace"] = trace.to_dict()
-            
+
             return results
         finally:
             self._rw_lock.release_read()
@@ -723,10 +753,16 @@ class HybridRetriever:
             channel_results: dict[str, list[dict[str, Any]]] = {}
 
             if self._recall_strategy == "keyword":
-                if "bm25" in self._channels and (not _allowed_channels or "bm25" in _allowed_channels):
-                    channel_results["bm25"] = await _asyncio.to_thread(self._bm25_search, query, top_k)
+                if "bm25" in self._channels and (
+                    not _allowed_channels or "bm25" in _allowed_channels
+                ):
+                    channel_results["bm25"] = await _asyncio.to_thread(
+                        self._bm25_search, query, top_k
+                    )
             elif self._recall_strategy == "embedding":
-                if "vector" in self._channels and (not _allowed_channels or "vector" in _allowed_channels):
+                if "vector" in self._channels and (
+                    not _allowed_channels or "vector" in _allowed_channels
+                ):
                     if self._vector_breaker.should_skip():
                         logger.warning("CircuitBreaker OPEN: skipping async vector search")
                         _emit("[OmniMem] ⚠ 向量检索不可用，已降级到关键词模式")
@@ -746,7 +782,9 @@ class HybridRetriever:
                     if _allowed_channels and name not in _allowed_channels:
                         continue
                     if name == "vector" and self._vector_breaker.should_skip():
-                        logger.warning("CircuitBreaker OPEN: skipping async vector search, degrading to BM25+Catalog only")
+                        logger.warning(
+                            "CircuitBreaker OPEN: skipping async vector search, degrading to BM25+Catalog only"
+                        )
                         _emit("[OmniMem] ⚠ 向量检索不可用，已降级到关键词模式")
                         continue
                     if name == "bm25":
@@ -775,8 +813,9 @@ class HybridRetriever:
 
                 if trace:
                     for ch_name, ch_results in channel_results.items():
-                        trace.add_step("channel_search", channel=ch_name,
-                                       output_count=len(ch_results))
+                        trace.add_step(
+                            "channel_search", channel=ch_name, output_count=len(ch_results)
+                        )
 
                 active = [n for n, r in channel_results.items() if r]
                 if len(active) == 1 and active[0] != "vector":
@@ -793,9 +832,11 @@ class HybridRetriever:
             )
 
             if trace:
-                trace.add_step("rrf_fuse",
-                               input_count=sum(len(r) for r in channel_results.values()),
-                               output_count=len(results))
+                trace.add_step(
+                    "rrf_fuse",
+                    input_count=sum(len(r) for r in channel_results.values()),
+                    output_count=len(results),
+                )
 
             results = [r for r in results if r.get("source") != "sync_turn"]
             results = self._supplement_low_recall_types(query, results, top_k)
@@ -895,8 +936,11 @@ class HybridRetriever:
         if active_channels <= 1:
             adaptive_min_rrf = min(adaptive_min_rrf, 0.01)
             if active_channels == 1:
-                logger.warning("RRF degraded: only %s channel has results, weight=%.1f",
-                             active_names[0], base_weights[0] if base_weights else 0)
+                logger.warning(
+                    "RRF degraded: only %s channel has results, weight=%.1f",
+                    active_names[0],
+                    base_weights[0] if base_weights else 0,
+                )
 
         # ★ P1方案四：应用动态来源权重（基于 FeedbackCollector 的 CTR 统计）
         if self._source_weights:
@@ -937,8 +981,7 @@ class HybridRetriever:
         import uuid
 
         clean_user = re.sub(
-            r"### Relevant Memories(?:\s*\(prefetched\))?\s*\n.*"
-            r"(?=\n(?!- )|\Z)",
+            r"### Relevant Memories(?:\s*\(prefetched\))?\s*\n.*" r"(?=\n(?!- )|\Z)",
             "",
             user_content,
             flags=re.DOTALL | re.IGNORECASE,
@@ -1144,7 +1187,9 @@ class HybridRetriever:
             self._vector.flush()
             logger.info(
                 "HybridRetriever rebuild: vector=%d, bm25=%d from %d entries",
-                vec_count, bm25_count, len(entries),
+                vec_count,
+                bm25_count,
+                len(entries),
             )
             return {"vector": vec_count, "bm25": bm25_count}
         finally:

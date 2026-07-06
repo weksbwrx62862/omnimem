@@ -18,6 +18,7 @@ from typing import Any
 
 try:
     import jieba
+
     _HAS_JIEBA = True
 except ImportError:
     _HAS_JIEBA = False
@@ -52,8 +53,26 @@ _NOISE_WORDS = {
 
 
 _MINIMAL_ZH_STOPWORDS = {
-    "的", "了", "是", "在", "我", "有", "和", "就", "不", "人",
-    "都", "一", "一个", "上", "也", "很", "到", "说", "要", "去",
+    "的",
+    "了",
+    "是",
+    "在",
+    "我",
+    "有",
+    "和",
+    "就",
+    "不",
+    "人",
+    "都",
+    "一",
+    "一个",
+    "上",
+    "也",
+    "很",
+    "到",
+    "说",
+    "要",
+    "去",
 }
 
 
@@ -72,7 +91,7 @@ def _load_common_zh_words() -> set[str]:
         os.path.dirname(os.path.dirname(__file__)), "config", "zh_words.json"
     )
     try:
-        with open(config_path, "r", encoding="utf-8") as f:
+        with open(config_path, encoding="utf-8") as f:
             external: list[str] = json.load(f)
         if isinstance(external, list):
             return set(external)
@@ -95,11 +114,11 @@ def _tokenize(text: str) -> list[str]:
         raw_tokens = jieba.lcut(text)
         processed = []
         for t in raw_tokens:
-            if not re.search(r'[\u4e00-\u9fffa-zA-Z0-9]', t):
+            if not re.search(r"[\u4e00-\u9fffa-zA-Z0-9]", t):
                 continue
             processed.append(t)
-        if not processed and re.search(r'[\u4e00-\u9fff]', text):
-            zh_chars = re.findall(r'[\u4e00-\u9fff]', text)
+        if not processed and re.search(r"[\u4e00-\u9fff]", text):
+            zh_chars = re.findall(r"[\u4e00-\u9fff]", text)
             if zh_chars:
                 processed = [zh_chars[0]]
         return processed
@@ -132,8 +151,8 @@ def _tokenize(text: str) -> list[str]:
         _stop_chars = {"的", "了", "是", "在", "和", "就", "也", "很", "到", "说", "要", "去", "不"}
         filtered = [t for t in raw_tokens if t not in _stop_chars]
 
-    if not filtered and re.search(r'[\u4e00-\u9fff]', text):
-        zh_chars = re.findall(r'[\u4e00-\u9fff]', text)
+    if not filtered and re.search(r"[\u4e00-\u9fff]", text):
+        zh_chars = re.findall(r"[\u4e00-\u9fff]", text)
         if zh_chars:
             filtered = [zh_chars[0]]
 
@@ -154,7 +173,9 @@ class BM25Retriever:
 
     CACHE_VERSION = 3
 
-    def __init__(self, buffer_size: int = 50, data_dir: Path | None = None, max_documents: int = 5000):
+    def __init__(
+        self, buffer_size: int = 50, data_dir: Path | None = None, max_documents: int = 5000
+    ):
         self._corpus: list[list[str]] = []
         self._documents: list[dict[str, Any]] = []
         self._bm25: Any = None
@@ -316,8 +337,7 @@ class BM25Retriever:
         """从 BM25 索引中删除指定条目。"""
         with self._lock:
             indices_to_remove = [
-                i for i, doc in enumerate(self._documents)
-                if doc.get("memory_id") == memory_id
+                i for i, doc in enumerate(self._documents) if doc.get("memory_id") == memory_id
             ]
             if indices_to_remove:
                 for idx in reversed(indices_to_remove):
@@ -339,10 +359,15 @@ class BM25Retriever:
             content = entry.get("content", "") or entry.get("summary", "")
             memory_id = entry.get("memory_id", "")
             if content and memory_id:
-                existing_ids = {doc.get("memory_id", ""): i for i, doc in enumerate(self._documents)}
+                existing_ids = {
+                    doc.get("memory_id", ""): i for i, doc in enumerate(self._documents)
+                }
                 if memory_id in existing_ids:
                     old_content = self._documents[existing_ids[memory_id]].get("content", "")
-                    if hashlib.md5(old_content.encode()).hexdigest() != hashlib.md5(content.encode()).hexdigest():
+                    if (
+                        hashlib.md5(old_content.encode()).hexdigest()
+                        != hashlib.md5(content.encode()).hexdigest()
+                    ):
                         self.delete(memory_id)
                 self.add_document(memory_id, content)
                 rebuilt += 1
@@ -412,10 +437,14 @@ class BM25Retriever:
         if cache_path is None or not cache_path.exists():
             return
         try:
-            with open(cache_path, "r", encoding="utf-8") as f:
+            with open(cache_path, encoding="utf-8") as f:
                 cached = json.load(f)
             if cached.get("version") != self.CACHE_VERSION:
-                logger.warning("BM25 disk cache version mismatch (expected %d, got %d), rebuilding", self.CACHE_VERSION, cached.get("version", 0))
+                logger.warning(
+                    "BM25 disk cache version mismatch (expected %d, got %d), rebuilding",
+                    self.CACHE_VERSION,
+                    cached.get("version", 0),
+                )
                 try:
                     cache_path.unlink()
                 except OSError:
@@ -438,7 +467,11 @@ class BM25Retriever:
             cache_path.parent.mkdir(parents=True, exist_ok=True)
             with open(cache_path, "w", encoding="utf-8") as f:
                 json.dump(
-                    {"version": self.CACHE_VERSION, "corpus": self._corpus, "documents": self._documents},
+                    {
+                        "version": self.CACHE_VERSION,
+                        "corpus": self._corpus,
+                        "documents": self._documents,
+                    },
                     f,
                     ensure_ascii=False,
                 )
