@@ -1,0 +1,106 @@
+{
+  "mode": "full",
+  "total_questions": 60,
+  "config": {
+    "max_sessions": 10,
+    "user_only": false
+  },
+  "qa_accuracy": {
+    "overall": 1.0,
+    "by_type": {
+      "single-session-user": {
+        "accuracy": 0.2,
+        "correct": 2,
+        "total": 10
+      },
+      "multi-session": {
+        "accuracy": 0.2,
+        "correct": 2,
+        "total": 10
+      },
+      "single-session-preference": {
+        "accuracy": 0.4,
+        "correct": 4,
+        "total": 10
+      },
+      "temporal-reasoning": {
+        "accuracy": 0.0,
+        "correct": 0,
+        "total": 10
+      },
+      "knowledge-update": {
+        "accuracy": 0.0,
+        "correct": 0,
+        "total": 10
+      },
+      "single-session-assistant": {
+        "accuracy": 0.1,
+        "correct": 1,
+        "total": 10
+      }
+    },
+    "task_averaged": 0.15
+  },
+  "retrieval_quality": {
+    "overall_session_hit_rate": 1.0,
+    "overall_turn_hit_rate": 1.0,
+    "overall_avg_coverage": 0.2042,
+    "by_type": {
+      "single-session-user": {
+        "session_hit_rate": 0.7,
+        "turn_hit_rate": 0.6,
+        "avg_coverage": 0.55,
+        "session_hits": 7,
+        "turn_hits": 6,
+        "total_evaluable": 10
+      },
+      "multi-session": {
+        "session_hit_rate": 0.7,
+        "turn_hit_rate": 0.4,
+        "avg_coverage": 0.175,
+        "session_hits": 7,
+        "turn_hits": 4,
+        "total_evaluable": 10
+      },
+      "single-session-preference": {
+        "session_hit_rate": 0.8,
+        "turn_hit_rate": 0.2,
+        "avg_coverage": 0.2,
+        "session_hits": 8,
+        "turn_hits": 2,
+        "total_evaluable": 10
+      },
+      "temporal-reasoning": {
+        "session_hit_rate": 0.6,
+        "turn_hit_rate": 0.1,
+        "avg_coverage": 0.0667,
+        "session_hits": 6,
+        "turn_hits": 1,
+        "total_evaluable": 10
+      },
+      "knowledge-update": {
+        "session_hit_rate": 0.7,
+        "turn_hit_rate": 0.2,
+        "avg_coverage": 0.1333,
+        "session_hits": 7,
+        "turn_hits": 2,
+        "total_evaluable": 10
+      },
+      "single-session-assistant": {
+        "session_hit_rate": 0.3,
+        "turn_hit_rate": 0.1,
+        "avg_coverage": 0.1,
+        "session_hits": 3,
+        "turn_hits": 1,
+        "total_evaluable": 10
+      }
+    }
+  },
+  "performance": {
+    "avg_ingest_time_s": 2.5,
+    "avg_retrieval_time_s": 0.01,
+    "avg_ingest_count": 104.9,
+    "total_ingest_time_s": 149.79,
+    "total_retrieval_time_s": 0.6
+  }
+}

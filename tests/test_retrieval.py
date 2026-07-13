@@ -447,13 +447,13 @@ class TestHybridRetrieverConfig(unittest.TestCase):
         """无配置时参数应与原硬编码默认值一致。"""
         tmpdir = tempfile.mkdtemp()
         hybrid = HybridRetriever(data_dir=Path(tmpdir))
-        self.assertEqual(hybrid._rrf_k, 60)
-        self.assertAlmostEqual(hybrid._rrf_min_score, 0.035)
+        self.assertEqual(hybrid._rrf_k, 35)
+        self.assertAlmostEqual(hybrid._rrf_min_score, 0.04)
         self.assertEqual(hybrid._circuit_breaker_threshold, 3)
         self.assertEqual(hybrid._circuit_breaker_cooldown_seconds, 60.0)
         self.assertEqual(hybrid._max_sync_turn_entries, 1000)
-        self.assertEqual(hybrid._rrf._k, 60)
-        self.assertAlmostEqual(hybrid._rrf._min_rrf, 0.035)
+        self.assertEqual(hybrid._rrf._k, 35)
+        self.assertAlmostEqual(hybrid._rrf._min_rrf, 0.04)
         self.assertEqual(hybrid._vector_breaker._threshold, 3)
         self.assertEqual(hybrid._vector_breaker._cooldown, 60.0)
 

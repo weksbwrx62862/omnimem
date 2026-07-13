@@ -116,6 +116,7 @@ class RecallService:
         _query_keywords = _extract_query_keywords(query)
 
         recall_timeout = self.deps.config.get("recall_timeout_ms", 5000) / 1000.0
+        top_k = args.get("top_k", 40)
         import time as _time
 
         _recall_start = _time.monotonic()
@@ -145,6 +146,7 @@ class RecallService:
                 query,
                 max_tokens=max_tokens,
                 mode=mode,
+                top_k=top_k,
                 enable_trace=enable_trace,
             )
             try:
@@ -162,8 +164,12 @@ class RecallService:
                 results = []
             _recall_latency_ms = (_time.monotonic() - _recall_start) * 1000.0
 
-        # P1: 联想扩散
-        if mode == "associative":
+        # ★ 自动联想扩散
+        _should_spread = (
+            mode == "associative"
+            or (mode == "rag" and len(results) < 3)
+        )
+        if _should_spread:
             try:
                 from omnimem.associative import AssociativeSpreader
 
@@ -326,6 +332,34 @@ class RecallService:
         results = await self._async_validate_store_entries(results)
         results = self._filter_by_relevance(results, _query_keywords)
         results = await self._async_fallback_if_few(results, query, _query_keywords)
+
+        # ★ 自动联想扩散（异步路径）
+        _should_spread = (
+            mode == "associative"
+            or (mode == "rag" and len(results) < 3)
+        )
+        if _should_spread:
+            try:
+                from omnimem.associative import AssociativeSpreader
+
+                _spreader = AssociativeSpreader(
+                    knowledge_graph=self.deps.knowledge_graph,
+                    retriever=self.deps.retriever,
+                )
+                _existing_ids = {r.get("memory_id", "") for r in results if r.get("memory_id")}
+                _assocs = _spreader.spread(
+                    query=query,
+                    existing_ids=_existing_ids,
+                    top_k=5,
+                )
+                if _assocs:
+                    logger.debug("AssociativeSpreader (async): %d associations found", len(_assocs))
+                    results.extend(_assocs)
+                    # 重新过滤+fallback（联想结果也要经过校验）
+                    results = self._filter_by_relevance(results, _query_keywords)
+                    results = await self._async_fallback_if_few(results, query, _query_keywords)
+            except Exception as e:
+                logger.warning("Async associative spread failed (non-fatal): %s", e)
 
         if not results:
             return {

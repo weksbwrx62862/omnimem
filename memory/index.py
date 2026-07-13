@@ -104,6 +104,8 @@ class ThreeLevelIndex:
             ("metadata", "TEXT"),
             ("conflicting_with", "TEXT"),
             ("conflict_type", "TEXT"),
+            ("is_updated", "INTEGER DEFAULT 0"),
+            ("is_superseded", "INTEGER DEFAULT 0"),
         ]
         for col_name, col_def in _migrate_columns:
             try:

@@ -47,6 +47,22 @@ class SynonymExpander:
             logger.warning("Failed to load synonyms.json: %s, synonym expansion disabled", e)
         return {}
 
+    def expand(self, query: str) -> list[str]:
+        """返回查询的同义扩展词列表（不含原始查询词）。
+
+        遍历同义词映射，当查询包含某个 key 时，返回其对应的同义词。
+        用于 BM25 查询增强：将扩展词附加到原始查询中提升召回率。
+        """
+        expanded: list[str] = []
+        seen: set[str] = set()
+        for key, synonyms in self._synonym_map.items():
+            if key in query:
+                for syn in synonyms:
+                    if syn not in seen and syn not in query:
+                        seen.add(syn)
+                        expanded.append(syn)
+        return expanded
+
     def search(self, bm25: BM25Retriever, query: str, top_k: int) -> list[dict[str, Any]]:
         """BM25 检索通道（含同义词扩展）。
 

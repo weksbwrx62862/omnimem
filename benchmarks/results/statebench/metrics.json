@@ -1,0 +1,26 @@
+{
+  "timestamp": "2026-07-12 10:46:12",
+  "mode": "mock_agent",
+  "dimensions": {
+    "task_completion_pass_at_1": {
+      "baseline": 0.3333333333333333,
+      "with_memory": 1.0,
+      "improvement": 0.6666666666666667
+    },
+    "agent_reliability_pass_5": {
+      "baseline": 0.6666666666666666,
+      "with_memory": 1.0,
+      "improvement": 0.33333333333333337
+    },
+    "efficiency_cost_per_task": {
+      "baseline": 5.39e-05,
+      "with_memory": 8.5e-05,
+      "improvement": -3.1100000000000004e-05
+    },
+    "ux_score": {
+      "baseline": 3.6999999999999997,
+      "with_memory": 3.9,
+      "improvement": 0.20000000000000018
+    }
+  }
+}

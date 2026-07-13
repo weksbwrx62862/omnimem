@@ -55,10 +55,11 @@ class SemanticDedupService:
                     "reason": f"Near-duplicate (sim={sim:.2f})",
                 }
             if sim > 0.6:
+                # ★ ADD-only 策略：新记忆独立创建，旧记忆标记为 superseded（不删除不覆盖）
                 return {
-                    "action": "update",
-                    "existing_id": m.get("memory_id", ""),
-                    "reason": f"Similar (sim={sim:.2f}), archiving old",
+                    "action": "create",
+                    "superseded_id": m.get("memory_id", ""),
+                    "reason": f"Similar (sim={sim:.2f}), ADD-only: new fact created, old superseded",
                 }
 
         return {"action": "create"}

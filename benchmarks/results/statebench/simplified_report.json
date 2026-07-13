@@ -1,0 +1,230 @@
+{
+  "timestamp": "2026-07-12 10:46:12",
+  "mode": "mock_agent",
+  "config": {
+    "tasks": 3,
+    "rounds": 5,
+    "no_memory_only": false,
+    "memory_only": false
+  },
+  "baseline": {
+    "task_completion_pass_at_1": 0.3333333333333333,
+    "agent_reliability_pass_5": 0.6666666666666666,
+    "ux_score_avg": 3.6999999999999997,
+    "cost_per_task": 5.39e-05,
+    "state_accuracy_avg": 0.3333333333333333,
+    "tasks": [
+      {
+        "task_id": "cs_return_001",
+        "domain": "customer_support",
+        "completed": false,
+        "state_accuracy": 0.0,
+        "ux_score": 3.8,
+        "total_tokens": 316,
+        "total_cost_usd": 4.74e-05,
+        "error": null,
+        "turns": [
+          {
+            "role": "assistant",
+            "content": "好的，请问您的订单号是什么？",
+            "latency_ms": 0.12040138244628906
+          },
+          {
+            "role": "assistant",
+            "content": "请问您的订单号是多少？我来帮您查询一下。",
+            "latency_ms": 0.032901763916015625
+          },
+          {
+            "role": "assistant",
+            "content": "请问您的订单号是多少？我来帮您查询一下。",
+            "latency_ms": 0.016689300537109375
+          },
+          {
+            "role": "assistant",
+            "content": "请问您的订单号是多少？我来帮您查询一下。",
+            "latency_ms": 0.014066696166992188
+          }
+        ]
+      },
+      {
+        "task_id": "travel_change_001",
+        "domain": "travel",
+        "completed": false,
+        "state_accuracy": 0.3333333333333333,
+        "ux_score": 3.5,
+        "total_tokens": 304,
+        "total_cost_usd": 4.56e-05,
+        "error": null,
+        "turns": [
+          {
+            "role": "assistant",
+            "content": "好的，请提供您的预订号。",
+            "latency_ms": 0.06651878356933594
+          },
+          {
+            "role": "assistant",
+            "content": "请告诉我您当前的航班信息。",
+            "latency_ms": 0.015974044799804688
+          },
+          {
+            "role": "assistant",
+            "content": "请问您想改签到哪个航班？经济舱改签费为200元。",
+            "latency_ms": 0.013828277587890625
+          },
+          {
+            "role": "assistant",
+            "content": "好的，已为您改签。",
+            "latency_ms": 0.012874603271484375
+          }
+        ]
+      },
+      {
+        "task_id": "shop_promo_001",
+        "domain": "shopping_assistant",
+        "completed": true,
+        "state_accuracy": 0.6666666666666666,
+        "ux_score": 3.8,
+        "total_tokens": 458,
+        "total_cost_usd": 6.87e-05,
+        "error": null,
+        "turns": [
+          {
+            "role": "assistant",
+            "content": "好的，{product}是个不错的选择。价格是多少呢？希望能帮到您！",
+            "latency_ms": 0.01430511474609375
+          },
+          {
+            "role": "assistant",
+            "content": "请问您想购买什么商品？",
+            "latency_ms": 0.011444091796875
+          },
+          {
+            "role": "assistant",
+            "content": "优惠码已应用。确认下单吗？",
+            "latency_ms": 0.010967254638671875
+          },
+          {
+            "role": "assistant",
+            "content": "优惠码已应用。确认下单吗？",
+            "latency_ms": 0.012159347534179688
+          },
+          {
+            "role": "assistant",
+            "content": "优惠码已应用。确认下单吗？希望能帮到您！",
+            "latency_ms": 0.02002716064453125
+          }
+        ]
+      }
+    ]
+  },
+  "with_memory": {
+    "task_completion_pass_at_1": 1.0,
+    "agent_reliability_pass_5": 1.0,
+    "ux_score_avg": 3.9,
+    "cost_per_task": 8.5e-05,
+    "state_accuracy_avg": 1.0,
+    "tasks": [
+      {
+        "task_id": "cs_return_001",
+        "domain": "customer_support",
+        "completed": true,
+        "state_accuracy": 1.0,
+        "ux_score": 4.0,
+        "total_tokens": 539,
+        "total_cost_usd": 8.085e-05,
+        "error": null,
+        "turns": [
+          {
+            "role": "assistant",
+            "content": "您好！请问您的订单号是多少？如有其他问题随时联系。",
+            "latency_ms": 0.08177757263183594
+          },
+          {
+            "role": "assistant",
+            "content": "好的，我来帮您处理退货。，订单号 ORD-2024-5678，在7天退货政策内，已为您提交退货申请，退款299元。",
+            "latency_ms": 0.03457069396972656
+          },
+          {
+            "role": "assistant",
+            "content": "退货申请已提交，订单 ORD-2024-5678 将在3-5个工作日内退款299元。请放心，我们会妥善处理。",
+            "latency_ms": 0.03266334533691406
+          },
+          {
+            "role": "assistant",
+            "content": "退货申请已提交，订单 ORD-2024-5678 将在3-5个工作日内退款299元。",
+            "latency_ms": 0.03266334533691406
+          }
+        ]
+      },
+      {
+        "task_id": "travel_change_001",
+        "domain": "travel",
+        "completed": true,
+        "state_accuracy": 1.0,
+        "ux_score": 3.9,
+        "total_tokens": 484,
+        "total_cost_usd": 7.26e-05,
+        "error": null,
+        "turns": [
+          {
+            "role": "assistant",
+            "content": "您好！请问您的订单号是多少？如有其他问题随时联系。",
+            "latency_ms": 0.0247955322265625
+          },
+          {
+            "role": "assistant",
+            "content": "好的，经济舱改签费200元，已为您完成改签。",
+            "latency_ms": 0.10013580322265625
+          },
+          {
+            "role": "assistant",
+            "content": "改签已完成，预订 FL-2024-1234 改签费200元，新航班信息已发送到您的手机。希望能帮到您！",
+            "latency_ms": 0.034809112548828125
+          },
+          {
+            "role": "assistant",
+            "content": "改签已完成，预订 FL-2024-1234 改签费200元，新航班信息已发送到您的手机。",
+            "latency_ms": 0.031232833862304688
+          }
+        ]
+      },
+      {
+        "task_id": "shop_promo_001",
+        "domain": "shopping_assistant",
+        "completed": true,
+        "state_accuracy": 1.0,
+        "ux_score": 3.8,
+        "total_tokens": 677,
+        "total_cost_usd": 0.00010155,
+        "error": null,
+        "turns": [
+          {
+            "role": "assistant",
+            "content": "您好！请问您的订单号是多少？",
+            "latency_ms": 0.021457672119140625
+          },
+          {
+            "role": "assistant",
+            "content": "最终价格 539.1 元，确认下单吗？",
+            "latency_ms": 0.03504753112792969
+          },
+          {
+            "role": "assistant",
+            "content": "订单已提交，机械键盘 599元 优惠折扣59.9元 最终539.1元，感谢您的购买！",
+            "latency_ms": 0.025272369384765625
+          },
+          {
+            "role": "assistant",
+            "content": "订单已提交，机械键盘 599元 优惠折扣59.9元 最终539.1元，感谢您的购买！",
+            "latency_ms": 0.0286102294921875
+          },
+          {
+            "role": "assistant",
+            "content": "订单已提交，机械键盘 599元 优惠折扣59.9元 最终539.1元，感谢您的购买！",
+            "latency_ms": 0.0743865966796875
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -32,10 +32,22 @@ class HybridOrchestrator:
         "correction": 1.1,
     }
 
+    # ★ Task 2: 知识更新标记的默认分数提升
+    _DEFAULT_UPDATED_BOOST: float = 0.3
+
     def __init__(self, facade: Any) -> None:
         self._facade = facade
         self._synonym_expander = SynonymExpander(facade._synonym_map)
         self._executor = self._create_executor()
+        # ★ Task 2: 从 config 读取 updated_boost，默认 0.3
+        config = getattr(facade, "_config", None)
+        if config is not None:
+            self._updated_boost = float(config.get("updated_boost", self._DEFAULT_UPDATED_BOOST))
+        else:
+            self._updated_boost = self._DEFAULT_UPDATED_BOOST
+        # ★ Task 3: 查询增强配置
+        self._query_expansion_enabled = bool(config.get("query_expansion_enabled", True)) if config else True
+        self._entity_boost_weight = float(config.get("entity_boost_weight", 1.5)) if config else 1.5
 
     def _create_executor(self) -> ThreadPoolExecutor:
         """创建实例级检索线程池，max_workers 可通过配置调整。"""
@@ -90,14 +102,25 @@ class HybridOrchestrator:
         top_k: int,
         allowed_channels: set[str] | None,
         trace: Any,
+        bm25_query: str | None = None,
     ) -> dict[str, list[dict[str, Any]]]:
-        """执行多通道并行检索，按 recall_strategy 分流 + 超时降级。"""
+        """执行多通道并行检索，按 recall_strategy 分流 + 超时降级。
+
+        Args:
+            query: 原始查询（用于向量/目录等通道）
+            top_k: 每通道返回数量
+            allowed_channels: 限制检索通道集合
+            trace: 追踪对象
+            bm25_query: BM25 通道增强查询（含同义扩展词），为 None 时使用原始 query
+        """
+        # BM25 使用增强后的查询，其他通道使用原始查询
+        effective_bm25_query = bm25_query if bm25_query is not None else query
         channel_results: dict[str, list[dict[str, Any]]] = {}
         facade = self._facade
 
         if facade._recall_strategy == "keyword":
             if "bm25" in facade._channels and (not allowed_channels or "bm25" in allowed_channels):
-                channel_results["bm25"] = self.bm25_search(query, top_k)
+                channel_results["bm25"] = self.bm25_search(effective_bm25_query, top_k)
         elif facade._recall_strategy == "embedding":
             if "vector" in facade._channels and (not allowed_channels or "vector" in allowed_channels):
                 if facade._vector_breaker.should_skip():
@@ -123,7 +146,7 @@ class HybridOrchestrator:
                     _emit("[OmniMem] ⚠ 向量检索不可用，已降级到关键词模式")
                     continue
                 if name == "bm25":
-                    futures[name] = self._executor.submit(self.bm25_search, query, top_k)
+                    futures[name] = self._executor.submit(self.bm25_search, effective_bm25_query, top_k)
                 elif isinstance(retriever, BaseRetriever):
                     futures[name] = self._executor.submit(
                         self._search_base_retriever, retriever, query, top_k
@@ -173,7 +196,7 @@ class HybridOrchestrator:
         trace: Any = None,
         fusion_mode: str = "rrf",
     ) -> list[dict[str, Any]]:
-        """融合 + 类型补充 + 过滤。"""
+        """融合 + 类型补充 + 时序重排序 + 过滤。"""
         if fusion_mode == "additive":
             results = self.additive_fuse(
                 query, channel_results,
@@ -196,8 +219,13 @@ class HybridOrchestrator:
                                output_count=len(results))
 
         results = [r for r in results if r.get("source") != "sync_turn"]
+        # ★ ADD-only 策略：过滤已被 superseded 的旧记忆，只保留最新版本
+        results = [r for r in results if not (r.get("is_superseded") or r.get("metadata", {}).get("is_superseded"))]
         results = self.supplement_low_recall_types(query, results, top_k)
-        results = self.apply_type_boost(results)
+        results = self.apply_type_boost(results, updated_boost=self._updated_boost,
+                                        query=query, entity_boost_weight=self._entity_boost_weight)
+        # 时序重排序：当查询包含时序关键词时，对融合结果按时间衰减重新排序
+        results = self._apply_temporal_rerank(query, results)
         return results
 
     def rrf_fuse(
@@ -254,6 +282,13 @@ class HybridOrchestrator:
             min_rrf=adaptive_min_rrf,
             weights=base_weights,
         )
+
+        # 相关性过滤：移除分数远低于最高分的结果
+        if fused:
+            max_score = fused[0].get("score", 0)
+            if max_score > 0:
+                threshold = max_score * 0.1
+                fused = [r for r in fused if r.get("score", 0) >= threshold]
 
         if is_garbage and fused:
             fused = []
@@ -329,8 +364,26 @@ class HybridOrchestrator:
         return trim_to_budget(results[:top_k], max_tokens)
 
     @classmethod
-    def apply_type_boost(cls, results: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        """对 reasoning/action/correction 类型应用分数加权。"""
+    def apply_type_boost(
+        cls,
+        results: list[dict[str, Any]],
+        updated_boost: float = 0.3,
+        query: str = "",
+        entity_boost_weight: float = 1.0,
+    ) -> list[dict[str, Any]]:
+        """对 reasoning/action/correction 类型应用分数加权，并对 is_updated 记忆提升排序。
+
+        ★ Task 3.2: 当传入 query 和 entity_boost_weight > 1.0 时，
+        对包含查询关键实体的结果额外加权，提升实体匹配度高的记忆排序。
+        """
+        # ★ Task 3.2: 查询实体提取与加权
+        query_entities: set[str] = set()
+        if query and entity_boost_weight > 1.0:
+            from omnimem.retrieval.entity_extractor import EntityExtractor
+            extractor = EntityExtractor()
+            extracted = extractor.extract(query, max_entities=5)
+            query_entities = {e.lower() for e in extracted}
+
         for r in results:
             mem_type = r.get("type", "")
             boost = cls._TYPE_BOOST.get(mem_type, 1.0)
@@ -338,6 +391,21 @@ class HybridOrchestrator:
                 current_score = r.get("score", r.get("rrf_score", 0))
                 r["score"] = round(current_score * boost, 5)
                 r["type_boost"] = boost
+            # ★ Task 2: is_updated 记忆获得分数提升
+            metadata = r.get("metadata", {})
+            if metadata.get("is_updated") or r.get("is_updated"):
+                current_score = r.get("score", r.get("rrf_score", 0))
+                r["score"] = round(current_score * (1 + updated_boost), 5)
+                r["updated_boost"] = updated_boost
+            # ★ Task 3.2: 关键实体 BM25 加权
+            if query_entities:
+                doc_entities = metadata.get("entities", [])
+                doc_entity_set = {e.lower() for e in doc_entities}
+                overlap = query_entities & doc_entity_set
+                if overlap:
+                    current_score = r.get("score", r.get("rrf_score", 0))
+                    r["score"] = round(current_score * entity_boost_weight, 5)
+                    r["entity_boost"] = entity_boost_weight
         return sorted(results, key=lambda x: x.get("score", 0), reverse=True)
 
     def supplement_low_recall_types(
@@ -379,6 +447,22 @@ class HybridOrchestrator:
         return results
 
     # ── 缓存管理 ──
+
+    def _apply_temporal_rerank(self, query: str, results: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """对融合后的结果应用时序重排序。
+
+        仅当查询包含时序关键词时生效，否则原样返回。
+        委托给 _TemporalRetriever.apply_temporal_rerank() 执行。
+        """
+        from omnimem.retrieval.registry import _TemporalRetriever
+
+        facade = self._facade
+        alpha = getattr(facade, "_temporal_rerank_alpha", 0.5)
+        decay_lambda = getattr(facade, "_temporal_decay_lambda", 0.1)
+
+        return _TemporalRetriever.apply_temporal_rerank(
+            query, results, alpha=alpha, decay_lambda=decay_lambda,
+        )
 
     def check_cache(self, cache_key: str) -> list[dict[str, Any]] | None:
         """查询缓存检查（需在读锁内调用）。"""
@@ -455,7 +539,7 @@ class HybridOrchestrator:
         query: str,
         max_tokens: int = 1500,
         mode: str = "rag",
-        top_k: int = 10,
+        top_k: int = 40,
         allowed_channels: set[str] | None = None,
         enable_trace: bool = False,
     ) -> list[dict[str, Any]]:
@@ -481,18 +565,40 @@ class HybridOrchestrator:
             top_k = max(top_k, 20)
             max_tokens = max(max_tokens, 3000)
 
+        # ★ COUNT 查询（how many/how much）KMAG优化：提升 BM25 权重 + 扩大 top_k
+        import re as _re_count
+        _is_count = bool(_re_count.match(r'^(how many|how much)\b', query.strip().lower()))
+        _orig_count_weights = {}
+        if _is_count:
+            top_k = max(top_k, 60)
+            if self._facade._source_weights is not None:
+                _orig_count_weights = dict(self._facade._source_weights)
+            self._facade._source_weights["bm25"] = 5.0
+
         cache_key = CacheKeyBuilder.build_recall_key(query, max_tokens, mode, top_k)
         cached = self.check_cache(cache_key)
         if cached is not None:
             return cached
 
-        channel_results = self.dispatch_channels(query, top_k, allowed_channels, trace)
+        # ★ Task 3.1: 查询同义扩展 — 仅影响 BM25 通道
+        bm25_query = query
+        if self._query_expansion_enabled:
+            expanded_terms = self._synonym_expander.expand(query)
+            if expanded_terms:
+                bm25_query = query + " " + " ".join(expanded_terms)
+
+        channel_results = self.dispatch_channels(query, top_k, allowed_channels, trace, bm25_query=bm25_query)
         results = self.fuse_and_filter(
             query, channel_results,
             is_garbage=is_garbage, doc_count=doc_count,
             top_k=top_k, max_tokens=max_tokens, trace=trace,
         )
         self.set_cache(cache_key, results)
+
+        # ★ COUNT 查询：恢复原始权重，防止污染后续检索
+        if _is_count and self._facade._source_weights is not None:
+            self._facade._source_weights.clear()
+            self._facade._source_weights.update(_orig_count_weights)
 
         if trace and results:
             results[-1]["_trace"] = trace.to_dict()
@@ -504,7 +610,7 @@ class HybridOrchestrator:
         query: str,
         max_tokens: int = 1500,
         mode: str = "rag",
-        top_k: int = 10,
+        top_k: int = 40,
         allowed_channels: set[str] | None = None,
         enable_trace: bool = False,
     ) -> list[dict[str, Any]]:
@@ -537,11 +643,18 @@ class HybridOrchestrator:
             logger.debug("HybridRetriever async query cache hit: %s", query[:50])
             return cached
 
+        # ★ Task 3.1: 查询同义扩展 — 仅影响 BM25 通道
+        bm25_query = query
+        if self._query_expansion_enabled:
+            expanded_terms = self._synonym_expander.expand(query)
+            if expanded_terms:
+                bm25_query = query + " " + " ".join(expanded_terms)
+
         channel_results: dict[str, list[dict[str, Any]]] = {}
 
         if facade._recall_strategy == "keyword":
             if "bm25" in facade._channels and (not allowed_channels or "bm25" in allowed_channels):
-                channel_results["bm25"] = await _asyncio.to_thread(self.bm25_search, query, top_k)
+                channel_results["bm25"] = await _asyncio.to_thread(self.bm25_search, bm25_query, top_k)
         elif facade._recall_strategy == "embedding":
             if "vector" in facade._channels and (not allowed_channels or "vector" in allowed_channels):
                 if facade._vector_breaker.should_skip():
@@ -568,7 +681,7 @@ class HybridOrchestrator:
                     _emit("[OmniMem] ⚠ 向量检索不可用，已降级到关键词模式")
                     continue
                 if name == "bm25":
-                    async_tasks[name] = _asyncio.to_thread(self.bm25_search, query, top_k)
+                    async_tasks[name] = _asyncio.to_thread(self.bm25_search, bm25_query, top_k)
                 elif isinstance(retriever, BaseRetriever):
                     async_tasks[name] = _asyncio.to_thread(
                         self._search_base_retriever, retriever, query, top_k
@@ -619,8 +732,12 @@ class HybridOrchestrator:
                            output_count=len(results))
 
         results = [r for r in results if r.get("source") != "sync_turn"]
+        # ★ ADD-only 策略：过滤已被 superseded 的旧记忆，只保留最新版本
+        results = [r for r in results if not (r.get("is_superseded") or r.get("metadata", {}).get("is_superseded"))]
         results = self.supplement_low_recall_types(query, results, top_k)
-        results = self.apply_type_boost(results)
+        results = self.apply_type_boost(results, updated_boost=self._updated_boost,
+                                        query=query, entity_boost_weight=self._entity_boost_weight)
+        results = self._apply_temporal_rerank(query, results)
         self.set_cache(cache_key, results)
 
         if trace and results:

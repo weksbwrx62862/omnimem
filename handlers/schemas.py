@@ -93,10 +93,12 @@ def get_tool_schemas() -> list[dict[str, Any]]:
                         "enum": ["rag", "llm", "associative"],
                         "default": "rag",
                         "description": (
-                            "rag: fast vector+BM25 hybrid (milliseconds). "
-                            "llm: deep reasoning with intent prediction (seconds). "
-                            "associative: rag + associative spreading via KG and semantic space (seconds)."
-                        ),
+                                    "rag: fast vector+BM25 hybrid (milliseconds). "
+                                    "Auto-triggers associative spreading via KG and semantic space "
+                                    "when precise results are scarce (<3). "
+                                    "llm: deep reasoning with intent prediction (seconds). "
+                                    "associative: always includes associative spreading."
+                                ),
                     },
                     "max_tokens": {
                         "type": "integer",

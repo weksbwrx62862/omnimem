@@ -63,19 +63,43 @@ from omnimem.handlers.record_action import handle_record_action as _handle_recor
 logger = logging.getLogger(__name__)
 
 
-# ★ 抑制 ChromaDB 0.6.x telemetry PostHog capture() 签名不兼容的噪音日志
+# ★ 抑制 ChromaDB 0.4.x - 0.7.x telemetry PostHog capture() 签名不兼容的噪音日志
+# 覆盖已知噪音模式：Failed to send telemetry event / PostHog / capture / telemetry
 class _ChromaDBTelemetryFilter(logging.Filter):
+    """抑制 ChromaDB telemetry 噪音日志，兼容 0.4.x - 0.7.x。
+
+    过滤策略：
+      1. logger 名称前缀匹配：chromadb.telemetry.* 全部抑制
+      2. 消息内容匹配：包含已知噪音关键词（PostHog/capture/telemetry）的记录抑制
+    """
+
+    # 已知 telemetry 噪音关键词（消息内容匹配）
+    _NOISE_KEYWORDS = (
+        "Failed to send telemetry event",
+        "PostHog",
+        "capture",
+        "telemetry",
+    )
+
     def filter(self, record: logging.LogRecord) -> bool:
-        msg = record.getMessage()
-        if "Failed to send telemetry event" in msg:
-            return False
+        # 1. logger 名称前缀匹配：chromadb.telemetry.* 全部抑制
         if record.name.startswith("chromadb.telemetry"):
             return False
+        # 2. 消息内容匹配：检查已知噪音关键词
+        msg = record.getMessage()
+        for keyword in self._NOISE_KEYWORDS:
+            if keyword in msg:
+                return False
         return True
 
 
 _tf = _ChromaDBTelemetryFilter()
-for _ln in ("chromadb.telemetry.product.posthog", "chromadb.telemetry"):
+# 覆盖 0.4.x - 0.7.x 已知的 telemetry logger 名称
+for _ln in (
+    "chromadb.telemetry.product.posthog",
+    "chromadb.telemetry.product",
+    "chromadb.telemetry",
+):
     logging.getLogger(_ln).addFilter(_tf)
     logging.getLogger(_ln).setLevel(logging.WARNING)
 
@@ -232,8 +256,13 @@ class OmniMemProvider(
 
     # ─── 工具实现（委托到 handlers 子模块） ─────────────────────
 
-    def get_next_vc(self) -> VectorClock:
-        """获取下一个向量时钟值（递增当前实例计数器）。"""
+    def get_next_vc(self) -> "VectorClock | None":
+        """获取下一个向量时钟值（递增当前实例计数器）。
+
+        单机模式（sync_mode=none）下返回 None，跳过递增操作。
+        """
+        if self._vector_clock is None:
+            return None
         self._vector_clock.increment(self._instance_id)
         return self._vector_clock  # type: ignore[no-any-return]
 

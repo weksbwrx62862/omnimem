@@ -75,7 +75,7 @@ class HybridRetriever:
         self,
         vector_backend: str = "chromadb",
         data_dir: Path | None = None,
-        enable_reranker: bool = False,
+        enable_reranker: bool = True,
         embedding_model_path: str = "",
         reranker_model_path: str = "",
         recall_timeout_ms: int = 5000,
@@ -99,11 +99,14 @@ class HybridRetriever:
                 return default
             return config.get(key, default)
 
-        self._rrf_k = _cfg("rrf_k", 60)
-        self._rrf_min_score = _cfg("rrf_min_score", 0.035)
+        self._rrf_k = _cfg("rrf_k", 35)
+        self._rrf_min_score = _cfg("rrf_min_score", 0.04)
         self._circuit_breaker_threshold = _cfg("circuit_breaker_threshold", 3)
         self._circuit_breaker_cooldown_seconds = _cfg("circuit_breaker_cooldown_seconds", 60.0)
         self._max_sync_turn_entries = _cfg("max_sync_turn_entries", 1000)
+        # 时序重排序配置
+        self._temporal_rerank_alpha = _cfg("temporal_rerank_alpha", 0.5)
+        self._temporal_decay_lambda = _cfg("temporal_decay_lambda", 0.1)
 
         # 同义词映射改为实例属性，避免多实例间相互污染
         from omnimem.retrieval.synonym_expander import SynonymExpander
@@ -119,8 +122,8 @@ class HybridRetriever:
             vector_store=vector_store,
         )
         bm25 = BM25Retriever(data_dir=self._data_dir)
-        self.register_channel("vector", vec, weight=3.0)
-        self.register_channel("bm25", bm25, weight=1.0)
+        self.register_channel("vector", vec, weight=1.0)
+        self.register_channel("bm25", bm25, weight=3.0)
         self._vector = vec
         self._bm25 = bm25
         self._rrf = RRFFusion(k=self._rrf_k, min_rrf=self._rrf_min_score)
@@ -299,8 +302,58 @@ class HybridRetriever:
             self._vector.add_batch(documents)
             self._bm25.add_batch(documents)
             self._vector.flush()
+            # ★ KMAG优化：数字实体提取 — 为每篇文档生成结构化数值摘要注入 BM25 索引
+            _numeric_docs = self._extract_numeric_entities(documents)
+            if _numeric_docs:
+                self._bm25.add_batch(_numeric_docs)
         finally:
             self._rw_lock.release_write()
+
+    @staticmethod
+    def _extract_numeric_entities(documents: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """从文档中提取数值型实体（数量、价格、时间等）生成结构化摘要注入检索。"""
+        import re as _re
+
+        _PATTERNS = [
+            # 数量: "3 tanks", "five projects", "0.5 hours"
+            (r'\b(\d+[\d,.]*)\s*(tank|project|item|shirt|boot|pair|kit|baby|child|friend|magazine|subscription|movie|book|episode|day|hour|minute|mile|dollar|percent|pound|ounce|cup|tsp|tbsp|fish|tank|plant|flower|room|bedroom|bathroom|car|bike|computer|phone|tv|monitor|screen|keyboard|mouse|chair|desk|lamp|light|bulb|door|window|painting|photo|video|song|playlist|album|game|level|character|weapon|armor|potion|spell|skill|achievement|trophy|badge)\w*\b', 1),
+            # 金额: "$185", "185 dollars", "$720"
+            (r'\$\s*(\d+[\d,.]*)|(\d+[\d,.]*)\s*(?:dollar|USD|buck)\w*', 1),
+            # 百分比: "50%", "50 percent"
+            (r'(\d+[\d,.]*)\s*%\s*|(\d+[\d,.]*)\s*(?:percent|percentage)\w*', 1),
+            # 时间/距离: "45 minutes", "3 hours", "10 miles"
+            (r'(\d+[\d,.]*)\s*(minute|hour|day|week|month|year|mile|km|kilometer|feet|inch|metre|meter)\w*\b', 1),
+            # 价格短语: "worth triple what I paid", "cost $200"
+            (r'(?:worth|cost|price|paid|spent|earned|saved|bought|sold|charge)\w*\s*(?:\$?\s*(\d+[\d,.]*|triple|double|half)\b)', 1),
+        ]
+
+        _numeric_docs = []
+        for doc in documents:
+            content = doc.get("content", "")
+            if not content:
+                continue
+            meta = dict(doc.get("metadata", {}))
+            base_id = doc.get("memory_id", "")
+            facts = []
+
+            for pattern, grp in _PATTERNS:
+                for m in _re.finditer(pattern, content.lower()):
+                    val = m.group(1) or m.group(2) or m.group(3) or m.group(4)
+                    if val:
+                        # Extract the surrounding words for context
+                        start = max(0, m.start() - 30)
+                        end = min(len(content), m.end() + 30)
+                        context = content[start:end].strip()
+                        facts.append(f"[NUMERIC] num_val={val} context: {context}")
+
+            if facts:
+                _numeric_docs.append({
+                    "content": " | ".join(facts),
+                    "memory_id": f"{base_id}_numeric",
+                    "metadata": {**meta, "_source": "numeric_extract"},
+                })
+
+        return _numeric_docs
 
     def update_metadata(self, memory_id: str, metadata: dict[str, Any]) -> None:
         """更新检索索引中指定条目的 metadata。"""
@@ -322,7 +375,7 @@ class HybridRetriever:
         query: str,
         max_tokens: int = 1500,
         mode: str = "rag",
-        top_k: int = 10,
+        top_k: int = 40,
         store: Any = None,  # noqa: ARG002
         enable_trace: bool = False,
         channels_only: list[str] | None = None,

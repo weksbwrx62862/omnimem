@@ -132,6 +132,7 @@ class ForgettingCurve:
 
     def _get_conn(self) -> sqlite3.Connection:
         """获取 forgetting_state 数据库连接（子模块回调用）。"""
+        self._ensure_conn_alive()
         assert self._conn is not None
         return self._conn
 
@@ -144,8 +145,17 @@ class ForgettingCurve:
         """初始化遗忘数据库。"""
         db_path_str = str(self._db_path)
         if db_path_str in self._shared_connections:
-            self._conn = self._shared_connections[db_path_str]
-            return
+            conn = self._shared_connections[db_path_str]
+            # 健康检查：防止拿到已被 close() 关闭的连接
+            try:
+                conn.execute("SELECT 1")
+                self._conn = conn
+                return
+            except sqlite3.ProgrammingError:
+                logger.warning(
+                    "ForgettingCurve: shared connection is closed, removing from cache and re-creating"
+                )
+                del self._shared_connections[db_path_str]
         self._conn = sqlite3.connect(db_path_str, check_same_thread=False)
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA busy_timeout=5000")
@@ -870,6 +880,7 @@ class ForgettingCurve:
     def _maybe_commit(self) -> None:
         """到达阈值时提交。"""
         if self._pending_writes >= self._BATCH_THRESHOLD:
+            self._ensure_conn_alive()
             assert self._conn is not None
             self._conn.commit()
             self._pending_writes = 0
@@ -891,9 +902,27 @@ class ForgettingCurve:
         self._shared_index_connections[index_db_str] = self._index_conn
         return self._index_conn
 
+    def _ensure_conn_alive(self) -> None:
+        """确保连接可用，若被其他实例关闭则重新创建。"""
+        if self._conn is None:
+            self._init_db()
+            return
+        try:
+            self._conn.execute("SELECT 1")
+        except (sqlite3.ProgrammingError, sqlite3.OperationalError):
+            logger.warning(
+                "ForgettingCurve: connection lost, re-initializing"
+            )
+            db_path_str = str(self._db_path)
+            self._shared_connections.pop(db_path_str, None)
+            self._shared_index_connections.pop(db_path_str, None)
+            self._conn = None
+            self._init_db()
+
     def flush(self) -> None:
         """显式提交所有待写入。"""
         with self._lock:
+            self._ensure_conn_alive()
             if self._conn and self._pending_writes > 0:
                 try:
                     self._conn.commit()
@@ -903,6 +932,7 @@ class ForgettingCurve:
 
     def close(self) -> None:
         """关闭数据库连接。"""
+        db_path_str = str(self._db_path)
         with self._lock:
             self.flush()
             if self._conn:
@@ -911,3 +941,6 @@ class ForgettingCurve:
             if self._index_conn:
                 self._index_conn.close()
                 self._index_conn = None
+        # 清理共享连接缓存，防止其他实例拿到已关闭的连接
+        self._shared_connections.pop(db_path_str, None)
+        self._shared_index_connections.pop(db_path_str, None)

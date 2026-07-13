@@ -251,6 +251,8 @@ class ProviderLifecycleMixin:
         self._retriever.flush()
         self._md_store.flush()
         self._index.close()
+        if hasattr(self, "_trace_chain") and self._trace_chain:
+            self._trace_chain.close()
         if hasattr(self, "_perception") and self._perception:
             self._perception.close()
         if self._knowledge_graph:

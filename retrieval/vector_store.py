@@ -183,14 +183,18 @@ class _CachedEmbeddingFunction:
         """后台线程执行磁盘写入（内部方法）。"""
         try:
             import json
+            import os
 
             self._cache_path.parent.mkdir(parents=True, exist_ok=True)
             with self._lock:
                 # 持久化时仅保存向量（加载时重置 TTL），避免过期时间绝对值失效
                 data = {k: v[0] for k, v in self._cache.items()}
                 self._dirty = False
-            with open(self._cache_path, "w", encoding="utf-8") as f:
+            # 原子写入：先写临时文件再 rename，避免并发读看到不完整的写入
+            tmp_path = self._cache_path.with_suffix(".json.tmp")
+            with open(tmp_path, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False)
+            os.replace(str(tmp_path), str(self._cache_path))
             logger.warning("Saved %d entries to embedding cache (async)", len(data))
         except Exception as e:
             logger.warning("Embedding cache persist failed: %s", e)

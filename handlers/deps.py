@@ -526,7 +526,7 @@ class HandlerDependencies:
     kms: KMSManagerProtocol | None = None                      # KMSManager
     create_backup: Callable[..., tuple[str | None, int]] | None = None
     cleanup_old_backups: Callable[[int], None] | None = None
-    get_next_vc: Callable[[], _VectorClockLike] | None = None
+    get_next_vc: Callable[[], _VectorClockLike | None] | None = None
     trace_chain: TraceChainProtocol | None = None              # TraceChain
     pipeline_scheduler: PipelineSchedulerProtocol | None = None  # PipelineScheduler
 

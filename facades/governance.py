@@ -67,15 +67,19 @@ class GovernanceFacade:
             ),
         )
 
-        # 向量时钟 — 优先从 SQLite 加载，回退 JSON 文件
+        # 向量时钟 — 仅在启用同步时初始化，单机模式短路以减少无谓开销
+        _sync_mode = config.get("sync_mode", "none")
         self._vc_db_path = gov_dir / "vector_clock.db"
         self._vc_json_path = gov_dir / "vector_clock.json"
-        if self._vc_db_path.exists():
-            self._vector_clock = VectorClock.load_from_sqlite(self._vc_db_path)
-        elif self._vc_json_path.exists():
-            self._vector_clock = VectorClock.load(self._vc_json_path)
+        if _sync_mode != "none":
+            if self._vc_db_path.exists():
+                self._vector_clock = VectorClock.load_from_sqlite(self._vc_db_path)
+            elif self._vc_json_path.exists():
+                self._vector_clock = VectorClock.load(self._vc_json_path)
+            else:
+                self._vector_clock = VectorClock()
         else:
-            self._vector_clock = VectorClock()
+            self._vector_clock = None  # 单机模式短路
         self._instance_id = self._sync_engine._config.instance_id
 
         # 审计器
@@ -140,7 +144,7 @@ class GovernanceFacade:
         return self._temporal_kg
 
     @property
-    def vector_clock(self) -> VectorClock:
+    def vector_clock(self) -> "VectorClock | None":
         return self._vector_clock
 
     @property
@@ -149,11 +153,12 @@ class GovernanceFacade:
 
     def close(self) -> None:
         """关闭治理资源。"""
-        # 持久化向量时钟状态
-        try:
-            self._vector_clock.save_to_sqlite(self._vc_db_path)
-        except Exception as e:
-            logger.warning("VectorClock save on close failed: %s", e)
+        # 持久化向量时钟状态（单机模式下 _vector_clock 为 None，跳过持久化）
+        if self._vector_clock is not None:
+            try:
+                self._vector_clock.save_to_sqlite(self._vc_db_path)
+            except Exception as e:
+                logger.warning("VectorClock save on close failed: %s", e)
         self.forgetting.close()
         self.provenance.close()
         self.sync_engine.close()

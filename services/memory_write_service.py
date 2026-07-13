@@ -30,6 +30,13 @@ from omnimem.utils.security import SecurityValidator
 
 logger = logging.getLogger(__name__)
 
+# ★ 延迟导入：AtomicFactExtractor 可能在某些环境下不可用
+_FactExtractor = None
+try:
+    from omnimem.perception.fact_extractor import AtomicFactExtractor as _FactExtractor
+except ImportError:
+    pass
+
 
 # ★ 后台线程池：非关键路径异步执行，降低主路径延迟
 _fallback_executor: ThreadPoolExecutor | None = ThreadPoolExecutor(max_workers=2, thread_name_prefix="omnimem_mem_bg")
@@ -127,6 +134,7 @@ class MemoryWriteService:
         self.bg_executor = bg_executor
         self.turn_count = turn_count
         self._memory_service = MemoryService(deps)
+        self._fact_extractor = None  # ★ 延迟初始化原子事实提取器
 
     # ------------------------------------------------------------------
     # 入口
@@ -164,6 +172,24 @@ class MemoryWriteService:
         scan_error = SecurityValidator.scan_threats(content)
         if scan_error:
             return {"status": "blocked", "reason": scan_error}
+
+        # ★ 原子事实提取：从 content 中提取多条独立事实
+        if content and len(content) > 20:
+            facts = self._get_fact_extractor().extract_facts(content) if _FactExtractor else []
+            if len(facts) > 1:
+                # 多条原子事实：逐条独立写入，各自走完整流程
+                results = []
+                for i, fact in enumerate(facts):
+                    fact_args = dict(args)
+                    fact_args["content"] = fact
+                    if "metadata" not in fact_args:
+                        fact_args["metadata"] = {}
+                    fact_args["metadata"]["original_content"] = content
+                    fact_args["metadata"]["is_atomic_fact"] = True
+                    fact_args["metadata"]["fact_index"] = i
+                    result = self.handle(fact_args)
+                    results.append(result)
+                return results[0] if results else {"status": "error"}
 
         # ★ 反递归防护
         if self.deps.should_store and not self.deps.should_store(content):
@@ -227,14 +253,7 @@ class MemoryWriteService:
             else {"action": "create"}
         )
 
-        if dedup_result["action"] == "update":
-            existing_id = dedup_result["existing_id"]
-            self.deps.forgetting.archive(existing_id)
-            updated_content = dedup_result.get("updated_content", "")
-            if updated_content:
-                self._mark_update_provenance(existing_id, dedup_result)
-            logger.info("OmniMem dedup: archived duplicate %s, storing updated version", existing_id)
-        elif dedup_result["action"] == "skip":
+        if dedup_result["action"] == "skip":
             existing_id = dedup_result.get("existing_id", "")
             existing_entry = self.deps.store.get(existing_id) if existing_id else {}
             return {
@@ -244,6 +263,11 @@ class MemoryWriteService:
                 "wing": existing_entry.get("wing", ""),
                 "privacy": existing_entry.get("privacy", ""),
             }
+
+        # ★ ADD-only 策略：dedup 返回 create + superseded_id 时，记录待标记的旧记忆 ID
+        # add_only 模式下不标记旧记忆为 superseded，保留所有记忆
+        _is_add_only = self.deps.conflict_resolver._strategy == "add_only"
+        _dedup_superseded_id = "" if _is_add_only else dedup_result.get("superseded_id", "")
 
         # ★ Dry-run 模式
         if dry_run:
@@ -277,6 +301,8 @@ class MemoryWriteService:
             ],
         )
         conflict_info = None
+        # ★ Task 2: 知识更新标记，保留 resolve 结果中的 is_updated/is_superseded
+        update_marker = None
         if conflict.has_conflict:
             resolution = self.deps.conflict_resolver.resolve(content, conflict)
             if resolution.action == "reject":
@@ -290,6 +316,13 @@ class MemoryWriteService:
                 "conflicting_with": conflict.existing_id,
                 "reason": resolution.reason,
             }
+            # ★ Task 2: 记录更新标记
+            if resolution.is_updated:
+                update_marker = {
+                    "is_updated": True,
+                    "is_superseded": True,
+                    "superseded_id": resolution.superseded_id,
+                }
 
         # 治理：溯源
         provenance = self.deps.provenance.track(content, source=self.deps.session_id, method="tool_call")
@@ -298,8 +331,9 @@ class MemoryWriteService:
         hall = self.deps.wing_room.resolve_hall(memory_type)
         summary = _generate_summary(content, self.llm_memory_manager)
 
-        # ★ 分布式向量时钟
-        vc = self.deps.get_next_vc().to_json() if self.deps.get_next_vc else ""
+        # ★ 分布式向量时钟（单机模式下 get_next_vc 返回 None，vc 为空字符串）
+        _next_vc = self.deps.get_next_vc() if self.deps.get_next_vc else None
+        vc = _next_vc.to_json() if _next_vc is not None else ""
         now = datetime.now(timezone.utc).isoformat()
 
         # ★ P0方案二：统一 MemoryService Saga 编排写入
@@ -442,12 +476,22 @@ class MemoryWriteService:
         # ★ 冲突自动标记
         if conflict_info:
             result["conflict_warning"] = conflict_info
-            logger.warning(
-                "OmniMem: stored conflicting memory %s (conflicts with %s: %s)",
-                memory_id,
-                conflict_info["conflicting_with"],
-                conflict_info["reason"],
-            )
+            # ★ ADD-only 模式：降低日志级别，避免大量 WARNING 刷屏
+            _is_add_only = self.deps.conflict_resolver._strategy == "add_only"
+            if _is_add_only:
+                logger.info(
+                    "OmniMem ADD-only: stored memory %s alongside existing %s (%s)",
+                    memory_id,
+                    conflict_info["conflicting_with"],
+                    conflict_info["reason"],
+                )
+            else:
+                logger.warning(
+                    "OmniMem: stored conflicting memory %s (conflicts with %s: %s)",
+                    memory_id,
+                    conflict_info["conflicting_with"],
+                    conflict_info["reason"],
+                )
             conflict_fields = {
                 "conflicting_with": conflict_info["conflicting_with"],
                 "conflict_type": conflict_info["conflict_type"],
@@ -460,6 +504,61 @@ class MemoryWriteService:
                 self.deps.index.update_field(memory_id, immediate=True, **conflict_fields)
             except Exception as e:
                 logger.warning("OmniMem: failed to persist conflict_info to index: %s", e)
+
+        # ★ Task 2: 知识更新标记写入
+        if update_marker:
+            # 新记忆标记为 is_updated
+            try:
+                self.deps.store.update_field(memory_id, is_updated=True)
+            except Exception as e:
+                logger.warning("OmniMem: 写入 is_updated 标记到 store 失败: %s", e)
+            try:
+                self.deps.index.update_field(memory_id, immediate=True, is_updated=True)
+            except Exception as e:
+                logger.warning("OmniMem: 写入 is_updated 标记到 index 失败: %s", e)
+            try:
+                self.deps.retriever.update_metadata(memory_id, {"is_updated": True})
+            except Exception as e:
+                logger.warning("OmniMem: 写入 is_updated 标记到 retriever 失败: %s", e)
+
+            # 旧记忆标记为 is_superseded
+            superseded_id = update_marker["superseded_id"]
+            if superseded_id:
+                try:
+                    self.deps.store.update_field(superseded_id, is_superseded=True)
+                except Exception as e:
+                    logger.warning("OmniMem: 写入 is_superseded 标记到 store 失败: %s", e)
+                try:
+                    self.deps.index.update_field(superseded_id, immediate=True, is_superseded=True)
+                except Exception as e:
+                    logger.warning("OmniMem: 写入 is_superseded 标记到 index 失败: %s", e)
+                try:
+                    self.deps.retriever.update_metadata(
+                        superseded_id, {"is_superseded": True}
+                    )
+                except Exception as e:
+                    logger.warning("OmniMem: 写入 is_superseded 标记到 retriever 失败: %s", e)
+
+        # ★ ADD-only 策略：语义去重 create+superseded_id 时，将旧记忆标记为 is_superseded
+        if _dedup_superseded_id:
+            logger.info(
+                "OmniMem ADD-only: 新记忆 %s 创建，旧记忆 %s 标记为 superseded",
+                memory_id, _dedup_superseded_id,
+            )
+            try:
+                self.deps.store.update_field(_dedup_superseded_id, is_superseded=True)
+            except Exception as e:
+                logger.warning("OmniMem: ADD-only 写入 is_superseded 标记到 store 失败: %s", e)
+            try:
+                self.deps.index.update_field(_dedup_superseded_id, immediate=True, is_superseded=True)
+            except Exception as e:
+                logger.warning("OmniMem: ADD-only 写入 is_superseded 标记到 index 失败: %s", e)
+            try:
+                self.deps.retriever.update_metadata(
+                    _dedup_superseded_id, {"is_superseded": True}
+                )
+            except Exception as e:
+                logger.warning("OmniMem: ADD-only 写入 is_superseded 标记到 retriever 失败: %s", e)
 
         if self.deps.audit_logger:
             self.deps.audit_logger.log(
@@ -612,3 +711,13 @@ class MemoryWriteService:
             self.deps.forgetting.record_access(memory_id)
         except Exception as e:
             _log_bg_error("Forgetting", memory_id, e)
+
+    def _get_fact_extractor(self):
+        """延迟初始化原子事实提取器。"""
+        if self._fact_extractor is None and _FactExtractor is not None:
+            try:
+                self._fact_extractor = _FactExtractor()
+            except Exception as e:
+                logger.warning("原子事实提取器初始化失败: %s", e)
+                self._fact_extractor = None
+        return self._fact_extractor
