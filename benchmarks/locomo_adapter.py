@@ -14,7 +14,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
-from omnimem.utils.llm_client import AsyncLLMClient
+from omnimem.utils.llm_client import DEFAULT_LLM_MODEL, AsyncLLMClient
 
 logger = logging.getLogger(__name__)
 
@@ -167,7 +167,7 @@ class LOCOMOEvaluator:
         if existing and isinstance(existing, AsyncLLMClient):
             api_key = getattr(existing, "_api_key", "")
             base_url = getattr(existing, "_base_url", "")
-            model = getattr(existing, "_model", "glm-5.1")
+            model = getattr(existing, "_model", DEFAULT_LLM_MODEL)
             if api_key and base_url:
                 return AsyncLLMClient(
                     api_key=api_key,
@@ -183,7 +183,7 @@ class LOCOMOEvaluator:
             return AsyncLLMClient(
                 api_key=creds["api_key"],
                 base_url=creds["base_url"],
-                model=creds.get("model", "glm-5.1"),
+                model=creds.get("model", DEFAULT_LLM_MODEL),
                 max_concurrent=3,
                 timeout=30.0,
                 cache_ttl=0.0,

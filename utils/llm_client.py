@@ -14,6 +14,13 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+# ★ M7-13: 默认 LLM 模型单一来源。
+# 优先级：调用方显式传入 > 凭证/配置中的 model > OMNIMEM_LLM_MODEL 环境变量 > 内置缺省。
+# 所有模块从此处 import，禁止各自硬编码模型名。
+import os as _os
+
+DEFAULT_LLM_MODEL = _os.environ.get("OMNIMEM_LLM_MODEL", "glm-5.1")
+
 
 @dataclass
 class LLMResponse:
@@ -39,7 +46,7 @@ class AsyncLLMClient:
         self,
         api_key: str = "",
         base_url: str = "",
-        model: str = "glm-5.1",
+        model: str = DEFAULT_LLM_MODEL,
         max_concurrent: int = 3,
         timeout: float = 30.0,
         cache_ttl: float = 60.0,

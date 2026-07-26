@@ -8,8 +8,10 @@
 > ✅ 已完成：M5-3（分批提交）、M5-4（1.1.0 + CHANGELOG）、M6-5（迁移工具+migrate-index 子命令）、
 > M6-6（unified 模式消除 MetaStore 双写）、M6-7（FTS5Retriever，use_fts5 灰度）、
 > M6-8（GovernanceStore 治理合库，可选注入）、M6-9（forgetting 拆分为 core/ops+shim）、
-> M7-10（ADD/UPDATE/DELETE 决策）、M7-12（评测集 + rule 基线 F1=64.34%，refusal 维度 F1=0）。
-> ⬜ 待办：M5-1/2（Linux 回归 + LongMemEval A/B，及 hybrid 抽取评测对比）、M7-11/13/14、M8 全部、M9 全部。
+> M7-10（ADD/UPDATE/DELETE 决策）、M7-11（KG 抽取收口，无直连/硬编码残留）、
+> M7-12（评测集 + rule 基线 F1=64.34%，refusal 维度 F1=0）、
+> M7-13（DEFAULT_LLM_MODEL 单一来源 + OMNIMEM_LLM_MODEL）、M7-14（reranker_device + env 覆盖）。
+> ⬜ 待办：M5-1/2（Linux 回归 + LongMemEval A/B，及 hybrid 抽取评测对比）、M8 全部、M9 全部。
 
 ---
 

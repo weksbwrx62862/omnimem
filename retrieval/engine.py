@@ -139,7 +139,7 @@ class HybridRetriever:
         self._rrf = RRFFusion(k=self._rrf_k, min_rrf=self._rrf_min_score)
         self._reranker = CrossEncoderReranker(
             model_path=reranker_model_path,
-            device=_cfg("reranker_device", "cpu"),
+            device=_cfg("reranker_device", ""),  # 空值时 reranker 内部回退 env > cpu
         ) if enable_reranker else None
         self._recall_timeout_ms = recall_timeout_ms
         self._recall_strategy = recall_strategy

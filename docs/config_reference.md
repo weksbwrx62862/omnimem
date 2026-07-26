@@ -29,6 +29,7 @@ OmniMem 通过 `config.yaml` 文件管理所有配置项，支持运行时热重
 | `save_interval` | integer | `15` | 每 N 轮对话自动执行一次存档检查点。较小的值更频繁保存但开销更大 |
 | `auto_memorize` | boolean | `true` | 是否启用感知驱动的自动记忆写入。关闭后仅通过 `omni_memorize` 工具手动存储 |
 | `extraction_mode` | string | `"hybrid"` | 事实抽取模式。`rule`：纯规则抽取；`hybrid`：规则信号触发后用 LLM 精炼事实内容与类型（LLM 不可用/失败时自动回退规则）；`llm`：同 hybrid |
+| `llm_model` | string | 环境变量 `OMNIMEM_LLM_MODEL` 或 `"glm-5.1"` | ★ M7-13: 默认 LLM 模型（单一来源 `utils/llm_client.DEFAULT_LLM_MODEL`）。优先级：凭证/配置中的 model > 本项 > 环境变量 > 内置缺省 |
 | `use_unified_index` | boolean | `false` | 灰度开关：启用 UnifiedMemoryIndex（合并 ThreeLevelIndex+MetaStore 表结构，读写连接分离+写锁串行化）。新数据目录可直接启用；存量数据迁移工具就绪前建议保持关闭 |
 | `default_privacy` | string | `"personal"` | 新记忆的默认隐私级别。可选值：`public`、`team`、`personal`、`secret` |
 | `max_prefetch_tokens` | integer | `300` | prefetch（预取注入）阶段的最大 token 预算。控制每轮自动注入的记忆量 |
@@ -43,6 +44,7 @@ OmniMem 通过 `config.yaml` 文件管理所有配置项，支持运行时热重
 |------|------|--------|------|
 | `retrieval_mode` | string | `"rag"` | 默认检索模式。`rag`：快速向量+BM25 混合检索（毫秒级）；`llm`：深度推理+意图预测+同义词扩展（秒级） |
 | `enable_reranker` | boolean | `false` | 是否启用 Cross-Encoder 重排序。需要安装 `sentence-transformers`（`pip install omnimem[embeddings]`） |
+| `reranker_device` | string | `"cpu"` | ★ M7-14: Cross-Encoder 推理设备（`cpu`/`cuda`/`cuda:0`/`mps`）。cpu 模式下自动屏蔽 CUDA 以避免兼容性问题；GPU 环境设为 `cuda` 可显著降低重排延迟。也可用环境变量 `OMNIMEM_RERANKER_DEVICE` 覆盖 |
 | `budget_tokens` | integer | `4000` | 工作记忆的 token 预算上限。影响 `omni_compact` 和上下文注入的总量 |
 | `conflict_strategy` | string | `"latest"` | 冲突解决策略。`latest`：保留最新条目；`confidence`：保留置信度最高的条目；`manual`：需手动解决 |
 

@@ -221,7 +221,9 @@ class TripleExtractor:
             if not creds.get("api_key"):
                 creds = AsyncLLMClient.load_credentials_from_env()
             if creds.get("api_key") and creds.get("base_url"):
-                self._llm_model = creds.get("model", "") or "glm-5.1"
+                from omnimem.utils.llm_client import DEFAULT_LLM_MODEL
+
+                self._llm_model = creds.get("model", "") or DEFAULT_LLM_MODEL
                 self._llm_client = AsyncLLMClient(
                     api_key=creds["api_key"],
                     base_url=creds["base_url"],

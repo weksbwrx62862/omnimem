@@ -22,10 +22,13 @@ class CrossEncoderReranker:
     # ★ 修复 C8：全局模型加载锁，避免多线程首次加载重复加载模型
     _global_model_lock = threading.Lock()
 
-    def __init__(self, model_name: str = "cross-encoder/ms-marco-MiniLM-L-6-v2", model_path: str = "", device: str = "cpu"):
+    def __init__(self, model_name: str = "cross-encoder/ms-marco-MiniLM-L-6-v2", model_path: str = "", device: str = ""):
+        import os
+
         self._model_name = model_name
         self._model_path = model_path
-        self._device = device
+        # ★ M7-14: 设备解析优先级：显式参数 > OMNIMEM_RERANKER_DEVICE 环境变量 > cpu
+        self._device = device or os.environ.get("OMNIMEM_RERANKER_DEVICE", "") or "cpu"
         self._model: Any = None
 
     def _ensure_model(self) -> bool:

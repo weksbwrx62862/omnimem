@@ -49,14 +49,14 @@ class LLMClientManager:
         # 若 LLM 客户端凭证为空，尝试从 Hermes 主配置获取
         if self._llm_client and not getattr(self._llm_client, "_api_key", "").strip():
             try:
-                from omnimem.utils.llm_client import AsyncLLMClient
+                from omnimem.utils.llm_client import DEFAULT_LLM_MODEL, AsyncLLMClient
                 hermes_creds = AsyncLLMClient.load_credentials_from_hermes_config()
                 if hermes_creds.get("api_key") and hermes_creds.get("base_url"):
                     logger.info("OmniMem: using Hermes main config LLM credentials for Reflect")
                     self._llm_client = AsyncLLMClient(
                         api_key=hermes_creds["api_key"],
                         base_url=hermes_creds["base_url"],
-                        model=hermes_creds.get("model", "glm-5.1"),
+                        model=hermes_creds.get("model", DEFAULT_LLM_MODEL),
                         max_concurrent=3,
                         timeout=30.0,
                         cache_ttl=_REFLECT_CACHE_TTL,
