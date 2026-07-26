@@ -4,17 +4,13 @@
 > 共享检索线程池、embedding 缓存 SQLite 化、UnifiedMemoryIndex 灰度接入、LoRA 三段式闭环、文档全面对齐。
 > 本文档为剩余债务 + 执行过程中新发现问题的完整清单，按优先级排列，工作量按 1 人全职估算。
 
-> **进度更新（2026-07-26）**：
-> ✅ 已完成：M5-3（分批提交）、M5-4（1.1.0 + CHANGELOG）、M6-5（迁移工具+migrate-index 子命令）、
-> M6-6（unified 模式消除 MetaStore 双写）、M6-7（FTS5Retriever，use_fts5 灰度）、
-> M6-8（GovernanceStore 治理合库，可选注入）、M6-9（forgetting 拆分为 core/ops+shim）、
-> M7-10（ADD/UPDATE/DELETE 决策）、M7-11（KG 抽取收口，无直连/硬编码残留）、
-> M7-12（评测集 + rule 基线 F1=64.34%，refusal 维度 F1=0）、
-> M7-13（DEFAULT_LLM_MODEL 单一来源 + OMNIMEM_LLM_MODEL）、M7-14（reranker_device + env 覆盖）、
-> M8-17（secret 解密强制审计）、M8-18（reencrypt 批量 V1→V2 重加密）、
-> M8-19（MCP 速率限制 + 调用审计，对齐 REST）。
-> ⬜ 待办：M5-1/2（Linux 回归 + LongMemEval A/B，及 hybrid 抽取评测对比）、
-> M8-15/16（GPU 训练循环/适配器推理集成，需 GPU 环境）、M9 全部。
+> **进度更新（2026-07-26，详细台账见 [progress_report.md](progress_report.md)）**：
+> ✅ 已完成：M5-3/4、M6 全部（5/6/7/8/9）、M7 全部（10/11/12/13/14）、
+> M8-17/18/19（解密审计 / reencrypt / MCP 安全对齐）、M9-22/23（依赖单一来源校验 / jieba 钉版）。
+> 另修复发布级缺陷：.gitignore `_*.py` 误伤全部 `__init__.py`（23 个包结构文件从未入库，
+> clone 后无法 import），已补录。
+> ⬜ 待办（均需外部环境）：M5-1/2（Linux 回归 + LongMemEval/hybrid A/B）、
+> M8-15/16（GPU 训练循环/适配器推理集成）、M9-20/21（FastAPI/CI，发布前启动）。
 
 ---
 
