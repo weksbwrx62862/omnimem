@@ -173,77 +173,49 @@ def test_temporal_kg_refcount():
 
 
 def test_forgetting_refcount():
-    """测试 ForgettingCurve 引用计数日志。"""
-    from governance.forgetting import (
-        ForgettingCurve,
-        _connection_refcounts,
-    )
+    """★ M6-8: ForgettingCurve 已接入 GovernanceStore，不再使用引用计数。
+    改为测试 GovernanceStore 共享模式下的基本功能。
+    """
+    from governance.forgetting import ForgettingCurve
+    from governance.governance_store import GovernanceStore
 
-    cap = LogCapture("governance.forgetting")
     passed = 0
     failed = 0
 
     with tempfile.TemporaryDirectory() as td:
         gov_dir = Path(td)
 
-        # ── 场景 1: 首个实例创建 → 应输出 "新建连接" + "引用计数=1"
-        fc1 = ForgettingCurve(gov_dir)
-        msgs = cap.find("新建连接")
-        assert msgs, "场景1失败: 未找到'新建连接'日志"
-        assert cap.find("引用计数=1"), "场景1失败: 未找到'引用计数=1'"
-        conn1_id = id(fc1._conn)
-        print(f"  ✅ 场景1: 首实例创建 → 新建连接, conn_id={conn1_id}, 引用计数=1")
-        passed += 1
-
-        # ── 场景 2: 第二个实例创建 → 应输出 "复用共享连接" + "引用计数=2"
-        cap.clear()
-        fc2 = ForgettingCurve(gov_dir)
-        msgs = cap.find("复用共享连接")
-        assert msgs, "场景2失败: 未找到'复用共享连接'日志"
-        assert cap.find("引用计数=2"), "场景2失败: 未找到'引用计数=2'"
-        print(f"  ✅ 场景2: 第二实例创建 → 复用共享连接, 引用计数=2")
-        passed += 1
-
-        # ── 场景 3: 写入 + 查询验证
-        fc1.record_access("mem-001", "fact")
+        # ── 场景 1: 共享 store → 两实例共用同一连接
+        store = GovernanceStore(gov_dir)
+        fc1 = ForgettingCurve(gov_dir, governance_store=store)
+        fc1.record_access("mem-001")
+        fc1.record_access("mem-001")
         fc1.flush()
-        stage = fc1.get_stage("mem-001")
-        assert stage == "active", f"场景3失败: 阶段={stage}, 期望=active"
-        print(f"  ✅ 场景3: 写入+查询正常 → stage={stage}")
+
+        fc2 = ForgettingCurve(gov_dir, governance_store=store)
+        # fc2 应能看到 fc1 写入的数据（共享同一 store）
+        stage = fc2.get_stage("mem-001")
+        assert stage == "active", f"场景1失败: stage={stage}, 期望=active"
+        print(f"  ✅ 场景1: 共享 store 多实例查询正常 → stage={stage}")
         passed += 1
 
-        # ── 场景 4: 非最后实例关闭 → 应输出 "非最后实例关闭" + "剩余引用=1"
-        cap.clear()
+        # ── 场景 2: 写入 + 查询验证
+        recall = fc2.get_recall_count_in_window("mem-001", days=7)
+        assert recall >= 2, f"场景2失败: recall={recall}, 期望>=2"
+        print(f"  ✅ 场景2: 7天窗口召回数={recall}")
+        passed += 1
+
+        # ── 场景 3: 部分实例关闭不影响其他实例
         fc2.close()
-        msgs = cap.find("非最后实例关闭")
-        assert msgs, "场景4失败: 未找到'非最后实例关闭'日志"
-        assert cap.find("剩余引用=1"), "场景4失败: 未找到'剩余引用=1'"
-        # fc1 的连接应仍可用
-        assert fc1._conn is not None, "场景4失败: fc1 连接被意外关闭"
-        stage = fc1.get_stage("mem-001")
-        assert stage == "active", f"场景4失败: fc1 查询异常, stage={stage}"
-        print(f"  ✅ 场景4: 非最后实例关闭 → 保留连接, 剩余引用=1, fc1查询正常")
+        assert fc1._conn is not None, "场景3失败: fc1 连接被意外关闭"
+        heat = fc1.get_heat("mem-001")
+        assert heat is not None
+        print(f"  ✅ 场景3: fc2 关闭后 fc1 仍正常 → heat={heat}")
         passed += 1
 
-        # ── 场景 5: 最后实例关闭 → 应输出 "最后一个实例关闭"
-        cap.clear()
         fc1.close()
-        msgs = cap.find("最后一个实例关闭")
-        assert msgs, "场景5失败: 未找到'最后一个实例关闭'日志"
-        print(f"  ✅ 场景5: 最后实例关闭 → 真正关闭连接")
-        passed += 1
+        store.close()
 
-        # ── 场景 6: 关闭后重建 → 应输出 "新建连接"
-        cap.clear()
-        fc3 = ForgettingCurve(gov_dir)
-        msgs = cap.find("新建连接")
-        assert msgs, "场景6失败: 未找到'新建连接'日志"
-        assert cap.find("引用计数=1"), "场景6失败: 未找到'引用计数=1'"
-        fc3.close()
-        print(f"  ✅ 场景6: 关闭后重建 → 新建连接, 引用计数=1")
-        passed += 1
-
-    cap.close()
     return passed, failed
 
 

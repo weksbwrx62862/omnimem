@@ -21,13 +21,15 @@
   - ForgettingSemantic: 语义重要性评估 → governance/semantic_importance.py
   - ForgettingScreening: 三阶段筛选引擎 → governance/screening_engine.py
   - ForgettingCurve: 阶段管理 + 热度分类 + 归档调度（本文件）
+
+★ M6-8 合库 (2026-07):
+  - 接入 GovernanceStore 统一存储，消除 _FORGETTING_DB_LOCK、类级共享连接、
+    引用计数等约 500 行防御代码
 """
 
 from __future__ import annotations
 
 import logging
-import sqlite3
-import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -44,16 +46,8 @@ from omnimem.governance.semantic_importance import (
     ForgettingSemantic,
     get_semantic_evaluator,
 )
-from omnimem.utils.migration import SchemaMigrator
 
 logger = logging.getLogger("governance.forgetting")
-
-# 模块级共享锁：防止多个 ForgettingCurve 实例并发写同一 forgetting.db
-# （GovernanceFacade + MemoryAPI 各持独立实例，实例级 RLock 无法互斥）
-_FORGETTING_DB_LOCK = threading.RLock()
-
-# 引用计数
-_connection_refcounts: dict[str, int] = {}
 
 # 4个阶段定义
 STAGES = {
@@ -75,23 +69,29 @@ class _ForgettingCore:
     本类保留阶段管理、热度分类、归档调度等核心逻辑。
 
     批量提交优化：写操作攒到阈值或显式 flush/close 时统一提交。
+
+    ★ M6-8: 接入 GovernanceStore 统一存储，消除 _FORGETTING_DB_LOCK、
+    类级共享连接等防御代码。写锁由 store.write_lock 提供。
     """
 
     # ★ P2修复：批量提交阈值从5提升到20，减少频繁 commit 的 I/O 开销
     _BATCH_THRESHOLD = 20
 
-    # ★ 类级连接共享：所有实例共用同一 forgetting.db 连接，防止多实例 SQLite 写锁冲突
-    _shared_connections: dict[str, sqlite3.Connection] = {}
-    _shared_index_connections: dict[str, sqlite3.Connection] = {}
-
-    def __init__(self, governance_dir: Path, config: Any = None):
+    def __init__(self, governance_dir: Path, config: Any = None,
+                 governance_store: Any = None):
         self._governance_dir = governance_dir
         self._governance_dir.mkdir(parents=True, exist_ok=True)
-        self._db_path = self._governance_dir / "forgetting.db"
-        self._conn: sqlite3.Connection | None = None
-        self._index_conn: sqlite3.Connection | None = None
-        self._lock = _FORGETTING_DB_LOCK
+
+        # ★ M6-8: 接入 GovernanceStore（若未传入则惰性创建独立实例）
+        if governance_store is not None:
+            self._store = governance_store
+        else:
+            from omnimem.governance.governance_store import GovernanceStore
+            self._store = GovernanceStore(self._governance_dir)
+        self._conn = self._store.get_write_conn()
+        self._lock = self._store.write_lock
         self._pending_writes = 0
+
         self._active_days = getattr(config, 'forgetting_active_days', 7) if config else 7
         self._consolidating_days = getattr(config, 'forgetting_consolidating_days', 30) if config else 30
         self._archived_days = getattr(config, 'forgetting_archived_days', 90) if config else 90
@@ -102,7 +102,7 @@ class _ForgettingCore:
             "forgotten": (self._archived_days, None),
         }
         self._stage_config: dict[str, dict[str, int]] = {}
-        self._init_db()
+
         # ★ 冷启动标记：首次运行时跳过历史数据
         self._ensure_pipeline_marker()
 
@@ -133,104 +133,30 @@ class _ForgettingCore:
             get_pipeline_start_time=self._get_pipeline_start_time,
         )
 
-    def _get_conn(self) -> sqlite3.Connection:
-        """获取 forgetting_state 数据库连接（子模块回调用）。"""
-        self._ensure_conn_alive()
-        assert self._conn is not None
+    def _get_conn(self) -> "sqlite3.Connection":
+        """获取数据库连接（子模块回调用）。★ M6-8: 委托给 GovernanceStore。"""
         return self._conn
+
+    def _get_index_conn(self) -> "sqlite3.Connection":
+        """获取只读索引连接。★ M6-8: 委托给 GovernanceStore。"""
+        if not hasattr(self, '_store') or self._store is None:
+            return self._conn
+        return self._store.get_read_conn()
 
     def _track_write(self) -> None:
         """记录一次待写入并检查批量提交（子模块回调用）。"""
         self._pending_writes += 1
         self._maybe_commit()
 
-    def _init_db(self) -> None:
-        """初始化遗忘数据库。"""
-        db_path_str = str(self._db_path)
-        if db_path_str in self._shared_connections:
-            conn = self._shared_connections[db_path_str]
-            # 健康检查：防止拿到已被 close() 关闭的连接
-            try:
-                conn.execute("SELECT 1")
-                self._conn = conn
-                return
-            except sqlite3.ProgrammingError:
-                logger.warning(
-                    "ForgettingCurve: shared connection is closed, removing from cache and re-creating"
-                )
-                del self._shared_connections[db_path_str]
-        self._conn = sqlite3.connect(db_path_str, check_same_thread=False)
-        self._conn.execute("PRAGMA journal_mode=WAL")
-        self._conn.execute("PRAGMA busy_timeout=5000")
-        self._shared_connections[db_path_str] = self._conn
-        migrator = SchemaMigrator(self._conn)
-        migrator.migrate(
-            table_name="forgetting_state",
-            create_sql="""
-                CREATE TABLE IF NOT EXISTS forgetting_state (
-                    memory_id TEXT PRIMARY KEY,
-                    stage TEXT NOT NULL DEFAULT 'active',
-                    last_accessed TEXT,
-                    created_at TEXT,
-                    archive_count INTEGER DEFAULT 0,
-                    recall_count INTEGER DEFAULT 0
-                )
-            """,
-            migrations=[],
-        )
-        # ★ 兼容旧表：逐列添加，已有则跳过（查 PRAGMA table_info 避免异常）
-        existing_cols = {
-            row[1]
-            for row in self._conn.execute(
-                "PRAGMA table_info(forgetting_state)"
-            ).fetchall()
-        }
-        _new_columns = [
-            ("recall_count", "INTEGER DEFAULT 0"),
-            ("heat", "TEXT NOT NULL DEFAULT 'neutral'"),
-            ("heat_updated_at", "TEXT"),
-            ("upgraded_to_wiki", "INTEGER DEFAULT 0"),
-            ("wiki_page_path", "TEXT"),
-            ("memory_type", "TEXT DEFAULT 'fact'"),
-        ]
-        for col_name, col_type in _new_columns:
-            if col_name in existing_cols:
-                continue
-            # 列名来自硬编码常量，非用户输入，安全使用 f-string
-            self._conn.execute(
-                f"ALTER TABLE forgetting_state ADD COLUMN {col_name} {col_type}"
-            )
+    def _commit(self) -> None:
+        """提交写连接。★ M6-8: 委托给 GovernanceStore。"""
+        self._store.commit()
 
-        # ★ access_log 表 —— 记录每次检索的时间戳，支持时间窗口查询
-        migrator.migrate(
-            table_name="access_log",
-            create_sql="""
-                CREATE TABLE IF NOT EXISTS access_log (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    memory_id TEXT NOT NULL,
-                    accessed_at TEXT NOT NULL
-                )
-            """,
-            migrations=[],
-        )
-        # 索引：按 memory_id + accessed_at 加速窗口查询
-        self._conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_access_log_mid_at ON access_log(memory_id, accessed_at)"
-        )
-
-        # ★ Phase 1 优化：添加复合索引提升查询性能
-        # forgetting_state 表索引
-        self._conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_forgetting_stage_created ON forgetting_state(stage, created_at)"
-        )
-        self._conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_forgetting_heat_updated ON forgetting_state(heat, heat_updated_at)"
-        )
-        self._conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_forgetting_heat_recall ON forgetting_state(heat, recall_count)"
-        )
-
-        self._conn.commit()
+    def _maybe_commit(self) -> None:
+        """批量提交：攒到阈值时自动提交。"""
+        if self._pending_writes >= self._BATCH_THRESHOLD:
+            self._store.commit()
+            self._pending_writes = 0
 
     # ── 自适应衰减阈值 ──────────────────────────────────────────────────────
 

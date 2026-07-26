@@ -39,14 +39,15 @@ class KVCacheManager:
     def __init__(
         self,
         data_dir: Path | None = None,
-        auto_preload_threshold: int = 3,
-        max_cache_size: int = 100,
+        auto_preload_threshold: int = 50,
+        max_cache_size: int = 500,
+        governance_store: Any | None = None,
     ):
-        """初始化 KVCacheManager。
+        """初始化 KV Cache Manager。
 
         Args:
-            data_dir: 数据目录，用于持久化
-            auto_preload_threshold: 自动预填充的访问次数阈值
+            data_dir: 数据目录
+            auto_preload_threshold: 自动预加载阈值
             max_cache_size: 最大缓存条目数
         """
         self._data_dir = data_dir
@@ -56,11 +57,18 @@ class KVCacheManager:
         self._access_counts: dict[str, int] = {}
         self._conn: sqlite3.Connection | None = None
         self._preload_count = 0
-        self._lock = threading.RLock()
 
-        if data_dir:
-            self._init_db(data_dir)
-            self._sync_from_forgetting_db(data_dir)
+        # ★ M6-8: 接入 GovernanceStore 统一存储
+        if governance_store is not None:
+            self._store = governance_store
+            self._conn = governance_store.get_write_conn()
+            self._lock = governance_store.write_lock
+        else:
+            self._store = None
+            self._lock = threading.RLock()
+            if data_dir:
+                self._init_db(data_dir)
+                self._sync_from_forgetting_db(data_dir)
 
     def _init_db(self, data_dir: Path) -> None:
         """初始化 KV Cache 持久化数据库。"""

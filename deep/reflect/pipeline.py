@@ -60,6 +60,7 @@ class ReflectEngine:
         recall_fn: Callable[..., Any] | None = None,
         llm_fn: Callable[..., Any] | None = None,
         llm_client: Any | None = None,
+        governance_store: Any | None = None,
     ):
         """初始化 ReflectEngine。
 
@@ -81,10 +82,17 @@ class ReflectEngine:
         self._llm_client = llm_client
         self._conn: sqlite3.Connection | None = None
         self._reflection_count = 0
-        self._lock = threading.RLock()
 
-        if data_dir:
-            self._init_db(data_dir)
+        # ★ M6-8: 接入 GovernanceStore 统一存储
+        if governance_store is not None:
+            self._store = governance_store
+            self._conn = governance_store.get_write_conn()
+            self._lock = governance_store.write_lock
+        else:
+            self._store = None
+            self._lock = threading.RLock()
+            if data_dir:
+                self._init_db(data_dir)
 
     def _init_db(self, data_dir: Path) -> None:
         """初始化反思结果数据库。"""

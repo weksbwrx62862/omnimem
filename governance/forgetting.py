@@ -10,7 +10,7 @@
 获取完整类。
 """
 
-from omnimem.governance.forgetting_core import _ForgettingCore, _connection_refcounts
+from omnimem.governance.forgetting_core import _ForgettingCore, HEAT_LEVELS, STAGES
 from omnimem.governance.forgetting_ops import _ForgettingOps
 from omnimem.governance.forgetting_stages import _ForgettingStages
 

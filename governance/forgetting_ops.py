@@ -277,62 +277,19 @@ class _ForgettingOps:
             self._conn.commit()
             self._pending_writes = 0
 
-    def _get_index_conn(self) -> sqlite3.Connection | None:
-        """获取 index.db 的缓存连接（懒初始化）。"""
-        if self._index_conn is not None:
-            return self._index_conn
-        index_db = self._governance_dir.parent / "index" / "index.db"
-        index_db_str = str(index_db)
-        if index_db_str in self._shared_index_connections:
-            self._index_conn = self._shared_index_connections[index_db_str]
-            return self._index_conn
-        if not index_db.exists():
-            return None
-        self._index_conn = sqlite3.connect(index_db_str, check_same_thread=False)
-        self._index_conn.execute("PRAGMA journal_mode=WAL")
-        self._index_conn.execute("PRAGMA busy_timeout=5000")
-        self._shared_index_connections[index_db_str] = self._index_conn
-        return self._index_conn
-
-    def _ensure_conn_alive(self) -> None:
-        """确保连接可用，若被其他实例关闭则重新创建。"""
-        if self._conn is None:
-            self._init_db()
-            return
-        try:
-            self._conn.execute("SELECT 1")
-        except (sqlite3.ProgrammingError, sqlite3.OperationalError):
-            logger.warning(
-                "ForgettingCurve: connection lost, re-initializing"
-            )
-            db_path_str = str(self._db_path)
-            self._shared_connections.pop(db_path_str, None)
-            self._shared_index_connections.pop(db_path_str, None)
-            self._conn = None
-            self._init_db()
+    def _get_index_conn(self) -> "sqlite3.Connection | None":
+        """获取只读索引连接。★ M6-8: 委托给 GovernanceStore。"""
+        return self._store.get_read_conn() if hasattr(self, '_store') else None
 
     def flush(self) -> None:
-        """显式提交所有待写入。"""
+        """显式提交所有待写入。★ M6-8: 委托给 GovernanceStore。"""
         with self._lock:
-            self._ensure_conn_alive()
-            if self._conn and self._pending_writes > 0:
-                try:
-                    self._conn.commit()
-                    self._pending_writes = 0
-                except Exception as e:
-                    logger.warning("Forgetting flush failed: %s", e)
+            if self._pending_writes > 0:
+                self._store.commit()
+                self._pending_writes = 0
 
     def close(self) -> None:
-        """关闭数据库连接。"""
-        db_path_str = str(self._db_path)
+        """关闭数据库连接。★ M6-8: 委托给 GovernanceStore。"""
         with self._lock:
             self.flush()
-            if self._conn:
-                self._conn.close()
-                self._conn = None
-            if self._index_conn:
-                self._index_conn.close()
-                self._index_conn = None
-        # 清理共享连接缓存，防止其他实例拿到已关闭的连接
-        self._shared_connections.pop(db_path_str, None)
-        self._shared_index_connections.pop(db_path_str, None)
+            # GovernanceStore 由调用方统一关闭

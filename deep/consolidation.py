@@ -180,17 +180,24 @@ def _generate_mental_model(observations: list[str]) -> str:
 class ConsolidationEngine:
     """Consolidation 管线：事实 → 经验 → 观察 → 心智模型。"""
 
-    def __init__(self, data_dir: Path | None = None, fact_threshold: int = 3, llm_client: Any | None = None):
+    def __init__(self, data_dir: Path | None = None, fact_threshold: int = 3, llm_client: Any | None = None, governance_store: Any | None = None):
         self._data_dir = data_dir
         self._fact_threshold = fact_threshold
         self._llm_client = llm_client
         self._pending: list[dict[str, Any]] = []
         self._conn: sqlite3.Connection | None = None
         self._consolidation_count = 0
-        self._lock = threading.RLock()
 
-        if data_dir:
-            self._init_db(data_dir)
+        # ★ M6-8: 接入 GovernanceStore 统一存储
+        if governance_store is not None:
+            self._store = governance_store
+            self._conn = governance_store.get_write_conn()
+            self._lock = governance_store.write_lock
+        else:
+            self._store = None
+            self._lock = threading.RLock()
+            if data_dir:
+                self._init_db(data_dir)
 
     def _init_db(self, data_dir: Path) -> None:
         """初始化 Consolidation 数据库。"""
