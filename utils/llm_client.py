@@ -52,6 +52,7 @@ class AsyncLLMClient:
         self._cache_ttl = cache_ttl
         self._semaphore = asyncio.Semaphore(max_concurrent)
         self._cache: dict[str, tuple[LLMResponse, float]] = {}
+        self._cache_writes = 0
         self._client: Any | None = None
         self._closed = False
         self._backend = backend
@@ -89,8 +90,11 @@ class AsyncLLMClient:
 
         if use_cache:
             self._cache[cache_key] = (result, now)
-            # ★ 定期清理过期条目：每 10 次写入或缓存超过 100 条时执行，避免每次调用都全量重建字典
-            if len(self._cache) % 10 == 0 or len(self._cache) > 100:
+            self._cache_writes += 1
+            # ★ 修复：按写入计数触发清理（原实现 len % 10 == 0 在长度停留在
+            #   非 10 倍数时永不清理，过期条目会无限累积）
+            if self._cache_writes >= 10 or len(self._cache) > 100:
+                self._cache_writes = 0
                 cutoff = now - self._cache_ttl
                 self._cache = {k: v for k, v in self._cache.items() if v[1] > cutoff}
 

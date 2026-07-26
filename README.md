@@ -57,15 +57,15 @@ OmniMem 采用五层认知架构 + 治理引擎横切面 + Facade 分组设计�
 
 | 特性 | 说明 |
 |:---|:---|
-| **6 通道混合检索** | 向量 + BM25 + 图谱 + 同义词扩展 + Store 补充 + 全量 fallback，RRF 融合排序 |
-| **FSRS 遗忘曲线** | 4 阶段生命周期 (active → consolidating → archived → forgotten)，recall_count 加速延缓 |
-| **语义去重** | 精确内容去重 + 高相似度语义合并，避免记忆膨胀 |
-| **冲突仲裁** | 语义聚类 → LLM 矛盾检测 → 三策略解决 (latest/confidence/manual) |
-| **隐私分级** | public / team / personal / secret 四级，secret 级 Fernet AES-256-GCM 加密 |
+| **混合检索** | 向量 + BM25 双通道并行 + 图谱/时间通道（RetrieverRegistry 注册）+ 实体加权融合，RRF 融合排序 + 可选 Cross-Encoder 重排 |
+| **FSRS 遗忘曲线** | FSRS v4 算法 + 4 阶段生命周期 (active → consolidating → archived → forgotten)，recall_count 加速延缓 |
+| **语义去重** | 精确内容去重 + 高相似度语义合并（关键词指纹 + Jaccard），避免记忆膨胀 |
+| **冲突仲裁** | 两阶段检测（否定词快速检测 → 语义相似度比对）→ 三策略解决 (latest/confidence/manual) |
+| **隐私分级** | public / team / personal / secret 四级，secret 级 AES-256-GCM 加密（V2 格式，PBKDF2 密钥派生；历史 Fernet V1 数据可解密兼容） |
 | **Saga 事务** | 异步派生写入 + 补偿事务注册，确保索引/图谱最终一致性 |
 | **知识图谱** | 时序三元组 (主体, 谓词, 客体, 时间戳, 置信度, 来源)，支持时间衰减和置信度传播 |
-| **安全防线** | SecurityValidator 14 种检测模式 (反递归 / Prompt 注入 / Unicode 绕过 / 编码逃逸等) |
-| **L4 内化** | KV Cache 预填充 + LoRA 分身系统 (Shade)，毫秒级高频响应 |
+| **安全防线** | SecurityValidator 20+ 种检测模式 (反递归 / Prompt 注入 / Unicode 绕过 / 编码逃逸 / 数据外泄等) |
+| **L4 内化（实验性）** | 高频记忆缓存（应用层，SQLite 持久化）+ LoRA 分身框架 (Shade)；LoRA 训练循环为框架级实现，完整训练需外部工具 |
 
 ---
 

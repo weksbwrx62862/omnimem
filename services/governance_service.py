@@ -251,6 +251,8 @@ class GovernanceService:
         registry.register("provenance", self._action_provenance)
         registry.register("forgetting_status", self._action_forgetting_status)
         registry.register("lora_train", self._action_lora_train)
+        registry.register("export_training_data", self._action_export_training_data)
+        registry.register("register_adapter", self._action_register_adapter)
         registry.register("shade_switch", self._action_shade_switch)
         registry.register("shade_list", self._action_shade_list)
         registry.register("kv_cache_stats", self._action_kv_cache_stats)
@@ -618,6 +620,40 @@ class GovernanceService:
         except (RuntimeError, AttributeError) as e:
             logger.warning("OmniMem lora_train failed: %s", e)
             return json.dumps({"status": "error", "reason": f"LoRA train failed: {e}"})
+
+    def _action_export_training_data(self, params: dict[str, Any]) -> str:
+        """★ M4: L4 三段式第 1 段 — 导出训练数据为 alpaca JSONL。"""
+        if not self.deps.lora_trainer:
+            return json.dumps({"error": "LoRA trainer not available"})
+        try:
+            result = self.deps.lora_trainer.export_training_jsonl(
+                output_path=params.get("output_path") or None,
+                shade=params.get("shade", "all"),
+                include_used=bool(params.get("include_used", True)),
+            )
+            return json.dumps(result, ensure_ascii=False)
+        except Exception as e:
+            logger.warning("OmniMem export_training_data failed: %s", e)
+            return json.dumps({"status": "error", "reason": f"export failed: {e}"})
+
+    def _action_register_adapter(self, params: dict[str, Any]) -> str:
+        """★ M4: L4 三段式第 3 段 — 回注外部训练完成的 LoRA 适配器。"""
+        if not self.deps.lora_trainer:
+            return json.dumps({"error": "LoRA trainer not available"})
+        adapter_path = params.get("adapter_path", "") or params.get("target", "")
+        if not adapter_path:
+            return json.dumps({"status": "error", "reason": "adapter_path is required"})
+        try:
+            result = self.deps.lora_trainer.register_external_adapter(
+                adapter_path=adapter_path,
+                shade=params.get("shade", "default"),
+                base_model=params.get("base_model", ""),
+                training_samples=int(params.get("training_samples", 0) or 0),
+            )
+            return json.dumps(result, ensure_ascii=False)
+        except Exception as e:
+            logger.warning("OmniMem register_adapter failed: %s", e)
+            return json.dumps({"status": "error", "reason": f"register failed: {e}"})
 
     def _action_shade_switch(self, params: dict[str, Any]) -> str:
         """L4: 切换 LoRA shade。"""

@@ -201,7 +201,7 @@ class DrawerClosetStore:
         if self._pending_disk_writes >= self._WRITE_BUFFER_THRESHOLD * 2:
             self._flush_write_buffer()
 
-        # 3. 内存索引（secret 级存密文，非 secret 级存原文）
+        # 3. 内存索引 + 路径索引 + 倒排索引（统一在 _index_lock 内更新，修复 C1/C2 竞态）
         with self._index_lock:
             # secret 级不在内存索引中保留明文 content，使用已加密的 stored_content
             index_content = stored_content if privacy == "secret" else content
@@ -222,13 +222,10 @@ class DrawerClosetStore:
             }
             self._touch(memory_id)
             self._evict_if_needed()
-
-        # 4. 路径索引，加速磁盘查找
-        self._id_to_path[memory_id] = drawer_path
-
-        # ★ 5. 二级倒排索引
-        self._type_index.setdefault(memory_type, set()).add(memory_id)
-        self._wing_index.setdefault(wing, set()).add(memory_id)
+            # ★ 修复 C1：路径索引与倒排索引纳入 _index_lock 保护，消除 add/delete 竞态
+            self._id_to_path[memory_id] = drawer_path
+            self._type_index.setdefault(memory_type, set()).add(memory_id)
+            self._wing_index.setdefault(wing, set()).add(memory_id)
 
         # secret 级不在 MetaStore 中保留明文 content_preview，避免通过 FTS 泄露
         meta_content_preview = "" if privacy == "secret" else content[:500]
@@ -272,14 +269,14 @@ class DrawerClosetStore:
                 self._meta_store.delete(memory_id)
             except Exception as e:
                 logger.warning("Saga 补偿：删除 MetaStore 记录失败: %s", e)
-            # 清理内存索引
+            # 清理内存索引 + 路径索引 + 倒排索引（统一在 _index_lock 内，修复 C1 竞态）
             with self._index_lock:
                 self._closet_index.pop(memory_id, None)
-            self._id_to_path.pop(memory_id, None)
-            for _type_set in self._type_index.values():
-                _type_set.discard(memory_id)
-            for _wing_set in self._wing_index.values():
-                _wing_set.discard(memory_id)
+                self._id_to_path.pop(memory_id, None)
+                for _type_set in self._type_index.values():
+                    _type_set.discard(memory_id)
+                for _wing_set in self._wing_index.values():
+                    _wing_set.discard(memory_id)
 
         # 设计意图说明（P0-1 语义澄清）：
         #   1. 实际的 drawer 写盘在 Saga 之前已通过 _write_buffer 完成（见上方第 155-202 行），
@@ -355,6 +352,8 @@ class DrawerClosetStore:
             with self._index_lock:
                 self._closet_index[memory_id] = cached_entry
                 self._touch(memory_id)
+                # ★ 修复：回填时同步恢复倒排索引，否则淘汰再回填后 type/wing 搜索漏结果
+                self._index_entry_secondary(memory_id, cached_entry)
                 self._evict_if_needed()
             return self._decrypt_entry_content(cached_entry)
 
@@ -365,6 +364,7 @@ class DrawerClosetStore:
             with self._index_lock:
                 self._closet_index[memory_id] = result
                 self._touch(memory_id)
+                self._index_entry_secondary(memory_id, result)
                 self._evict_if_needed()
             return self._decrypt_entry_content(result)
         return None
@@ -384,16 +384,19 @@ class DrawerClosetStore:
         except Exception as e:
             logger.warning("DrawerClosetStore.delete: MetaStore failed for %s: %s", memory_id, e)
 
-        # 2. 内存索引
+        # ★ 修复 C2：内存索引 + 路径索引 + 倒排索引统一在 _index_lock 内清理
+        # 原实现这三个索引在锁外操作，与 add() 的索引更新无互斥，导致悬空引用
         with self._index_lock:
             if memory_id in self._closet_index:
                 del self._closet_index[memory_id]
                 deleted_any = True
+            drawer_path = self._id_to_path.pop(memory_id, None)
+            for _type_set in self._type_index.values():
+                _type_set.discard(memory_id)
+            for _wing_set in self._wing_index.values():
+                _wing_set.discard(memory_id)
 
-        # 3. 路径索引
-        drawer_path = self._id_to_path.pop(memory_id, None)
-
-        # 4. 文件系统（drawer + closet .md 文件）
+        # 2. 文件系统（drawer + closet .md 文件）— 锁外执行 IO，避免长持锁
         if drawer_path is not None:
             try:
                 drawer_path.unlink(missing_ok=True)
@@ -407,12 +410,6 @@ class DrawerClosetStore:
                 deleted_any = True
             except Exception as e:
                 logger.warning("DrawerClosetStore.delete: closet unlink failed: %s", e)
-
-        # 5. 倒排索引清理
-        for _type_set in self._type_index.values():
-            _type_set.discard(memory_id)
-        for _wing_set in self._wing_index.values():
-            _wing_set.discard(memory_id)
 
         return deleted_any
 
@@ -510,13 +507,12 @@ class DrawerClosetStore:
             with self._index_lock:
                 self._closet_index[mid] = entry
                 self._touch(mid)
-            # 更新二级索引
-            mtype = entry.get("type", "fact")
-            wing = entry.get("wing", "")
-            self._type_index.setdefault(mtype, set()).add(mid)
-            if wing:
-                self._wing_index.setdefault(wing, set()).add(mid)
-        self._evict_if_needed()
+                # ★ 修复：二级索引更新纳入 _index_lock，消除与 add/delete 的竞态
+                self._index_entry_secondary(
+                    mid, {**entry, "type": entry.get("type", "fact")}
+                )
+        with self._index_lock:
+            self._evict_if_needed()
         # ★ P0方案一：同步预热 MetaStore
         self._meta_store.warm_up(entries)
         logger.info("Warmed up %d entries into closet index and meta store", len(entries))
@@ -758,6 +754,15 @@ class DrawerClosetStore:
             return None
 
     # ─── LRU 管理 ─────────────────────────────────────────────
+
+    def _index_entry_secondary(self, memory_id: str, entry: dict[str, Any]) -> None:
+        """将条目登记到 type/wing 二级倒排索引（调用方需持有 _index_lock）。"""
+        mtype = entry.get("type", "") if isinstance(entry, dict) else ""
+        wing = entry.get("wing", "") if isinstance(entry, dict) else ""
+        if mtype:
+            self._type_index.setdefault(mtype, set()).add(memory_id)
+        if wing:
+            self._wing_index.setdefault(wing, set()).add(memory_id)
 
     def _touch(self, memory_id: str) -> None:
         """更新访问顺序（LRU），使用 OrderedDict O(1) 操作。"""

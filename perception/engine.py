@@ -17,6 +17,7 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -33,10 +34,24 @@ class PerceptionSignals:
     reinforcement_target: str = ""
     fact_content: str = ""
     predicted_intent: str = ""
+    # ★ P1: LLM 精炼标记与类型（hybrid 抽取模式产出）
+    llm_extracted: bool = False
+    llm_fact_type: str = ""
 
 
 class PerceptionEngine:
-    """L0 感知引擎：信号检测 + 意图预测。"""
+    """L0 感知引擎：信号检测 + 意图预测。
+
+    ★ P1: 支持三种抽取模式（extraction_mode 配置项）：
+      - rule:   纯规则抽取（默认构造行为）
+      - hybrid: 规则触发信号 → LLM 精炼事实内容与类型，失败回退规则
+      - llm:    同 hybrid
+    通过 configure_llm_extraction() 由 Provider 在 LLM 客户端就绪后注入。
+    """
+
+    # LLM 抽取配置（类级默认，configure_llm_extraction 设置实例属性覆盖）
+    _extraction_mode: str = "rule"
+    _llm_extractor: Any = None
 
     # 纠正标记 — 移除"不是"（会误匹配问句"不是...吗"），改用更明确的模式
     _CORRECTION_MARKERS = [
@@ -182,7 +197,45 @@ class PerceptionEngine:
             else:
                 signals.fact_content = self._extract_core_fact(user_content)
 
+            # ★ P1: hybrid/llm 模式下用 LLM 精炼事实（仅信号触发轮次调用，失败回退规则）
+            self._refine_with_llm(user_content, signals)
+
         return signals
+
+    def configure_llm_extraction(self, mode: str, llm_client: Any) -> None:
+        """配置 LLM 抽取模式（由 Provider 在 LLM 客户端就绪后调用）。
+
+        Args:
+            mode: rule / hybrid / llm，非法值按 rule 处理
+            llm_client: AsyncLLMClient 兼容对象；为 None 时保持 rule 行为
+        """
+        if mode not in ("rule", "hybrid", "llm"):
+            logger.warning("Unknown extraction_mode '%s', falling back to rule", mode)
+            mode = "rule"
+        self._extraction_mode = mode
+        if mode != "rule" and llm_client is not None:
+            from omnimem.perception.llm_extraction import LLMFactExtractor
+
+            self._llm_extractor = LLMFactExtractor(llm_client)
+            logger.info("PerceptionEngine: LLM extraction enabled (mode=%s)", mode)
+        else:
+            self._llm_extractor = None
+
+    def _refine_with_llm(self, user_content: str, signals: PerceptionSignals) -> None:
+        """LLM 精炼入口：改写 signals.fact_content，失败时保留规则结果。"""
+        if self._extraction_mode == "rule" or self._llm_extractor is None:
+            return
+        try:
+            refined = self._llm_extractor.refine(user_content, signals.fact_content)
+        except Exception as e:
+            logger.warning("LLM extraction failed, keeping rule result: %s", e)
+            return
+        if not refined:
+            # LLM 判定无值得记忆内容或调用失败 → 保留规则结果（保守策略）
+            return
+        signals.fact_content = " | ".join(f["content"] for f in refined)
+        signals.llm_extracted = True
+        signals.llm_fact_type = refined[0].get("type", "")
 
     def _check_garbage(self, user_content: str, assistant_content: str) -> tuple[bool, bool]:
         """系统注入检测 + AI 回复 echo 防护。

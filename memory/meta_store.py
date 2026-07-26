@@ -165,9 +165,14 @@ class MetaStore:
                 END
             """)
             self._fts_enabled = True
-            logger.warning("MetaStore FTS5 enabled")
+            logger.debug(
+                "MetaStore: FTS5 全文检索已启用 (日志级别已从 warning 降为 debug), db=%s",
+                getattr(self, '_db_path', 'unknown'),
+            )
         except Exception:
-            logger.warning("MetaStore FTS5 not available, falling back to LIKE search")
+            logger.debug(
+                "MetaStore: FTS5 不可用, 降级为 LIKE 搜索 (日志级别已从 warning 降为 debug)",
+            )
             self._fts_enabled = False
 
         self._conn.commit()
@@ -614,9 +619,14 @@ class AsyncMetaStore:
                 """
             )
             self._fts_enabled = True
-            logger.warning("AsyncMetaStore FTS5 enabled")
+            logger.debug(
+                "AsyncMetaStore: FTS5 全文检索已启用 (日志级别已从 warning 降为 debug), db=%s",
+                getattr(self, '_db_path', 'unknown'),
+            )
         except Exception:
-            logger.warning("AsyncMetaStore FTS5 not available, falling back to LIKE search")
+            logger.debug(
+                "AsyncMetaStore: FTS5 不可用, 降级为 LIKE 搜索 (日志级别已从 warning 降为 debug)",
+            )
             self._fts_enabled = False
 
         await self._conn.commit()

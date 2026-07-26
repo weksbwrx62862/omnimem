@@ -170,15 +170,19 @@ Mental Model (心智模型)
 | **依赖要求** | PyTorch + PEFT + Transformers（可选安装） |
 | **主要职责** | 毫秒级高频响应、行为模式内化 |
 
-**KVCache 预填充**：
+**KVCache 预填充**（注意：此处为**应用层高频记忆缓存**，SQLite + 内存 dict 实现，
+并非 Transformer 推理层的 KV Cache）：
 - 监控记忆访问频率
-- 当某记忆 recall_count 超过阈值时，预填充到 KV Cache
-- 效果：后续对该记忆的引用实现零延迟
+- 当某记忆 recall_count 超过阈值时，预填充到缓存
+- 效果：后续对该记忆的引用跳过检索直接返回
 
-**LoRA 分身系统 (Shade)**：
+**LoRA 分身系统 (Shade)**（实验性，`@experimental_class`）：
 - 基于用户交互模式训练低秩适配器
 - 每个 Shade 代表用户的一个"侧面"（如工作模式 vs 休闲模式）
 - 推理时动态加载对应 Shade 的 LoRA 权重
+- ⚠ 当前训练循环为框架级实现：训练数据管理/格式化/适配器版本管理完整，
+  但 GPU 训练闭环尚未完成（`_real_train` 仅构造 LoraConfig），
+  完整微调需配合外部训练工具（如 LLaMA-Factory）
 
 ### 2.3 模块映射（v2.0.0）
 
@@ -883,7 +887,7 @@ RRF 融合得分（k=60）：
     │
   personal ──────── 仅创建者可读
     │
-  secret ────────── 仅创建者可读 + Fernet AES-256-GCM 加密存储
+  secret ────────── 仅创建者可读 + AES-256-GCM 加密存储（V2；历史 Fernet V1 可解密）
 
 加密流程：
   secret 级别记忆
@@ -959,9 +963,12 @@ class AuditEntry:
 
 ## 8. 安全体系设计
 
-### 8.1 SecurityValidator 14 种检测模式
+### 8.1 SecurityValidator 检测模式
 
-`SecurityValidator` 在每个写入路径上执行安全扫描，防止恶意输入污染记忆系统：
+`SecurityValidator` 在每个写入路径上执行安全扫描，防止恶意输入污染记忆系统。
+实际代码（`utils/security.py`）实现了 **20+ 种**具体检测模式（含约 20 条威胁正则
+`_THREAT_PATTERNS`、8 条琐碎内容模式、注入标记/工具注入/echo 检测等），
+下表为按检测目标归类的概览：
 
 | 编号 | 检测模式 | 检测目标 | 处理方式 |
 |:---:|:---|:---|:---|

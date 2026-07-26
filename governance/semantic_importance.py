@@ -83,10 +83,11 @@ class SemanticImportanceEvaluator:
 
         # 加载嵌入向量
         try:
-            if os.path.exists(self._embedding_path):
-                import json
-                with open(self._embedding_path) as f:
-                    self._embeddings = json.load(f)
+            # ★ P2: 经共享工具读取，兼容 SQLite 新格式与 JSON 旧格式
+            from omnimem.retrieval.vector_store import load_embedding_cache_dict
+
+            self._embeddings = load_embedding_cache_dict(self._embedding_path)
+            if self._embeddings:
                 logger.info("Loaded %d embeddings", len(self._embeddings))
         except Exception as e:
             logger.warning("Failed to load embeddings: %s", e)

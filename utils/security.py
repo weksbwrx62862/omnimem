@@ -15,7 +15,9 @@ Design principles:
 
 from __future__ import annotations
 
+import json
 import logging
+import os
 import re
 import unicodedata
 
@@ -101,10 +103,13 @@ class SecurityValidator:
     _TOOL_INJECTION_PATTERNS: list[str] = [
         r"(请|帮|尝试|调用|执行|运行)\s{0,3}(omni_memorize|omni_recall|omni_govern|omni_reflect)",
         r"(call|invoke|trigger)\s+(omni_memorize|omni_recall|omni_govern)",
-        r"你是\\s*(管理员|root|superuser|god).*(存储|保存|记录|写入)",
+        # ★ P1修复：原 r"你是\\s*" 在 raw string 中为「字面反斜杠+s*」，模式永不匹配
+        r"你是\s*(管理员|root|superuser|god).*(存储|保存|记录|写入)",
     ]
 
     # ─── Threat patterns for security scanning (compatible with _compat.py) ───
+    # ★ P1: 作为 config/threat_patterns.json 缺失/损坏时的内置回退，
+    #   实际扫描使用 load_threat_patterns() 的结果（支持外置热更新）
     _THREAT_PATTERNS: list[tuple[str, str]] = [
         (r"ignore\s+(previous|all|above|prior)\s+instructions", "prompt_injection"),
         (
@@ -144,6 +149,58 @@ class SecurityValidator:
     # ─── Trivial content patterns (content fencing) ───
     _TRIVIAL_MIN_CONTENT_LENGTH: int = 4  # 最少有意义字符数（排除空白）
     _TRIVIAL_MAX_NOISE_RATIO: float = 0.6  # 最大噪音比例（符号/数字占比）
+
+    # ★ P1: 外置威胁模式缓存（None 表示尚未加载）
+    _threat_patterns_cache: list[tuple[str, str]] | None = None
+
+    @classmethod
+    def load_threat_patterns(cls, force_reload: bool = False) -> list[tuple[str, str]]:
+        """从 config/threat_patterns.json 加载威胁模式，支持热更新。
+
+        加载策略：
+          1. 外置 JSON 存在且有效 → 使用外置模式（逐条编译校验，无效条目跳过）
+          2. 文件缺失/损坏/为空 → 回退到内置 _THREAT_PATTERNS 并记录 warning
+          3. force_reload=True 时绕过缓存重新读取（热更新入口）
+        """
+        if cls._threat_patterns_cache is not None and not force_reload:
+            return cls._threat_patterns_cache
+
+        config_path = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            "config",
+            "threat_patterns.json",
+        )
+        patterns: list[tuple[str, str]] = []
+        try:
+            with open(config_path, encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, list):
+                for item in data:
+                    if not isinstance(item, dict):
+                        continue
+                    pattern = item.get("pattern", "")
+                    pid = item.get("id", "")
+                    if not pattern or not pid:
+                        continue
+                    try:
+                        re.compile(pattern)
+                    except re.error as e:
+                        logger.warning(
+                            "threat_patterns.json invalid regex skipped (%s): %s", pid, e
+                        )
+                        continue
+                    patterns.append((pattern, pid))
+        except FileNotFoundError:
+            logger.warning(
+                "threat_patterns.json not found at %s, using built-in patterns", config_path
+            )
+        except Exception as e:
+            logger.warning("Failed to load threat_patterns.json: %s, using built-in patterns", e)
+
+        if not patterns:
+            patterns = list(cls._THREAT_PATTERNS)
+        cls._threat_patterns_cache = patterns
+        return patterns
 
     # 无信息量正则模式
     _TRIVIAL_PATTERNS: list[tuple[str, str]] = [
@@ -445,7 +502,8 @@ class SecurityValidator:
 
         # Normalize and scan threat patterns
         normalized = cls.normalize(content)
-        for pattern, pid in cls._THREAT_PATTERNS:
+        # ★ P1: 使用外置可热更新的威胁模式（缺失时自动回退内置列表）
+        for pattern, pid in cls.load_threat_patterns():
             if re.search(pattern, normalized, re.IGNORECASE):
                 return f"Blocked: matches threat pattern '{pid}'."
 

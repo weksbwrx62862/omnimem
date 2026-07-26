@@ -1,6 +1,7 @@
 """多通道检索编排与 RRF 融合。
 
 负责通道并行调度、RRF/additive 融合、类型加权、缓存管理、索引重建等核心检索逻辑。
+共享线程池已拆分到 executor.py，融合逻辑拆分到 fusion.py，缓存管理拆分到 cache.py。
 """
 
 from __future__ import annotations
@@ -9,10 +10,16 @@ import asyncio as _asyncio
 import logging
 import os
 import time
-from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 from omnimem.retrieval.base import BaseRetriever
+from omnimem.retrieval.executor import (
+    _shared_executor,
+    _shared_executor_lock,
+    _shared_executor_refs,
+    acquire_shared_executor as _acquire_shared_executor,
+    release_shared_executor as _release_shared_executor,
+)
 from omnimem.retrieval.query_quality import is_garbage_query, trim_to_budget
 from omnimem.retrieval.synonym_expander import SynonymExpander
 from omnimem.retrieval.vector_store import _emit
@@ -48,9 +55,11 @@ class HybridOrchestrator:
         # ★ Task 3: 查询增强配置
         self._query_expansion_enabled = bool(config.get("query_expansion_enabled", True)) if config else True
         self._entity_boost_weight = float(config.get("entity_boost_weight", 1.5)) if config else 1.5
+        # ★ 偏好查询改写：对包含偏好信号词的查询追加偏好同义词
+        self._preference_rewrite_enabled = bool(config.get("preference_rewrite_enabled", True)) if config else True
 
     def _create_executor(self) -> ThreadPoolExecutor:
-        """创建实例级检索线程池，max_workers 可通过配置调整。"""
+        """获取检索线程池（★ P2: 全进程共享，max_workers 可通过配置调整）。"""
         config = getattr(self._facade, "_config", None)
         default_workers = min(32, (os.cpu_count() or 1) + 4)
         if config is not None:
@@ -61,12 +70,12 @@ class HybridOrchestrator:
         else:
             max_workers = default_workers
         max_workers = max(1, max_workers)
-        return ThreadPoolExecutor(max_workers=max_workers)
+        return _acquire_shared_executor(max_workers)
 
     def shutdown(self) -> None:
-        """关闭检索线程池，等待已提交任务完成。"""
+        """释放共享线程池引用（最后一个实例释放时真正关闭）。"""
         if self._executor is not None:
-            self._executor.shutdown(wait=True)
+            _release_shared_executor(wait=True)
             self._executor = None
 
     # ── 通道级检索 ──
@@ -294,7 +303,9 @@ class HybridOrchestrator:
             fused = []
 
         if self._facade._reranker and len(fused) > 3:
-            fused = self._facade._reranker.rerank(query, fused, top_k=top_k)
+            # ★ 先截断到 rerank 候选数，避免对 100+ 条做 Cross-Encoder 推理
+            _rerank_candidates = min(30, len(fused))
+            fused = self._facade._reranker.rerank(query, fused[:_rerank_candidates], top_k=top_k)
 
         return trim_to_budget(fused, max_tokens)
 
@@ -359,7 +370,9 @@ class HybridOrchestrator:
         results = [r for r in results if r["score"] >= 0.05]
 
         if self._facade._reranker and len(results) > 3:
-            results = self._facade._reranker.rerank(query, results, top_k=top_k)
+            # ★ 先截断到 rerank 候选数
+            _rerank_candidates = min(30, len(results))
+            results = self._facade._reranker.rerank(query, results[:_rerank_candidates], top_k=top_k)
 
         return trim_to_budget(results[:top_k], max_tokens)
 
@@ -499,6 +512,16 @@ class HybridOrchestrator:
             except Exception as e:
                 logger.debug("ML cache set failed, falling back to dict: %s", e)
         facade._query_cache[cache_key] = (results, time.time())
+        # ★ 修复 L3：_query_cache 无上限，长期运行无限增长。加入 LRU 淘汰
+        _MAX_QUERY_CACHE = 2000
+        if len(facade._query_cache) > _MAX_QUERY_CACHE:
+            # 淘汰最旧的 20% 条目（按写入时间）
+            sorted_items = sorted(
+                facade._query_cache.items(), key=lambda kv: kv[1][1]
+            )
+            evict_count = len(facade._query_cache) - _MAX_QUERY_CACHE + _MAX_QUERY_CACHE // 5
+            for k, _ in sorted_items[:evict_count]:
+                facade._query_cache.pop(k, None)
 
     def invalidate_cache_by_memory(self, memory_id: str) -> None:
         """按 memory_id 精准失效相关缓存（用于 add 时调用）。"""
@@ -566,14 +589,22 @@ class HybridOrchestrator:
             max_tokens = max(max_tokens, 3000)
 
         # ★ COUNT 查询（how many/how much）KMAG优化：提升 BM25 权重 + 扩大 top_k
+        # ★ 修复 C7：原实现临时修改共享 _source_weights，并发检索会读到污染权重。
+        #   改为 try/finally 保证恢复，并加锁保护读取-修改-恢复的原子性。
         import re as _re_count
         _is_count = bool(_re_count.match(r'^(how many|how much)\b', query.strip().lower()))
         _orig_count_weights = {}
+        _count_lock = getattr(self._facade, "_source_weights_lock", None)
         if _is_count:
             top_k = max(top_k, 60)
             if self._facade._source_weights is not None:
-                _orig_count_weights = dict(self._facade._source_weights)
-            self._facade._source_weights["bm25"] = 5.0
+                if _count_lock is not None:
+                    with _count_lock:
+                        _orig_count_weights = dict(self._facade._source_weights)
+                        self._facade._source_weights["bm25"] = 5.0
+                else:
+                    _orig_count_weights = dict(self._facade._source_weights)
+                    self._facade._source_weights["bm25"] = 5.0
 
         cache_key = CacheKeyBuilder.build_recall_key(query, max_tokens, mode, top_k)
         cached = self.check_cache(cache_key)
@@ -587,6 +618,14 @@ class HybridOrchestrator:
             if expanded_terms:
                 bm25_query = query + " " + " ".join(expanded_terms)
 
+        # ★ 偏好查询改写：对偏好类查询追加偏好同义词，缩小语义鸿沟
+        if self._preference_rewrite_enabled:
+            _PREF_SIGNALS = {"recommend", "suggest", "prefer", "favorite", "favourite",
+                             "best", "ideal", "suitable", "looking for"}
+            query_lower = query.lower()
+            if any(sig in query_lower for sig in _PREF_SIGNALS):
+                bm25_query = bm25_query + " prefer like enjoy"
+
         channel_results = self.dispatch_channels(query, top_k, allowed_channels, trace, bm25_query=bm25_query)
         results = self.fuse_and_filter(
             query, channel_results,
@@ -595,10 +634,15 @@ class HybridOrchestrator:
         )
         self.set_cache(cache_key, results)
 
-        # ★ COUNT 查询：恢复原始权重，防止污染后续检索
+        # ★ COUNT 查询：恢复原始权重，防止污染后续检索（修复 C7：加锁恢复）
         if _is_count and self._facade._source_weights is not None:
-            self._facade._source_weights.clear()
-            self._facade._source_weights.update(_orig_count_weights)
+            if _count_lock is not None:
+                with _count_lock:
+                    self._facade._source_weights.clear()
+                    self._facade._source_weights.update(_orig_count_weights)
+            else:
+                self._facade._source_weights.clear()
+                self._facade._source_weights.update(_orig_count_weights)
 
         if trace and results:
             results[-1]["_trace"] = trace.to_dict()
@@ -649,6 +693,14 @@ class HybridOrchestrator:
             expanded_terms = self._synonym_expander.expand(query)
             if expanded_terms:
                 bm25_query = query + " " + " ".join(expanded_terms)
+
+        # ★ 偏好查询改写：对偏好类查询追加偏好同义词，缩小语义鸿沟
+        if self._preference_rewrite_enabled:
+            _PREF_SIGNALS = {"recommend", "suggest", "prefer", "favorite", "favourite",
+                             "best", "ideal", "suitable", "looking for"}
+            query_lower = query.lower()
+            if any(sig in query_lower for sig in _PREF_SIGNALS):
+                bm25_query = bm25_query + " prefer like enjoy"
 
         channel_results: dict[str, list[dict[str, Any]]] = {}
 

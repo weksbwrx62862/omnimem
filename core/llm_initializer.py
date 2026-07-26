@@ -47,7 +47,7 @@ def init_llm_client(config: Any) -> Any:
     # 必须匹配实际 base_url 对应的 provider 的 models 列表，
     # 否则会把 mimo-v2.5-pro 发给 deepseek API（400错误）
     actual_base_url = creds.get("base_url", "")
-    default_model = config_creds.get("model") or config.get("default", "glm-5.1")
+    default_model = config_creds.get("model") or config.get("llm_model", "") or "glm-5.1"
 
     # 从 config providers 中找到与实际 base_url 匹配的 provider，取其 models
     matched_models: list[str] = []

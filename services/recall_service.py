@@ -231,6 +231,11 @@ class RecallService:
         # 冲突标注
         results = self._annotate_conflicts(results)
 
+        # 按类型过滤
+        type_filter = args.get("type_filter")
+        if type_filter:
+            results = self._filter_by_type(results, type_filter)
+
         # ContextManager 精炼
         refined = self.deps.context_manager.refine_recall_results(results, max_tokens=max_tokens)
 
@@ -360,6 +365,11 @@ class RecallService:
                     results = await self._async_fallback_if_few(results, query, _query_keywords)
             except Exception as e:
                 logger.warning("Async associative spread failed (non-fatal): %s", e)
+
+        # 按类型过滤（异步路径）
+        type_filter = args.get("type_filter")
+        if type_filter:
+            results = self._filter_by_type(results, type_filter)
 
         if not results:
             return {
@@ -704,6 +714,35 @@ class RecallService:
                 except Exception:
                     pass
         return results
+
+    def _filter_by_type(self, results: list[dict[str, Any]], type_filter: list[str]) -> list[dict[str, Any]]:
+        """按记忆类型过滤结果，保留指定类型的条目。
+
+        Args:
+            results: 检索结果列表
+            type_filter: 要保留的记忆类型列表（如 ['preference', 'fact']）
+
+        Returns:
+            过滤后的结果列表（保留系统类型如 graph_rag, temporal_kg, association 等）
+        """
+        type_set = set(type_filter)
+        filtered = []
+        for r in results:
+            rtype = r.get("type", "")
+            # 系统内部类型（图谱、时序、联想）总是保留
+            if rtype in {"graph_rag", "graph_triple", "temporal_kg", "association", "store_supplement", "store_fts_fallback", "store_fallback"}:
+                filtered.append(r)
+            # store 记忆类型按过滤器匹配
+            elif rtype in type_set:
+                filtered.append(r)
+            # 没有 type 字段的也保留（兼容旧数据）
+            elif not rtype:
+                filtered.append(r)
+        logger.debug(
+            "_filter_by_type: %d -> %d results (filter=%s)",
+            len(results), len(filtered), type_filter,
+        )
+        return filtered
 
     def _record_quality(
         self,

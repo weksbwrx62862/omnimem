@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import logging
 import sqlite3
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -28,6 +29,9 @@ class VectorClock:
       vc_A = {"instance-1": 3, "instance-2": 1}
       vc_B = {"instance-1": 2, "instance-2": 2}
       → A 和 B 并发冲突（不可比较）
+
+    ★ 修复 C4：引入 _lock 保护 _clock 字典的读写，消除多线程
+       并发 increment() 的计数竞态（原实现 get+set 非原子）。
     """
 
     def __init__(self, clock: dict[str, int] | None = None):
@@ -37,14 +41,16 @@ class VectorClock:
             clock: 初始时钟字典，如 {"node-a": 1, "node-b": 3}
         """
         self._clock: dict[str, int] = dict(clock) if clock else {}
+        self._lock = threading.RLock()
 
     def increment(self, node_id: str) -> VectorClock:
-        """递增指定节点的时钟。
+        """递增指定节点的时钟（线程安全）。
 
         Returns:
             self（支持链式调用）
         """
-        self._clock[node_id] = self._clock.get(node_id, 0) + 1
+        with self._lock:
+            self._clock[node_id] = self._clock.get(node_id, 0) + 1
         return self
 
     def compare(self, other: VectorClock) -> int:
@@ -55,13 +61,17 @@ class VectorClock:
              0: 并发冲突（不可比较）
              1: self 发生在 other 之后（self > other）
         """
-        all_nodes = set(self._clock.keys()) | set(other._clock.keys())
+        with self._lock:
+            self_snapshot = dict(self._clock)
+        with other._lock:
+            other_snapshot = dict(other._clock)
+        all_nodes = set(self_snapshot.keys()) | set(other_snapshot.keys())
         lt = False  # self < other
         gt = False  # self > other
 
         for node in all_nodes:
-            a = self._clock.get(node, 0)
-            b = other._clock.get(node, 0)
+            a = self_snapshot.get(node, 0)
+            b = other_snapshot.get(node, 0)
             if a < b:
                 lt = True
             elif a > b:
@@ -81,14 +91,19 @@ class VectorClock:
         Returns:
             新的 VectorClock 实例
         """
+        with self._lock:
+            self_snapshot = dict(self._clock)
+        with other._lock:
+            other_snapshot = dict(other._clock)
         merged = {}
-        for node in set(self._clock.keys()) | set(other._clock.keys()):
-            merged[node] = max(self._clock.get(node, 0), other._clock.get(node, 0))
+        for node in set(self_snapshot.keys()) | set(other_snapshot.keys()):
+            merged[node] = max(self_snapshot.get(node, 0), other_snapshot.get(node, 0))
         return VectorClock(merged)
 
     def to_dict(self) -> dict[str, int]:
         """序列化为字典。"""
-        return dict(self._clock)
+        with self._lock:
+            return dict(self._clock)
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> VectorClock:
@@ -106,7 +121,8 @@ class VectorClock:
 
     def to_json(self) -> str:
         """序列化为 JSON 字符串。"""
-        return json.dumps(self._clock)
+        with self._lock:
+            return json.dumps(self._clock)
 
     def save(self, path: Path) -> bool:
         """持久化向量时钟状态到文件。
@@ -119,8 +135,10 @@ class VectorClock:
         """
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
+            with self._lock:
+                snapshot = dict(self._clock)
             with open(path, "w", encoding="utf-8") as f:
-                json.dump(self._clock, f, ensure_ascii=False)
+                json.dump(snapshot, f, ensure_ascii=False)
             return True
         except Exception as e:
             logger.warning("VectorClock save failed: %s", e)
@@ -164,9 +182,11 @@ class VectorClock:
                     "(node_id TEXT PRIMARY KEY, counter INTEGER NOT NULL)"
                 )
                 conn.execute("DELETE FROM vector_clock")
+                with self._lock:
+                    items = list(self._clock.items())
                 conn.executemany(
                     "INSERT INTO vector_clock (node_id, counter) VALUES (?, ?)",
-                    self._clock.items(),
+                    items,
                 )
                 conn.commit()
             finally:
@@ -249,15 +269,18 @@ class VectorClock:
         return cls(recovered)
 
     def __repr__(self) -> str:
-        return f"VectorClock({self._clock})"
+        with self._lock:
+            return f"VectorClock({dict(self._clock)})"
 
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, VectorClock):
             return NotImplemented
-        return self._clock == other._clock
+        with self._lock, other._lock:
+            return self._clock == other._clock
 
     def __hash__(self) -> int:
-        return hash(tuple(sorted(self._clock.items())))
+        with self._lock:
+            return hash(tuple(sorted(self._clock.items())))
 
 
 def detect_conflict(

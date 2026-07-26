@@ -20,7 +20,6 @@ import re
 import threading
 from collections import deque
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -194,7 +193,7 @@ class TripleExtractor:
 
     def __init__(self) -> None:
         self._llm_client: Any = None
-        self._llm_model: str = "deepseek-v4-flash"
+        self._llm_model: str = ""
         # 批量处理队列
         self._batch_queue: deque[tuple[str, Any]] = deque()
         self._batch_lock = threading.Lock()
@@ -203,35 +202,37 @@ class TripleExtractor:
         # 实体提取器
         self._entity_extractor: Any = None
 
+    def inject_llm_client(self, client: Any, model: str = "") -> None:
+        """注入外部 LLM 客户端（AsyncLLMClient），避免自建连接和硬编码模型名。
+
+        调用后 _get_llm_client() 直接返回注入的客户端，不再读取 config.yaml。
+        """
+        self._llm_client = client
+        self._llm_model = model
+
     def _get_llm_client(self) -> Any:
-        """获取或创建复用的 LLM 客户端（避免每次读取 config）。"""
+        """获取 LLM 客户端。优先使用注入的客户端。"""
         if self._llm_client is not None:
             return self._llm_client
-
+        # M7-11 fallback: 若未注入，尝试通过 AsyncLLMClient 的统一凭证加载
         try:
-            import yaml
-            from openai import OpenAI
-
-            config_path = Path.home() / ".hermes" / "config.yaml"
-            if not config_path.exists():
-                return None
-            with open(config_path) as f:
-                cfg = yaml.safe_load(f)
-            providers = cfg.get("providers", {})
-            ds = providers.get("openai", {})
-            if not ds.get("api_key"):
-                return None
-
-            self._llm_client = OpenAI(
-                api_key=ds["api_key"],
-                base_url=ds.get("base_url", ""),
-                timeout=30,
-                max_retries=2,
-            )
-            return self._llm_client
+            from omnimem.utils.llm_client import AsyncLLMClient
+            creds = AsyncLLMClient.load_credentials_from_hermes_config()
+            if not creds.get("api_key"):
+                creds = AsyncLLMClient.load_credentials_from_env()
+            if creds.get("api_key") and creds.get("base_url"):
+                self._llm_model = creds.get("model", "") or "glm-5.1"
+                self._llm_client = AsyncLLMClient(
+                    api_key=creds["api_key"],
+                    base_url=creds["base_url"],
+                    model=self._llm_model,
+                    max_concurrent=1,
+                    timeout=30,
+                )
+                return self._llm_client
         except Exception as e:
             logger.debug("TripleExtractor: LLM client init failed: %s", e)
-            return None
+        return None
 
     def _get_entity_extractor(self) -> Any:
         """获取 EntityExtractor 实例。"""

@@ -43,7 +43,15 @@ class StorageFacade:
             write_buffer_threshold=self._config.get("write_buffer_threshold", 20),
             config=self._config,
         )
-        self._index = ThreeLevelIndex(self._data_dir / "index")
+        # ★ P2: use_unified_index 灰度开关（默认关闭）。
+        # UnifiedMemoryIndex 合并 ThreeLevelIndex + MetaStore 表结构，
+        # 读写连接分离 + 写锁串行化；API 与 ThreeLevelIndex 对齐可直接替换。
+        if self._config.get("use_unified_index", False):
+            from omnimem.memory.unified_index import UnifiedMemoryIndex
+
+            self._index = UnifiedMemoryIndex(self._data_dir / "index")
+        else:
+            self._index = ThreeLevelIndex(self._data_dir / "index")
         self._md_store = MarkdownStore(self._data_dir / "palace")
 
     @property
@@ -67,7 +75,8 @@ class StorageFacade:
         return self._store
 
     @property
-    def index(self) -> ThreeLevelIndex:
+    def index(self) -> Any:
+        """索引实例：ThreeLevelIndex 或 UnifiedMemoryIndex（use_unified_index 开关）。"""
         return self._index
 
     @property

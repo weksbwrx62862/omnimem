@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "omnimem"
-version = "1.0.0"
+version = "1.1.0"
 description = "OmniMem — 五层混合记忆系统：感知→工作→结构化→深层→内化，含治理引擎"
 readme = "README.md"
 license = {text = "MIT"}
@@ -42,8 +42,6 @@ dependencies = [
     "pyyaml>=6.0",
     "typing-extensions>=4.0.0",
     "cryptography>=42.0.0",
-    "aiosqlite>=0.20.0",
-    "datasketch>=1.6.0",
 ]
 
 [project.scripts]

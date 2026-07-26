@@ -59,12 +59,13 @@ class AdminAuthMiddleware:
     def validate(self, request_headers: dict[str, str]) -> bool | tuple[int, dict]:
         """验证管理令牌。
 
-        当 admin_token 为空字符串时跳过检查。
+        ★ P0安全修复：fail-closed —— admin_token 未配置时直接拒绝敏感操作，
+        而非跳过检查（原实现空 token 即放行，存在越权风险）。
         当请求头 X-Admin-Token 匹配时返回 True。
         其它情况返回 (403, {"error": "Forbidden"})。
         """
         if self._admin_token == "":
-            return True
+            return (403, {"error": "Admin token not configured — sensitive operations disabled"})
         admin_header = request_headers.get("X-Admin-Token", "")
         if admin_header == self._admin_token:
             return True
@@ -342,7 +343,12 @@ def _generate_default_key() -> str:
     return secrets.token_hex(32)
 
 
-def run_api(host: str = "0.0.0.0", port: int = 8765, storage_dir: str | None = None, config: dict | None = None):
+def run_api(host: str = "127.0.0.1", port: int = 8765, storage_dir: str | None = None, config: dict | None = None):
+    """启动 REST API 服务。
+
+    ★ P0安全修复：默认仅绑定 127.0.0.1（原为 0.0.0.0 暴露所有网卡）。
+    需要对外服务时显式传入 host 或设置 OMNIMEM_API_HOST 环境变量。
+    """
     from omnimem.sdk import OmniMemSDK
 
     sdk = OmniMemSDK(storage_dir=storage_dir, config=config)
@@ -386,4 +392,5 @@ if __name__ == "__main__":
     import sys
 
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 8765
-    run_api(port=port)
+    host = os.environ.get("OMNIMEM_API_HOST", "127.0.0.1")
+    run_api(host=host, port=port)

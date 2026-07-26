@@ -38,10 +38,22 @@ def create_vector_store(backend: str = "chromadb", **kwargs: Any) -> VectorStore
         collection_name = kwargs.pop("collection_name", "omnimem")
         url = kwargs.pop("qdrant_url", kwargs.pop("url", "localhost:6333"))
         api_key = kwargs.pop("api_key", None)
+        # ★ P0修复：Qdrant 后端同样注入 embedding_fn，与 chromadb/faiss 保持一致
+        embedding_fn = kwargs.pop("embedding_fn", None)
+        if embedding_fn is None:
+            persist_dir = kwargs.pop("persist_dir", kwargs.pop("data_dir", "/tmp/omnimem/retrieval/qdrant"))
+            if not isinstance(persist_dir, Path):
+                persist_dir = Path(persist_dir)
+            try:
+                cache_path = persist_dir.parent / "embedding_cache.json"
+                embedding_fn = _CachedEmbeddingFunction(cache_path=cache_path)
+            except Exception as e:
+                logger.warning("vector_factory create embedding_fn for qdrant failed: %s", e)
         return QdrantStore(
             collection_name=collection_name,
             url=url,
             api_key=api_key,
+            embedding_fn=embedding_fn,
         )
     elif backend == "faiss":
         from omnimem.retrieval.faiss_store import FAISSStore

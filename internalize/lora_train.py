@@ -287,35 +287,36 @@ class LoRATrainer:
             if td_shade != shade and shade != "all":
                 continue
 
-            # 根据 source_type 选择格式化模板
-            if source_type == "mental_model":
-                sample = {
-                    "instruction": "基于你的深层记忆，总结关于以下主题的核心规律和认知。",
-                    "input": content[:200],
-                    "output": content,
-                }
-            elif source_type == "observation":
-                sample = {
-                    "instruction": "回忆并描述你观察到的模式。",
-                    "input": content[:200],
-                    "output": content,
-                }
-            elif source_type == "correction":
-                sample = {
-                    "instruction": "记住这个纠错经验，避免再犯同样的错误。",
-                    "input": content[:200],
-                    "output": content,
-                }
-            else:
-                sample = {
-                    "instruction": "记住这个事实。",
-                    "input": content[:200],
-                    "output": content,
-                }
-
-            samples.append(sample)
+            samples.append(self._format_sample(content, source_type))
 
         return samples
+
+    @staticmethod
+    def _format_sample(content: str, source_type: str) -> dict[str, str]:
+        """将一条记忆格式化为 instruction-following 训练样本（alpaca 格式）。"""
+        if source_type == "mental_model":
+            return {
+                "instruction": "基于你的深层记忆，总结关于以下主题的核心规律和认知。",
+                "input": content[:200],
+                "output": content,
+            }
+        if source_type == "observation":
+            return {
+                "instruction": "回忆并描述你观察到的模式。",
+                "input": content[:200],
+                "output": content,
+            }
+        if source_type == "correction":
+            return {
+                "instruction": "记住这个纠错经验，避免再犯同样的错误。",
+                "input": content[:200],
+                "output": content,
+            }
+        return {
+            "instruction": "记住这个事实。",
+            "input": content[:200],
+            "output": content,
+        }
 
     # ─── 训练执行 ────────────────────────────────────────────
 
@@ -527,6 +528,135 @@ class LoRATrainer:
         return None
 
     # ─── 适配器管理 ──────────────────────────────────────────
+
+    def export_training_jsonl(
+        self,
+        output_path: str | Path | None = None,
+        shade: str = "all",
+        include_used: bool = True,
+    ) -> dict[str, Any]:
+        """★ M4: 导出训练数据为 alpaca 格式 JSONL（三段式第 1 段）。
+
+        产出可被 LLaMA-Factory / axolotl 等外部训练工具直接消费的数据集，
+        外部训练完成后通过 register_external_adapter() 回注适配器。
+
+        Args:
+            output_path: 输出文件路径，默认 <data_dir>/exports/lora_train_<ts>.jsonl
+            shade: 过滤指定 Shade 的数据，"all" 导出全部
+            include_used: 是否包含已参与过训练的数据
+
+        Returns:
+            {"status", "path", "samples", "shade"}
+        """
+        # 优先从 SQLite 读取（含历史数据），无 DB 时回退内存队列
+        rows: list[tuple[str, str, str]] = []
+        if self._conn:
+            try:
+                sql = "SELECT content, source_type, shade FROM training_data"
+                clauses = []
+                params: list[Any] = []
+                if not include_used:
+                    clauses.append("used_in_training = 0")
+                if shade != "all":
+                    clauses.append("shade = ?")
+                    params.append(shade)
+                if clauses:
+                    sql += " WHERE " + " AND ".join(clauses)
+                with self._lock:
+                    rows = self._conn.execute(sql, params).fetchall()
+            except Exception as e:
+                logger.warning("LoRA export DB read failed: %s", e)
+        if not rows:
+            rows = [
+                (td.get("content", ""), td.get("source_type", "fact"), td.get("shade", "default"))
+                for td in self._training_queue
+                if shade == "all" or td.get("shade", "default") == shade
+            ]
+
+        samples = [
+            self._format_sample(content, source_type)
+            for content, source_type, _shade in rows
+            if content
+        ]
+        if not samples:
+            return {"status": "no_data", "samples": 0, "shade": shade}
+
+        if output_path is None:
+            base = self._data_dir or Path(".")
+            ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+            output_path = base / "exports" / f"lora_train_{shade}_{ts}.jsonl"
+        output_path = Path(output_path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(output_path, "w", encoding="utf-8") as f:
+            for s in samples:
+                f.write(json.dumps(s, ensure_ascii=False) + "\n")
+
+        logger.info("LoRATrainer: exported %d samples to %s", len(samples), output_path)
+        return {
+            "status": "exported",
+            "path": str(output_path),
+            "samples": len(samples),
+            "shade": shade,
+            "format": "alpaca_jsonl",
+        }
+
+    def register_external_adapter(
+        self,
+        adapter_path: str | Path,
+        shade: str = "default",
+        base_model: str = "",
+        training_samples: int = 0,
+    ) -> dict[str, Any]:
+        """★ M4: 回注外部训练完成的 LoRA 适配器（三段式第 3 段）。
+
+        Args:
+            adapter_path: 适配器目录（需含 adapter_config.json 等 peft 产物）
+            shade: 关联的 Shade 角色（不存在时自动注册）
+            base_model: 训练所用基座模型（记录用，缺省沿用配置值）
+            training_samples: 外部训练使用的样本数（记录用）
+
+        Returns:
+            {"status", "adapter_id", "shade", "path", "version"}
+        """
+        path = Path(adapter_path)
+        if not path.exists():
+            return {"status": "error", "message": f"Adapter path not found: {path}"}
+        # peft 产物校验：缺失关键文件时警示但仍允许注册（用户可能自定义格式）
+        expected = ("adapter_config.json", "adapter_model.safetensors", "adapter_model.bin")
+        has_artifact = any((path / name).exists() for name in expected)
+        if not has_artifact:
+            logger.warning(
+                "register_external_adapter: no peft artifacts found in %s "
+                "(expected one of %s)", path, expected,
+            )
+
+        if shade not in self._shades:
+            self.register_shade(shade, description=f"external adapter shade: {shade}")
+
+        adapter_id = self._get_or_create_adapter_id(shade)
+        adapter = self._adapters[adapter_id]
+        adapter.path = str(path)
+        adapter.status = "ready"
+        adapter.version += 1
+        adapter.trained_at = datetime.now(timezone.utc).isoformat()
+        if training_samples:
+            adapter.training_samples += training_samples
+        self._persist_adapter(adapter)
+        if base_model:
+            self._base_model = base_model
+
+        logger.info(
+            "LoRATrainer: external adapter registered — %s (shade=%s, path=%s)",
+            adapter_id, shade, path,
+        )
+        return {
+            "status": "registered",
+            "adapter_id": adapter_id,
+            "shade": shade,
+            "path": str(path),
+            "version": adapter.version,
+            "artifacts_verified": has_artifact,
+        }
 
     def list_adapters(self) -> list[dict[str, Any]]:
         """列出所有适配器。"""

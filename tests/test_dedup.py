@@ -85,14 +85,14 @@ class TestSemanticDedupService(unittest.TestCase):
 
     @patch("omnimem.core.dedup.ContextManager")
     def test_similar_update_long(self, mock_ctx) -> None:
-        """长文本，相似度在60%-85%之间应触发update归档。"""
+        """长文本，相似度在60%-85%之间：ADD-only 策略，创建新记忆并标记旧记忆 superseded。"""
         mock_ctx._content_fingerprint.return_value = "fp_sim"
         mock_ctx._fingerprint_similarity.return_value = 0.7
         content = "This is a long document about machine learning and AI systems"
         candidates = [{"content": "This is about machine learning and deep learning", "memory_id": "c1"}]
         result = self.dedup.semantic_dedup(content, "fact", candidates=candidates)
-        self.assertEqual(result["action"], "update")
-        self.assertIn("c1", result["existing_id"])
+        self.assertEqual(result["action"], "create")
+        self.assertIn("c1", result["superseded_id"])
 
     # ── 数值差异降权 ──
 

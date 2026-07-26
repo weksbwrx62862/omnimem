@@ -315,6 +315,8 @@ sdk.close()
 | `provenance` | 查询记忆溯源信息 | 必填，记忆 ID | — |
 | `forgetting_status` | 查看遗忘曲线状态 | — | — |
 | `lora_train` | L4：触发 LoRA 训练 | — | `{"shade": "default", "epochs": 3}` |
+| `export_training_data` | L4：导出训练数据为 alpaca JSONL（供 LLaMA-Factory/axolotl 外部训练） | — | `{"shade": "all", "output_path": "可选", "include_used": true}` |
+| `register_adapter` | L4：回注外部训练完成的 LoRA 适配器目录 | 适配器路径（或 params.adapter_path） | `{"shade": "default", "base_model": "可选", "training_samples": 0}` |
 | `shade_switch` | L4：切换 LoRA shade（人格切片） | shade 名称 | `{"shade": "shade名"}` |
 | `shade_list` | L4：列出所有可用 shade | — | — |
 | `kv_cache_stats` | L4：查看 KV Cache 统计 | — | — |

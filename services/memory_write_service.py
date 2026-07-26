@@ -40,22 +40,26 @@ except ImportError:
 
 # ★ 后台线程池：非关键路径异步执行，降低主路径延迟
 _fallback_executor: ThreadPoolExecutor | None = ThreadPoolExecutor(max_workers=2, thread_name_prefix="omnimem_mem_bg")
+# ★ 修复 C11：保护 _fallback_executor 创建的并发访问锁
+_fallback_executor_lock = __import__("threading").Lock()
 
 
 def shutdown_background_executor(wait: bool = True) -> None:
     """显式关闭模块级后台线程池。"""
     global _fallback_executor
-    if _fallback_executor is not None:
-        _fallback_executor.shutdown(wait=wait)
-        _fallback_executor = None
+    with _fallback_executor_lock:
+        if _fallback_executor is not None:
+            _fallback_executor.shutdown(wait=wait)
+            _fallback_executor = None
 
 
 def get_background_executor() -> ThreadPoolExecutor:
-    """获取可用的后台线程池；如已关闭则自动重建。"""
+    """获取可用的后台线程池；如已关闭则自动重建（线程安全）。"""
     global _fallback_executor
-    if _fallback_executor is None or _fallback_executor._shutdown:
-        _fallback_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="omnimem_mem_bg")
-    return _fallback_executor
+    with _fallback_executor_lock:
+        if _fallback_executor is None or _fallback_executor._shutdown:
+            _fallback_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="omnimem_mem_bg")
+        return _fallback_executor
 
 
 def _log_bg_error(action: str, memory_id: str, exc: Exception) -> None:

@@ -1,14 +1,14 @@
 """HybridRetriever — 混合检索编排 Facade。
 
-6通道并行检索 + RRF 融合 + 可选 Cross-Encoder Rerank：
-  1. 向量检索 (ChromaDB)
-  2. BM25 关键词检索
-  3. 目录检索 (Wing/Hall/Room 结构过滤)
-  4. 实体提升 (Phase 3)
-  5. 时间检索 (Phase 3)
-  6. 图谱检索 (Phase 3)
+多通道检索 + RRF 融合 + 可选 Cross-Encoder Rerank。通道现状：
+  1. 向量检索 (ChromaDB) [默认激活]
+  2. BM25 关键词检索 [默认激活]
+  3. 目录检索 (Wing/Hall/Room 结构过滤) [可选，需 index+wing_room]
+  4. 图谱检索 (graph, 时序三元组) [经 DEFAULT_REGISTRY 注册，时序查询时生效]
+  5. 时间检索 (temporal) [经 DEFAULT_REGISTRY 注册，提供融合后时序重排序]
+  6. 实体提升 [非独立通道，在 additive 融合中经 EntityExtractor 加权]
 
-Phase 1-2 实现: 向量 + BM25 + RRF 融合
+额外通道可经 RetrieverRegistry 插件化注册，无需修改本文件。
 
 读写锁优化：search() 用读锁（可并行），add() 用写锁（独占），
 避免后台 queue_prefetch 写入阻塞主线程 prefetch 搜索。
@@ -53,7 +53,8 @@ _trim_to_budget = trim_to_budget
 class HybridRetriever:
     """混合检索编排：向量 + BM25 + RRF 融合。
 
-    6通道并行检索 + RRF 融合 + 可选 Cross-Encoder Rerank。
+    默认激活 2 个检索通道（vector + bm25），可选 Cross-Encoder Rerank；
+    额外通道（实体/时间/图谱等）通过 RetrieverRegistry 插件化注册。
     读写锁优化: search() 用读锁（可并行），add() 用写锁（独占）。
     """
 
@@ -122,12 +123,15 @@ class HybridRetriever:
             vector_store=vector_store,
         )
         bm25 = BM25Retriever(data_dir=self._data_dir)
-        self.register_channel("vector", vec, weight=1.0)
-        self.register_channel("bm25", bm25, weight=3.0)
+        self.register_channel("vector", vec, weight=_cfg("vector_weight", 3.0))
+        self.register_channel("bm25", bm25, weight=_cfg("bm25_weight", 1.0))
         self._vector = vec
         self._bm25 = bm25
         self._rrf = RRFFusion(k=self._rrf_k, min_rrf=self._rrf_min_score)
-        self._reranker = CrossEncoderReranker(model_path=reranker_model_path) if enable_reranker else None
+        self._reranker = CrossEncoderReranker(
+            model_path=reranker_model_path,
+            device=_cfg("reranker_device", "cpu"),
+        ) if enable_reranker else None
         self._recall_timeout_ms = recall_timeout_ms
         self._recall_strategy = recall_strategy
         self._query_cache_ttl = query_cache_ttl
@@ -147,6 +151,8 @@ class HybridRetriever:
             logger.warning("MultiLevelCache init failed, falling back to dict cache: %s", e)
             self._ml_cache = None
         self._source_weights: dict[str, float] = {}
+        # ★ 修复 C7：保护 _source_weights 临时修改的并发访问锁
+        self._source_weights_lock = __import__("threading").RLock()
         self._catalog: Any = None
         self._vector_breaker = CircuitBreaker(
             threshold=self._circuit_breaker_threshold,
@@ -430,8 +436,9 @@ class HybridRetriever:
         self._orchestrator.cleanup_sync_turn_entries()
 
     def set_source_weights(self, weights: dict[str, float]) -> None:
-        """设置动态来源权重。"""
-        self._source_weights = dict(weights)
+        """设置动态来源权重（线程安全）。"""
+        with self._source_weights_lock:
+            self._source_weights = dict(weights)
 
     def invalidate_cache(self) -> None:
         """清除查询结果缓存。"""

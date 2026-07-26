@@ -513,15 +513,31 @@ class TestHybridRetrieverConfig(unittest.TestCase):
         for _ in range(3):
             hybrid.search("测试查询")
         self.assertEqual(id(hybrid._orchestrator._executor), executor_id)
+        hybrid.shutdown()
+
+    def test_multiple_instances_share_thread_pool(self) -> None:
+        """★ P2: 多个 HybridRetriever 实例应共享同一个全进程线程池。"""
+        tmpdir_a, tmpdir_b = tempfile.mkdtemp(), tempfile.mkdtemp()
+        a = HybridRetriever(data_dir=Path(tmpdir_a))
+        b = HybridRetriever(data_dir=Path(tmpdir_b))
+        self.assertIs(a._orchestrator._executor, b._orchestrator._executor)
+        a.shutdown()
+        b.shutdown()
 
     def test_shutdown_closes_thread_pool(self) -> None:
-        """shutdown() 应关闭检索线程池。"""
+        """shutdown() 应释放共享线程池引用；引用归零时真正关闭。"""
+        from omnimem.retrieval import hybrid_orchestrator as ho
+
         tmpdir = tempfile.mkdtemp()
         hybrid = HybridRetriever(data_dir=Path(tmpdir))
         executor = hybrid._orchestrator._executor
         self.assertIsNotNone(executor)
         hybrid.shutdown()
-        self.assertTrue(executor._shutdown)
+        # 实例已释放引用
+        self.assertIsNone(hybrid._orchestrator._executor)
+        # 仅当全局引用归零时池才真正关闭（其他未 shutdown 的实例可能仍持引用）
+        if ho._shared_executor is None:
+            self.assertTrue(executor._shutdown)
 
 
 # ──────────────────────────────────────────────

@@ -317,7 +317,11 @@ class SagaCoordinator:
                     )
 
     def _run_compensations(self, memory_id: str, completed_steps: list[SagaStep]) -> None:
-        """逆序执行已完成步骤的补偿回调。"""
+        """逆序执行已完成步骤的补偿回调。
+
+        ★ 修复 C5：补偿失败时记录到 pending 队列，由后台重试，
+           避免部分补偿成功部分失败导致的数据残留。
+        """
         for step in reversed(completed_steps):
             if step.compensate is not None:
                 try:
@@ -327,9 +331,25 @@ class SagaCoordinator:
                     )
                 except Exception as ce:
                     logger.warning(
-                        "Saga compensate '%s' failed for %s: %s",
+                        "Saga compensate '%s' failed for %s: %s — 记录到 pending 待重试",
                         step.name, memory_id, ce,
                     )
+                    # ★ 修复 C5：补偿失败记录到 pending，由后台 retry_pending 重试
+                    # 避免部分补偿成功部分失败导致数据残留
+                    self._pending.append({
+                        "memory_id": memory_id,
+                        "failed_step": f"__compensate__{step.name}",
+                        "completed_steps": [s.name for s in completed_steps],
+                        "error": str(ce),
+                        "retry_count": 0,
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                        "phase": "compensate",
+                    })
+                    try:
+                        self._persist_pending()
+                        set_saga_pending_count(len(self._pending))
+                    except Exception as pe:
+                        logger.warning("Saga pending persist (compensate) failed: %s", pe)
 
     def reset_circuit_breaker(self) -> None:
         """手动重置熔断器状态。"""

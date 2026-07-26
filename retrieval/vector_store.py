@@ -58,6 +58,51 @@ def _emit(msg: str) -> None:
         logger.info(msg)
 
 
+def load_embedding_cache_dict(path: str | Path) -> dict[str, list[float]]:
+    """★ P2: 读取嵌入缓存为 {hash: vector} 字典。
+
+    兼容两种持久化格式（供治理模块等外部消费方使用）：
+      1. SQLite 新格式（<path去扩展名>.db，embedding_cache 表）— 优先
+      2. JSON 旧格式（原 embedding_cache.json）— 回退
+    """
+    import json
+    import os as _os
+    import sqlite3
+
+    p = Path(_os.path.expanduser(str(path)))
+    db_path = p.with_suffix(".db")
+    result: dict[str, list[float]] = {}
+
+    if db_path.exists():
+        try:
+            conn = sqlite3.connect(str(db_path), timeout=5.0)
+            try:
+                rows = conn.execute("SELECT hash, vector FROM embedding_cache").fetchall()
+            finally:
+                conn.close()
+            for key, vec_json in rows:
+                try:
+                    result[key] = [float(v) for v in json.loads(vec_json)]
+                except Exception:
+                    continue
+            return result
+        except Exception as e:
+            logger.warning("load_embedding_cache_dict sqlite failed: %s", e)
+
+    if p.exists():
+        try:
+            with open(p, encoding="utf-8") as f:
+                data = json.load(f)
+            for key, vec in data.items():
+                if isinstance(vec, (list, tuple)) and len(vec) == 2 and isinstance(vec[0], (list, tuple)):
+                    result[key] = [float(v) for v in vec[0]]
+                else:
+                    result[key] = [float(v) for v in vec]
+        except Exception as e:
+            logger.warning("load_embedding_cache_dict json failed: %s", e)
+    return result
+
+
 class VectorStore(ABC):
     @abstractmethod
     def add(self, ids: list[str], documents: list[str], metadatas: list[dict] | None = None) -> None:
@@ -132,70 +177,159 @@ class _CachedEmbeddingFunction:
         with self._lock:
             return len(self._cache)
 
-    def _load_cache(self) -> None:
-        if not self._cache_path or not self._cache_path.exists():
-            return
-        try:
-            import json
+    def _db_path(self) -> Path | None:
+        """★ P2: SQLite 缓存文件路径（与旧 JSON 同目录，扩展名 .db）。"""
+        if not self._cache_path:
+            return None
+        return self._cache_path.with_suffix(".db")
 
-            with open(self._cache_path, encoding="utf-8") as f:
-                data = json.load(f)
+    @staticmethod
+    def _open_db(db_path: Path) -> Any:
+        """打开 SQLite 缓存连接（每次操作独立连接，天然线程安全）。"""
+        import sqlite3
+
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        conn = sqlite3.connect(str(db_path), timeout=5.0)
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA synchronous=NORMAL")
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS embedding_cache ("
+            "hash TEXT PRIMARY KEY, vector TEXT NOT NULL, updated_at REAL)"
+        )
+        return conn
+
+    # SQLite 缓存最大行数（磁盘层，大于内存层 _max_cache）
+    _DB_MAX_ROWS = 5000
+
+    def _load_cache(self) -> None:
+        """★ P2: 从 SQLite 加载缓存；首次运行时自动导入旧 JSON 格式。"""
+        db_path = self._db_path()
+        if db_path is None:
+            return
+        import json
+
+        try:
+            # 旧 JSON 存在且 SQLite 尚未建立 → 一次性导入（JSON 保留不再写入）
+            if not db_path.exists() and self._cache_path.exists():
+                self._migrate_json_to_db(db_path)
+
+            if not db_path.exists():
+                return
+            conn = self._open_db(db_path)
+            try:
+                rows = conn.execute(
+                    "SELECT hash, vector FROM embedding_cache "
+                    "ORDER BY updated_at DESC LIMIT ?",
+                    (self._max_cache,),
+                ).fetchall()
+            finally:
+                conn.close()
             now = time.time()
             loaded: OrderedDict[str, tuple[list[float], float]] = OrderedDict()
-            for k, vec in data.items():
-                if isinstance(vec, (list, tuple)) and len(vec) == 2:
-                    # 持久化或新格式: (vector, expire_at)
-                    embedding = [float(v) for v in vec[0]]
-                else:
-                    # 旧格式: 仅 vector
-                    embedding = [float(v) for v in vec]
-                loaded[k] = (embedding, now + self._cache_ttl)
+            # 按 updated_at 升序放入（最新的最后 → LRU 末端）
+            for key, vec_json in reversed(rows):
+                try:
+                    loaded[key] = ([float(v) for v in json.loads(vec_json)], now + self._cache_ttl)
+                except Exception:
+                    continue
             self._cache = loaded
             count = len(self._cache)
-            logger.warning("Loaded %d entries from embedding cache", count)
+            logger.warning("Loaded %d entries from embedding cache (sqlite)", count)
             if count > 0:
                 _emit(f"[OmniMem] 嵌入缓存: 从磁盘加载 {count} 条")
         except Exception as e:
             logger.warning("Embedding cache load failed: %s", e)
             self._cache = OrderedDict()
 
+    def _migrate_json_to_db(self, db_path: Path) -> None:
+        """旧 JSON 缓存一次性导入 SQLite（导入失败不阻断启动）。"""
+        import json
+
+        try:
+            with open(self._cache_path, encoding="utf-8") as f:
+                data = json.load(f)
+            now = time.time()
+            rows = []
+            for k, vec in data.items():
+                # 新格式 (vector, expire_at) 的判据是首元素为列表，
+                # 避免把长度恰为 2 的旧格式向量误判为元组格式
+                if (
+                    isinstance(vec, (list, tuple))
+                    and len(vec) == 2
+                    and isinstance(vec[0], (list, tuple))
+                ):
+                    embedding = vec[0]
+                else:
+                    embedding = vec  # 旧格式: 仅 vector
+                rows.append((k, json.dumps([float(v) for v in embedding]), now))
+            conn = self._open_db(db_path)
+            try:
+                conn.executemany(
+                    "INSERT OR REPLACE INTO embedding_cache (hash, vector, updated_at) "
+                    "VALUES (?, ?, ?)",
+                    rows,
+                )
+                conn.commit()
+            finally:
+                conn.close()
+            logger.warning("Migrated %d embedding cache entries JSON -> SQLite", len(rows))
+        except Exception as e:
+            logger.warning("Embedding cache JSON->SQLite migration failed: %s", e)
+
     def persist(self) -> None:
         """异步持久化嵌入缓存到磁盘（后台线程写入，不阻塞主流程）。
 
         使用 _dirty 标记避免无变更时的无效写入，
         使用 _persist_in_progress 标记避免并发写入冲突。
+
+        ★ 修复 C12：原实现 _dirty / _persist_in_progress 检查-赋值非原子，
+           多线程可能同时通过检查并启动多个持久化线程。改为持锁检查并设置标志。
         """
         if not self._cache_path:
             return
-        # 无变更则跳过
-        if not self._dirty:
-            return
-        # 已有持久化在进行中则跳过（避免并发写入冲突）
-        if self._persist_in_progress:
-            return
-        # 标记持久化进行中
-        self._persist_in_progress = True
-        # 启动后台 daemon 线程执行磁盘写入
+        with self._lock:
+            # 无变更则跳过
+            if not self._dirty:
+                return
+            # 已有持久化在进行中则跳过（避免并发写入冲突）
+            if self._persist_in_progress:
+                return
+            # 标记持久化进行中（持锁，原子操作）
+            self._persist_in_progress = True
+        # 启动后台 daemon 线程执行磁盘写入（锁外执行 IO，避免长持锁）
         thread = threading.Thread(target=self._persist_to_disk, daemon=True)
         thread.start()
 
     def _persist_to_disk(self) -> None:
-        """后台线程执行磁盘写入（内部方法）。"""
+        """后台线程执行磁盘写入（★ P2: SQLite 增量 upsert，替代 JSON 全量重写）。"""
         try:
             import json
-            import os
 
-            self._cache_path.parent.mkdir(parents=True, exist_ok=True)
+            db_path = self._db_path()
+            if db_path is None:
+                return
             with self._lock:
-                # 持久化时仅保存向量（加载时重置 TTL），避免过期时间绝对值失效
+                # 快照当前内存缓存（仅向量，加载时重置 TTL）
                 data = {k: v[0] for k, v in self._cache.items()}
                 self._dirty = False
-            # 原子写入：先写临时文件再 rename，避免并发读看到不完整的写入
-            tmp_path = self._cache_path.with_suffix(".json.tmp")
-            with open(tmp_path, "w", encoding="utf-8") as f:
-                json.dump(data, f, ensure_ascii=False)
-            os.replace(str(tmp_path), str(self._cache_path))
-            logger.warning("Saved %d entries to embedding cache (async)", len(data))
+            now = time.time()
+            conn = self._open_db(db_path)
+            try:
+                conn.executemany(
+                    "INSERT OR REPLACE INTO embedding_cache (hash, vector, updated_at) "
+                    "VALUES (?, ?, ?)",
+                    [(k, json.dumps(v), now) for k, v in data.items()],
+                )
+                # 磁盘层容量裁剪：保留最近使用的 _DB_MAX_ROWS 行
+                conn.execute(
+                    "DELETE FROM embedding_cache WHERE hash NOT IN ("
+                    "SELECT hash FROM embedding_cache ORDER BY updated_at DESC LIMIT ?)",
+                    (self._DB_MAX_ROWS,),
+                )
+                conn.commit()
+            finally:
+                conn.close()
+            logger.warning("Saved %d entries to embedding cache (sqlite, async)", len(data))
         except Exception as e:
             logger.warning("Embedding cache persist failed: %s", e)
         finally:
@@ -516,18 +650,45 @@ class ChromaDBStore(VectorStore):
 
 
 class QdrantStore(VectorStore):
+    """Qdrant 向量存储后端。
+
+    ★ P0修复：接入真实 embedding 向量（原实现使用全零向量，检索完全失效）。
+      - embedding_fn 缺失时 add/query 显式抛出 RuntimeError，不再静默降级
+      - point id 使用 memory_id 派生的确定性 UUID，重启后 upsert 幂等
+    """
+
     def __init__(
         self,
         collection_name: str = "omnimem",
         url: str | None = None,
         api_key: str | None = None,
+        embedding_fn: _CachedEmbeddingFunction | None = None,
+        dimension: int = 384,
     ):
         self._collection_name = collection_name
         self._url = url or "localhost:6333"
         self._api_key = api_key
+        self._embedding_fn = embedding_fn
+        self._dimension = dimension
         self._client: Any = None
         self._initialized = False
-        self._point_id_counter = 0
+
+    @staticmethod
+    def _point_id(memory_id: str) -> str:
+        """memory_id → 确定性 UUID（Qdrant 要求 point id 为整数或 UUID）。"""
+        import uuid
+
+        return str(uuid.uuid5(uuid.NAMESPACE_URL, f"omnimem:{memory_id}"))
+
+    def _embed(self, texts: list[str]) -> list[list[float]]:
+        """计算真实 embedding。缺失 embedding_fn 时显式报错，不静默降级。"""
+        if self._embedding_fn is None:
+            raise RuntimeError(
+                "QdrantStore requires an embedding_fn — vector search would be "
+                "broken with dummy vectors. Install sentence-transformers or "
+                "pass embedding_fn explicitly."
+            )
+        return self._embedding_fn.embed_query(texts)
 
     def _ensure_initialized(self) -> None:
         if self._initialized:
@@ -545,7 +706,7 @@ class QdrantStore(VectorStore):
             except Exception:
                 self._client.create_collection(
                     collection_name=self._collection_name,
-                    vectors_config=VectorParams(size=384, distance=Distance.COSINE),
+                    vectors_config=VectorParams(size=self._dimension, distance=Distance.COSINE),
                 )
             logger.warning("Qdrant collection initialized: %s", self._collection_name)
         except ImportError:
@@ -558,17 +719,18 @@ class QdrantStore(VectorStore):
         self._ensure_initialized()
         if self._client is None:
             return
+        # ★ 真实向量计算：embedding 失败应显式暴露而非静默写入坏数据
+        vectors = self._embed(documents)
         try:
             from qdrant_client.models import PointStruct
 
             metas = metadatas or [{}] * len(ids)
             points = []
-            for pid, doc, meta in zip(ids, documents, metas, strict=False):
-                self._point_id_counter += 1
+            for pid, doc, meta, vec in zip(ids, documents, metas, vectors, strict=False):
                 points.append(
                     PointStruct(
-                        id=self._point_id_counter,
-                        vector=[0.0] * 384,
+                        id=self._point_id(pid),
+                        vector=vec,
                         payload={"_id": pid, "document": doc, **meta},
                     )
                 )
@@ -580,8 +742,9 @@ class QdrantStore(VectorStore):
         self._ensure_initialized()
         if self._client is None:
             return {"ids": [[]], "documents": [[]], "metadatas": [[]], "distances": [[]]}
+        # ★ 真实查询向量（原实现使用全零 dummy_vector，结果与语义无关）
+        query_vector = self._embed([query_texts[0]])[0] if query_texts else [0.0] * self._dimension
         try:
-            dummy_vector = [0.0] * 384
             filter_obj = None
             if where:
                 from qdrant_client.models import FieldCondition, Filter, MatchValue
@@ -593,11 +756,12 @@ class QdrantStore(VectorStore):
 
             results = self._client.search(
                 collection_name=self._collection_name,
-                query_vector=dummy_vector,
+                query_vector=query_vector,
                 limit=n_results,
                 query_filter=filter_obj,
             )
-            ids = [[str(r.id) for r in results]]
+            # ★ 返回 payload 中的原始 memory_id（而非 Qdrant 内部 point id）
+            ids = [[str(r.payload.get("_id", r.id)) for r in results]]
             documents = [[r.payload.get("document", "") for r in results]]
             metadatas = [[{k: v for k, v in r.payload.items() if k != "document"} for r in results]]
             distances = [[1.0 - r.score for r in results]]
@@ -618,20 +782,11 @@ class QdrantStore(VectorStore):
         try:
             from qdrant_client.models import PointIdsList
 
-            scroll_result = self._client.scroll(
+            # ★ point id 为 memory_id 的确定性 UUID，可直接定位，无需 scroll 全表
+            self._client.delete(
                 collection_name=self._collection_name,
-                scroll_filter=None,
-                limit=10000,
+                points_selector=PointIdsList(points=[self._point_id(i) for i in ids]),
             )
-            points_to_delete = []
-            for point in scroll_result[0]:
-                if point.payload.get("_id") in ids:
-                    points_to_delete.append(point.id)
-            if points_to_delete:
-                self._client.delete(
-                    collection_name=self._collection_name,
-                    points_selector=PointIdsList(points=points_to_delete),
-                )
         except Exception as e:
             logger.warning("QdrantStore delete failed: %s", e)
 
@@ -655,8 +810,7 @@ class QdrantStore(VectorStore):
 
             self._client.create_collection(
                 collection_name=self._collection_name,
-                vectors_config=VectorParams(size=384, distance=Distance.COSINE),
+                vectors_config=VectorParams(size=self._dimension, distance=Distance.COSINE),
             )
-            self._point_id_counter = 0
         except Exception as e:
             logger.warning("QdrantStore reset failed: %s", e)

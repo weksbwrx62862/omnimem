@@ -54,6 +54,9 @@ class GovernanceFacade:
         self._privacy.bind_store(storage_facade.store)
         storage_facade.store.bind_privacy_manager(self._privacy)
 
+        # ★ 修复 C13：补充 _store 赋值，trust_feedback 引用 self._store 但 __init__ 未赋值
+        self._store = storage_facade.store
+
         self._provenance = ProvenanceTracker(data_dir=gov_dir)
 
         # 同步引擎

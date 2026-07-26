@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -15,31 +16,62 @@ logger = logging.getLogger(__name__)
 class CrossEncoderReranker:
     """Cross-Encoder 重排。"""
 
-    def __init__(self, model_name: str = "cross-encoder/ms-marco-MiniLM-L-6-v2", model_path: str = ""):
+    # ★ 全局模型缓存：避免每题重新加载（跨 OmniMemMemoryProvider 实例共享）
+    _global_model: Any = None
+    _global_model_name: str = ""
+    # ★ 修复 C8：全局模型加载锁，避免多线程首次加载重复加载模型
+    _global_model_lock = threading.Lock()
+
+    def __init__(self, model_name: str = "cross-encoder/ms-marco-MiniLM-L-6-v2", model_path: str = "", device: str = "cpu"):
         self._model_name = model_name
         self._model_path = model_path
+        self._device = device
         self._model: Any = None
 
     def _ensure_model(self) -> bool:
-        """延迟加载 Cross-Encoder 模型。"""
+        """延迟加载 Cross-Encoder 模型，优先使用全局缓存（线程安全）。"""
         if self._model is not None:
             return True
-        try:
-            # ROCm PyTorch 兼容性
-            import torch.distributed as dist
-            if not hasattr(dist, 'is_initialized'):
-                dist.is_initialized = lambda: False
-            from sentence_transformers import CrossEncoder
 
-            model_path = self._model_path or self._model_name
-            self._model = CrossEncoder(model_path)
-            return True
-        except ImportError:
-            logger.warning("sentence_transformers not installed — reranking disabled")
-            return False
-        except Exception as e:
-            logger.warning("Cross-Encoder model load failed: %s", e)
-            return False
+        # ★ 修复 C8：使用全局锁保护检查-加载-赋值，避免多线程重复加载
+        with CrossEncoderReranker._global_model_lock:
+            # double-check：进入锁后再次检查全局缓存
+            model_key = self._model_path or self._model_name
+            if (
+                CrossEncoderReranker._global_model is not None
+                and CrossEncoderReranker._global_model_name == model_key
+            ):
+                self._model = CrossEncoderReranker._global_model
+                logger.info("Cross-Encoder 模型从全局缓存加载（跳过重复加载）")
+                return True
+
+            # 持锁期间执行加载（可能耗时数秒，但保证只加载一次）
+            try:
+                # ROCm PyTorch 兼容性
+                import torch.distributed as dist
+                if not hasattr(dist, 'is_initialized'):
+                    dist.is_initialized = lambda: False
+
+                # M7-14: 使用配置的 device，默认 cpu
+                import os
+                if self._device == "cpu":
+                    os.environ.setdefault("CUDA_VISIBLE_DEVICES", "")
+
+                from sentence_transformers import CrossEncoder
+
+                self._model = CrossEncoder(model_key, device=self._device)
+
+                # ★ 缓存到全局
+                CrossEncoderReranker._global_model = self._model
+                CrossEncoderReranker._global_model_name = model_key
+
+                return True
+            except ImportError:
+                logger.warning("sentence_transformers not installed — reranking disabled")
+                return False
+            except Exception as e:
+                logger.warning("Cross-Encoder model load failed: %s", e)
+                return False
 
     def rerank(
         self,

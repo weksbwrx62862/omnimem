@@ -153,7 +153,7 @@ class TestGetToolSchemas(unittest.TestCase):
             "omni_reflect",
             "omni_govern",
             "omni_detail",
-            "memory",
+            "omni_memory_compat",
             "omni_record_action",
         }
         self.assertEqual(names, expected)

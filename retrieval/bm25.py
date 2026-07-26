@@ -157,7 +157,8 @@ def _tokenize(text: str) -> list[str]:
 
     _ensure_common_zh_words()
     raw_tokens = []
-    raw_tokens.extend(re.findall(r"[a-zA-Z0-9]{2,}", text.lower()))
+    # ★ v9: 保留单个数字（原 [a-zA-Z0-9]{2,} 会丢弃 "3"/"7" 等关键数字）
+    raw_tokens.extend(re.findall(r"[a-zA-Z]{2,}|\d+", text.lower()))
 
     zh_chars = re.findall(r"[\u4e00-\u9fff]+", text)
     for segment in zh_chars:
@@ -531,10 +532,15 @@ class BM25Retriever:
             self._bm25 = None
 
     def _start_background_rebuild(self) -> None:
-        """在后台线程中合并缓冲区并重建索引，不阻塞搜索。"""
-        if self._rebuilding:
-            return
-        self._rebuilding = True
+        """在后台线程中合并缓冲区并重建索引，不阻塞搜索。
+
+        ★ 修复 C6：原实现 _rebuilding 标志检查-赋值在持锁前（行536-538），
+           TOCTOU 竞态可能创建多个重建线程。改为持锁检查并设置标志。
+        """
+        with self._lock:
+            if self._rebuilding:
+                return
+            self._rebuilding = True
 
         def _do_rebuild() -> None:
             try:
@@ -546,7 +552,8 @@ class BM25Retriever:
             except Exception:
                 logger.warning("BM25 background rebuild failed", exc_info=True)
             finally:
-                self._rebuilding = False
+                with self._lock:
+                    self._rebuilding = False
 
         t = threading.Thread(target=_do_rebuild, daemon=True)
         t.start()

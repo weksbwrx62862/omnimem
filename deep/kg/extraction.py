@@ -11,10 +11,18 @@ from __future__ import annotations
 import json
 import logging
 import re
-from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+# 模块级 LLM 客户端引用（由外部注入，避免绕过 LLMBackend 直连）
+_llm_client: Any = None
+
+
+def set_llm_client(client: Any) -> None:
+    """注入 LLM 客户端，供 _extract_triples_llm 使用。"""
+    global _llm_client
+    _llm_client = client
 
 
 # ─── 关系模式：从文本中提取 (主语, 关系, 宾语) 三元组 ─────────────────
@@ -170,22 +178,14 @@ def extract_triples(text: str, use_llm: bool = True) -> list[tuple[str, str, str
 
 
 def _extract_triples_llm(text: str) -> list[tuple[str, str, str]]:
-    """使用 LLM 从文本中抽取知识三元组（轻量级，仅在正则不足时调用）。"""
-    import yaml
-    from openai import OpenAI
+    """使用 LLM 从文本中抽取知识三元组（轻量级，仅在正则不足时调用）。
 
-    # 读取 API 配置
-    config_path = Path.home() / ".hermes" / "config.yaml"
-    if not config_path.exists():
+    通过模块级注入的 _llm_client 调用，不再自建 OpenAI 连接、
+    自读 config.yaml 或硬编码模型名。
+    """
+    if _llm_client is None:
+        logger.debug("LLM client not injected, skipping KG triple extraction")
         return []
-    with open(config_path) as f:
-        cfg = yaml.safe_load(f)
-    providers = cfg.get("providers", {})
-    ds = providers.get("openai", {})
-    if not ds.get("api_key"):
-        return []
-
-    client = OpenAI(api_key=ds["api_key"], base_url=ds.get("base_url", ""))
 
     prompt = f"""从以下文本中抽取知识三元组 (subject, predicate, object)。
 要求：
@@ -200,18 +200,21 @@ def _extract_triples_llm(text: str) -> list[tuple[str, str, str]]:
 返回 JSON 数组：[{{"s": "...", "p": "...", "o": "..."}}]
 只返回 JSON。"""
 
-    resp = client.chat.completions.create(
-        model="deepseek-v4-flash",
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0.3,
-        max_tokens=500,
-    )
-    raw = resp.choices[0].message.content or ""
+    try:
+        # 使用注入的 LLM 客户端（AsyncLLMClient 或 LLMBackend）
+        resp = _llm_client.call_sync(prompt, max_tokens=500, temperature=0.3)
+        raw = resp.content if hasattr(resp, 'content') else str(resp)
+    except Exception as e:
+        logger.debug("LLM triple extraction failed: %s", e)
+        return []
 
-    m = re.search(r"\[\s\S]*\]", raw)
+    m = re.search(r"\[[\s\S]*\]", raw)
     if not m:
         return []
-    items = json.loads(m.group())
+    try:
+        items = json.loads(m.group())
+    except json.JSONDecodeError:
+        return []
     return [
         (item["s"].strip(), item["p"].strip(), item["o"].strip())
         for item in items

@@ -209,26 +209,37 @@ class OmniMemProvider(
             self._retrieval.prefetch_cache = ""
 
         prefetch_timeout = self._config.get("prefetch_timeout", 5)
-        future = self._prefetch_executor.submit(
-            run_prefetch,
-            query=query,
-            session_id=session_id,
-            config=self._config,
-            retriever=self._retriever,
-            context_manager=self._context_manager,
-            kv_cache=self._kv_cache,
-            knowledge_graph=self._knowledge_graph,
-            temporal_decay=self._temporal_decay,
-            privacy=self._privacy,
-            prefetch_cache="",
-            prefetch_lock=self._prefetch_lock,
-            forgetting=self._forgetting,
-        )
+        max_retries = self._config.get("prefetch_max_retries", 1)
+        result = ""
+        new_cache = ""
         try:
-            result, new_cache = future.result(timeout=prefetch_timeout)
-        except TimeoutError:
-            logger.warning("OmniMem prefetch timed out after %ds", prefetch_timeout)
-            return ""
+            for attempt in range(max_retries + 1):
+                future = self._prefetch_executor.submit(
+                    run_prefetch,
+                    query=query,
+                    session_id=session_id,
+                    config=self._config,
+                    retriever=self._retriever,
+                    context_manager=self._context_manager,
+                    kv_cache=self._kv_cache,
+                    knowledge_graph=self._knowledge_graph,
+                    temporal_decay=self._temporal_decay,
+                    privacy=self._privacy,
+                    prefetch_cache="",
+                    prefetch_lock=self._prefetch_lock,
+                    forgetting=self._forgetting,
+                )
+                try:
+                    result, new_cache = future.result(timeout=prefetch_timeout)
+                    break
+                except TimeoutError:
+                    if attempt < max_retries:
+                        logger.debug("OmniMem prefetch timed out after %ds (attempt %d/%d), retrying",
+                                     prefetch_timeout, attempt + 1, max_retries + 1)
+                        continue
+                    logger.warning("OmniMem prefetch timed out after %ds (all %d attempts)",
+                                   prefetch_timeout, max_retries + 1)
+                    return ""
         except Exception as e:
             logger.warning("OmniMem prefetch failed (non-blocking): %s", e)
             self.queue_prefetch(query, session_id=session_id)

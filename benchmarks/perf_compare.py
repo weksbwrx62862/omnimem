@@ -293,7 +293,7 @@ def _collect_env() -> dict:
         "cpu_count": os.cpu_count(),
     }
     # 关键依赖版本
-    for pkg in ["chromadb", "tiktoken", "rank_bm25", "cryptography", "aiosqlite", "datasketch"]:
+    for pkg in ["chromadb", "tiktoken", "rank_bm25", "cryptography"]:
         try:
             mod = __import__(pkg)
             env[f"{pkg}_version"] = getattr(mod, "__version__", "unknown")

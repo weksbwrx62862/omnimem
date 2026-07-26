@@ -33,6 +33,19 @@ def _validate_recall_args(args: dict[str, Any]) -> str | None:
     if not isinstance(max_tokens, int) or max_tokens <= 0:
         return f"max_tokens must be a positive integer, got {max_tokens}"
 
+    type_filter = args.get("type_filter")
+    if type_filter is not None:
+        if not isinstance(type_filter, list) or not all(isinstance(t, str) for t in type_filter):
+            return "type_filter must be a list of strings"
+        valid_types = {
+            "fact", "preference", "correction", "skill", "procedural",
+            "event", "action", "reasoning", "knowledge", "workflow",
+            "project", "convention", "maintenance", "user_profile",
+        }
+        invalid = [t for t in type_filter if t not in valid_types]
+        if invalid:
+            return f"invalid type(s) in type_filter: {invalid}"
+
     return None
 
 

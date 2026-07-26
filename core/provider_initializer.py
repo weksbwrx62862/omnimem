@@ -139,6 +139,14 @@ class ProviderInitializerMixin:
             llm_client=self._llm_client_manager.llm_client,
             config=self._config,
         )
+        # ★ P1: LLM 驱动的事实抽取（hybrid 模式），LLM 不可用时自动保持规则模式
+        try:
+            self._retrieval.perception.configure_llm_extraction(
+                mode=self._config.get("extraction_mode", "hybrid"),
+                llm_client=self._llm_client_manager.llm_client,
+            )
+        except Exception as e:
+            logger.warning("OmniMem: LLM extraction wiring failed (rule mode kept): %s", e)
         # OPT: 初始化 MermaidCanvas + CompressionPipeline
         from omnimem.compression.mermaid_canvas import MermaidCanvas
 
@@ -305,6 +313,19 @@ class ProviderInitializerMixin:
         self._llm_client_manager.init_llm_client()
         # 兼容属性：其他代码通过 self._llm_client 访问
         self._llm_client = self._llm_client_manager.llm_client
+        # M7-11: 注入 LLM 客户端到 KG 三元组抽取模块，避免绕过 LLMBackend 直连
+        if self._llm_client is not None:
+            try:
+                from omnimem.deep.kg.extraction import set_llm_client as set_kg_llm_client
+                set_kg_llm_client(self._llm_client)
+            except ImportError:
+                pass
+            try:
+                from omnimem.governance.triple_extractor import get_triple_extractor
+                model = getattr(self._llm_client, '_model', '') or self._config.get('llm_model', '')
+                get_triple_extractor().inject_llm_client(self._llm_client, model)
+            except ImportError:
+                pass
 
     def _make_llm_call_fn(self):
         """生成 LLM 调用函数 — 委托给 LLMClientManager。"""

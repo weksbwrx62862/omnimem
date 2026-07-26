@@ -15,8 +15,8 @@ OMNI_COMPACT = "omni_compact"
 OMNI_DETAIL = "omni_detail"
 OMNI_RECORD_ACTION = "omni_record_action"
 
-# 兼容内置 memory 工具名
-MEMORY_COMPAT = "memory"
+# 兼容内置 memory 工具名（避免与 Hermes 核心工具 'memory' 重名）
+MEMORY_COMPAT = "omni_memory_compat"
 
 __all__ = [
     "OMNI_MEMORIZE",

@@ -105,6 +105,18 @@ def get_tool_schemas() -> list[dict[str, Any]]:
                         "default": 1500,
                         "description": "Maximum tokens in results",
                     },
+                    "type_filter": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": (
+                            "Optional: filter results by memory type. "
+                            "e.g. ['preference', 'correction', 'fact']. "
+                            "Leave empty to return all types. "
+                            "Valid types: fact, preference, correction, skill, "
+                            "procedural, event, action, reasoning, knowledge, "
+                            "workflow, project, convention, maintenance, user_profile"
+                        ),
+                    },
                 },
                 "required": ["query"],
             },
@@ -190,6 +202,8 @@ def get_tool_schemas() -> list[dict[str, Any]]:
                             "provenance",
                             "forgetting_status",
                             "lora_train",
+                            "export_training_data",
+                            "register_adapter",
                             "shade_switch",
                             "shade_list",
                             "kv_cache_stats",

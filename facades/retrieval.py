@@ -59,7 +59,11 @@ class RetrievalFacade:
         # 缓存
         self.prefetch_cache: str = ""
         self.prefetch_lock = threading.Lock()
+        # ★ 修复 L6：_reflect_cache 加上限和 TTL，原实现无限制无清理
         self._reflect_cache: dict[str, tuple[Any, ...]] = {}
+        self._reflect_cache_ttl = 300.0  # 5 分钟 TTL
+        self._reflect_cache_max = 200
+        self._reflect_cache_lock = threading.Lock()
         self._prefetch_executor = ThreadPoolExecutor(
             max_workers=1, thread_name_prefix="omnimem_prefetch"
         )
@@ -79,6 +83,34 @@ class RetrievalFacade:
     @property
     def feedback(self) -> FeedbackCollector:
         return self._feedback
+
+    def get_reflect_cache(self, key: str) -> Any | None:
+        """读取 reflect_cache（带 TTL 检查）。"""
+        import time
+        with self._reflect_cache_lock:
+            entry = self._reflect_cache.get(key)
+            if entry is None:
+                return None
+            # entry 结构：(value, expire_at, ...)
+            if len(entry) >= 2 and isinstance(entry[1], float) and entry[1] < time.time():
+                self._reflect_cache.pop(key, None)
+                return None
+            return entry[0] if entry else None
+
+    def set_reflect_cache(self, key: str, value: Any) -> None:
+        """写入 reflect_cache（带 TTL + LRU 淘汰）。"""
+        import time
+        with self._reflect_cache_lock:
+            expire_at = time.time() + self._reflect_cache_ttl
+            self._reflect_cache[key] = (value, expire_at)
+            # 超限时淘汰最旧条目（按 expire_at）
+            if len(self._reflect_cache) > self._reflect_cache_max:
+                sorted_items = sorted(
+                    self._reflect_cache.items(), key=lambda kv: kv[1][1]
+                )
+                evict_count = len(self._reflect_cache) - self._reflect_cache_max
+                for k, _ in sorted_items[:evict_count]:
+                    self._reflect_cache.pop(k, None)
 
     @property
     def prefetch_executor(self) -> ThreadPoolExecutor:

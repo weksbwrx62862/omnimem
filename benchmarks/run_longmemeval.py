@@ -231,6 +231,13 @@ def _generate_answer_with_llm(
     prompt = (
         "I will give you several history chats between you and a user. "
         "Please answer the question based on the relevant chat history.\n\n"
+        "Guidelines:\n"
+        "- Look carefully at ALL entries for numbers, dates, names, and specific details.\n"
+        "- For temporal questions, identify date expressions and calculate time differences.\n"
+        "- For 'how many' questions, find the specific number mentioned in the history.\n"
+        "- For questions about schedules/assignments, look for the specific entry in tables or lists.\n"
+        "- For preference questions, identify what the user explicitly prefers or chooses.\n"
+        "- If the information exists in the history, answer precisely. Do NOT say it's unavailable if it's there.\n\n"
         f"History Chats:\n\n{context_text}\n\n"
         f"Question: {query}\nAnswer:"
     )
@@ -460,7 +467,13 @@ def run_single_question(
         # 步骤 1: Ingest — 将 haystack_sessions 写入 OmniMem
         print(f"  [{question_id[:8]}] ingest 开始 ({n_sessions_actual} sessions, {n_turns_actual} turns)...", end="", flush=True)
         t0 = time.perf_counter()
-        sdk_config = {"rrf_k": rrf_k}
+        sdk_config = {
+            "rrf_k": rrf_k,
+            "enable_reranker": True,  # 启用 Cross-Encoder 精排
+            "vector_weight": 2.0,     # 向量通道权重降低（原 3.0）
+            "bm25_weight": 2.0,       # BM25 通道权重提升（原 1.0）
+            "recall_timeout_ms": 30000,  # 检索超时 30s（需配合 reranker 候选数限制）
+        }
         provider = OmniMemMemoryProvider(storage_dir=tmp_dir, config=sdk_config)
         if not provider.is_ready:
             result["error"] = "SDK 初始化失败"

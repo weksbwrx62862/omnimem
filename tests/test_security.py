@@ -162,9 +162,11 @@ class TestExportEncryption(unittest.TestCase):
 
 
 class TestAdminAuthMiddleware(unittest.TestCase):
-    def test_disabled_when_admin_token_empty(self):
+    def test_rejected_when_admin_token_empty(self):
+        # ★ P0安全修复后：admin_token 未配置时 fail-closed，敏感操作被拒绝
         m = AdminAuthMiddleware(admin_token="")
-        self.assertTrue(m.validate({}))
+        result = m.validate({})
+        self.assertEqual(result[0], 403)
 
     def test_valid_admin_token(self):
         m = AdminAuthMiddleware(admin_token="admin123")

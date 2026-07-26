@@ -195,6 +195,8 @@ class OmniMemMCPServer:
                                 "provenance",
                                 "forgetting_status",
                                 "lora_train",
+                                "export_training_data",
+                                "register_adapter",
                                 "shade_switch",
                                 "shade_list",
                                 "kv_cache_stats",

@@ -184,9 +184,15 @@ class ProviderLifecycleMixin:
         return result
 
     def on_session_end(self, messages: list | None = None) -> None:
-        """会话结束：Consolidation + 治理归档。"""
+        """会话结束：Consolidation + 治理归档 + 物理过期清理。"""
         if not self._should_write:
             return
+        # ★ 修复 L9：会话结束时触发物理过期清理
+        # 原实现仅改 forgetting.db 的 stage 标记，Drawer 文件永不物理删除，导致存储膨胀
+        try:
+            self._prune_expired_memories()
+        except Exception as e:
+            logger.warning("on_session_end prune expired memories failed: %s", e)
         if self._session_manager:
             # 委托给 SessionManager
             self._session_manager.turn_count = self._turn_count
@@ -205,6 +211,26 @@ class ProviderLifecycleMixin:
                     auditor.quick_health_check()
         except Exception as e:
             logger.warning("on_session_end audit failed: %s", e)
+
+    def _prune_expired_memories(self) -> None:
+        """物理删除已标记为 superseded 且超过指定天数的记忆。
+
+        清理范围：
+          1. UnifiedMemoryIndex / ThreeLevelIndex 中 is_superseded=1 且 stored_at < cutoff
+          2. DrawerClosetStore 对应的 Drawer/Closet 文件
+          3. HybridRetriever 中对应的向量/BM25 文档
+          4. MetaStore 中对应的元数据
+
+        触发频率：每次 on_session_end（可配置阈值）
+        """
+        config = getattr(self, "_config", None) or {}
+        prune_days = config.get("prune_superseded_days", 90)
+        # UnifiedMemoryIndex（若已启用统一索引重构）
+        unified = getattr(self, "_unified_index", None)
+        if unified is not None:
+            deleted = unified.prune_expired(days=prune_days)
+            if deleted > 0:
+                logger.info("Pruned %d superseded memories (>=%dd)", deleted, prune_days)
 
     def on_delegation(
         self, task: str, result: str, *, child_session_id: str = "", **kwargs: Any
@@ -245,6 +271,24 @@ class ProviderLifecycleMixin:
             self._bg_executor.shutdown(wait=True)
         # 关闭 memorize 模块级后台 fallback 线程池
         shutdown_background_executor(wait=True)
+        # ★ 修复 L1/L2：关闭 recall + query_planner 模块级线程池
+        #   原实现仅靠 atexit 注册（planner 甚至无 atexit），进程退出前线程泄漏
+        try:
+            from omnimem.services.recall_service import _recall_executor
+            _recall_executor.shutdown(wait=False)
+        except Exception as e:
+            logger.debug("recall_executor shutdown failed: %s", e)
+        try:
+            from omnimem.handlers.query_planner import _planner_executor
+            _planner_executor.shutdown(wait=False)
+        except Exception as e:
+            logger.debug("planner_executor shutdown failed: %s", e)
+        # ★ 修复 L2：关闭 HybridOrchestrator 检索并行线程池
+        try:
+            if hasattr(self, "_retriever") and self._retriever:
+                self._retriever.shutdown()
+        except Exception as e:
+            logger.debug("HybridOrchestrator shutdown failed: %s", e)
 
         # 1. 存储层
         self._store.close()  # flush + 关闭 MetaStore SQLite 连接

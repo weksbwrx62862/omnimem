@@ -550,40 +550,66 @@ class OmniMemMemoryProvider:
                     if role == "assistant" and not self._is_substantive(content):
                         continue
 
-                    # memory_type 推断
-                    memory_type = self._infer_memory_type(role, content)
+                    # ★ v10: 长回复分段存储 — 排班表/列表按行拆分
+                    segments = self._split_long_content(content, role)
+                    if len(segments) <= 1:
+                        # 短回复直接存
+                        memory_type = self._infer_memory_type(role, content)
+                        # ★ 偏好增强索引：为偏好类 turn 注入可搜索前缀标签
+                        store_content = content
+                        if memory_type == "preference":
+                            store_content = f"[prefer like enjoy] {content}"
 
-                    # 构建元数据
-                    metadata = {
-                        "session_id": sess_id,
-                        "turn_index": turn_idx,
-                        "timestamp": sess_date,
-                        "role": role,
-                        "entry_index": entry_idx,
-                        "source": "longmemeval",
-                    }
-                    # 如果该 turn 包含证据标记，附加到元数据
-                    if turn.get("has_answer"):
-                        metadata["has_answer"] = True
-
-                    try:
-                        result = self._sdk.memorize(
-                            content=content,
-                            memory_type=memory_type,
-                            metadata=metadata,
-                        )
-                        if result.get("status") in ("ok", "stored", "deduplicated"):
-                            total_ingested += 1
-                        else:
-                            logger.debug(
-                                "memorize 返回非成功状态: %s (session=%s, turn=%d)",
-                                result.get("status"), sess_id, turn_idx,
+                        metadata = {
+                            "session_id": sess_id,
+                            "turn_index": turn_idx,
+                            "timestamp": sess_date,
+                            "role": role,
+                            "entry_index": entry_idx,
+                            "source": "longmemeval",
+                        }
+                        if turn.get("has_answer"):
+                            metadata["has_answer"] = True
+                        try:
+                            result = self._sdk.memorize(
+                                content=store_content,
+                                memory_type=memory_type,
+                                metadata=metadata,
                             )
-                    except Exception as e:
-                        logger.warning(
-                            "写入记忆失败 (session=%s, turn=%d): %s",
-                            sess_id, turn_idx, e,
-                        )
+                            if result.get("status") in ("ok", "stored", "deduplicated"):
+                                total_ingested += 1
+                        except Exception as e:
+                            logger.warning("写入记忆失败 (session=%s, turn=%d): %s", sess_id, turn_idx, e)
+                    else:
+                        # 长回复分段存储
+                        for seg_idx, segment in enumerate(segments):
+                            memory_type = self._infer_memory_type(role, segment)
+                            # ★ 偏好增强索引
+                            store_segment = segment
+                            if memory_type == "preference":
+                                store_segment = f"[prefer like enjoy] {segment}"
+
+                            metadata = {
+                                "session_id": sess_id,
+                                "turn_index": turn_idx,
+                                "segment_index": seg_idx,
+                                "timestamp": sess_date,
+                                "role": role,
+                                "entry_index": entry_idx,
+                                "source": "longmemeval",
+                            }
+                            if turn.get("has_answer"):
+                                metadata["has_answer"] = True
+                            try:
+                                result = self._sdk.memorize(
+                                    content=store_segment,
+                                    memory_type=memory_type,
+                                    metadata=metadata,
+                                )
+                                if result.get("status") in ("ok", "stored", "deduplicated"):
+                                    total_ingested += 1
+                            except Exception as e:
+                                logger.warning("写入记忆失败 (session=%s, turn=%d, seg=%d): %s", sess_id, turn_idx, seg_idx, e)
 
             # 每 50 条 entry 报告进度
             if (entry_idx + 1) % 50 == 0:
@@ -681,6 +707,14 @@ class OmniMemMemoryProvider:
         re.IGNORECASE,
     )
 
+    # ★ v8 新增：排班/表格/分配类模式（assistant 生成的结构化信息）
+    _SCHEDULE_PATTERN = re.compile(
+        r"(shift|rotation|schedule|assigned|assignment|roster|timetable|"
+        r"排班|轮班|值班|安排|分配|表格|"
+        r"(am|pm)\s*[-–—]\s*(am|pm)|\d{1,2}\s*[-–:]\s*\d{0,2})",
+        re.IGNORECASE,
+    )
+
     @staticmethod
     def _is_substantive(content: str) -> bool:
         """判断 assistant turn 是否含实质信息。
@@ -721,12 +755,16 @@ class OmniMemMemoryProvider:
         if any(ind in content for ind in OmniMemMemoryProvider._CN_PROPER_INDICATORS):
             return True
 
+        # ★ v8 新增：排班/表格/分配类信息（assistant 生成的结构化数据）
+        if OmniMemMemoryProvider._SCHEDULE_PATTERN.search(content):
+            return True
+
         # 对话性实质信息检测：含建议词/具体指代词的中等长度回复
         if OmniMemMemoryProvider._DIALOG_PATTERN.search(content) and len(content) > 30:
             return True
 
-        # 规则 3：长回复通常含实质信息
-        if len(content) > 60:
+        # 规则 3：长回复通常含实质信息（阈值从 60 降到 40）
+        if len(content) > 40:
             return True
 
         # 规则 4：短回复（≤30）且无实质信息 → False
@@ -735,6 +773,73 @@ class OmniMemMemoryProvider:
 
         # 规则 5：默认不通过（中等长度无实质信息）
         return False
+
+    @staticmethod
+    def _split_long_content(content: str, role: str) -> list[str]:
+        """将长回复按段落/列表/表格行拆分为独立记忆条目。
+
+        核心问题：排班表/列表等长回复作为一个整体存储时，具体行（如 "Admon | 8am-4pm | Sunday"）
+        在 BM25/向量检索中排名太低。拆分后每行独立存储，检索命中率大幅提升。
+
+        拆分策略：
+        - Markdown 表格：按 | 行拆分
+        - 列表（- / * / 数字.）：按列表项拆分
+        - 段落：按双换行拆分
+        - 短回复（<500字符）：不拆分，返回原内容
+
+        Returns:
+            拆分后的内容列表。长度为 1 表示不拆分。
+        """
+        # 短回复不拆分
+        if len(content) < 500:
+            return [content]
+
+        segments = []
+
+        # 策略 1：Markdown 表格行拆分
+        table_lines = [l for l in content.split('\n') if l.strip().startswith('|') and l.strip().endswith('|')]
+        # 排除表头分隔行（如 | --- | --- |）
+        data_lines = [l for l in table_lines if not re.match(r'^\|[\s\-:|]+\|$', l.strip())]
+        if len(data_lines) >= 3:
+            # 表格数据行足够多，按行拆分
+            # 保留表头作为上下文
+            header_lines = [l for l in table_lines[:2] if not re.match(r'^\|[\s\-:|]+\|$', l.strip())]
+            header_context = '\n'.join(header_lines) if header_lines else ""
+
+            # 表格前的前言
+            pre_table = []
+            for line in content.split('\n'):
+                if line.strip().startswith('|'):
+                    break
+                if line.strip():
+                    pre_table.append(line.strip())
+            if pre_table:
+                segments.append('\n'.join(pre_table))
+
+            # 每个数据行 + 表头上下文
+            for line in data_lines:
+                if header_context:
+                    segments.append(f"{header_context}\n{line.strip()}")
+                else:
+                    segments.append(line.strip())
+            return segments if segments else [content]
+
+        # 策略 2：列表项拆分
+        list_items = re.split(r'\n(?=[\-\*]\s|\d+\.\s)', content)
+        if len(list_items) >= 4:
+            for item in list_items:
+                item = item.strip()
+                if item and len(item) > 10:
+                    segments.append(item)
+            return segments if segments else [content]
+
+        # 策略 3：段落拆分（双换行）
+        paragraphs = [p.strip() for p in content.split('\n\n') if p.strip() and len(p.strip()) > 20]
+        if len(paragraphs) >= 3:
+            return paragraphs
+
+        # 不拆分
+        return [content]
 
     @staticmethod
     def _infer_memory_type(role: str, content: str) -> str:

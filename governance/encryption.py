@@ -1,7 +1,11 @@
 """Encryption utilities for secret-level memory content.
 
-使用 Fernet（AES-128-CBC + HMAC）进行加密。当 cryptography 不可用或未配置密钥时，
-直接抛出 EncryptionUnavailableError，不再降级为明文标记。
+★ P3 升级：新写入默认使用 AES-256-GCM（OMNI_ENC_V2 格式，AEAD 认证加密），
+保留 Fernet（AES-128-CBC + HMAC）的 V1 与 legacy 格式解密兼容。
+当 cryptography 不可用或未配置密钥时，直接抛出 EncryptionUnavailableError，不降级为明文标记。
+
+密钥来源优先级：KMS（生产路径，密钥持久化于 governance 目录）
+> master_key > session_seed > OMNIMEM_ENCRYPTION_KEY 环境变量。
 """
 
 from __future__ import annotations
@@ -17,8 +21,10 @@ logger = logging.getLogger(__name__)
 # 保留旧标记仅用于兼容已持久化的历史数据
 _UNENCRYPTED_PREFIX = "[UNENCRYPTED]"
 _DECRYPTION_FAILED = "[DECRYPTION_FAILED]"
-# 带随机盐的新格式密文前缀
+# 带随机盐的 Fernet 格式密文前缀（V1，仅解密兼容）
 _V1_PREFIX = "OMNI_ENC_V1:"
+# ★ P3: AES-256-GCM 格式密文前缀（V2，新写入默认）
+_V2_PREFIX = "OMNI_ENC_V2:"
 
 
 class EncryptionUnavailableError(RuntimeError):
@@ -168,21 +174,23 @@ class MemoryEncryption:
         if not self.is_available():
             raise EncryptionUnavailableError(self._disabled_reason())
 
-        f = self._get_fernet()
-        if f is None:
-            raise EncryptionUnavailableError("cryptography not installed")
-
         try:
+            # ★ P3: 新写入统一使用 AES-256-GCM（AEAD 认证加密）
+            from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
             # 使用 seed 模式时采用随机盐并随密文存储，增强密钥派生安全性
             if self._seed and self._kms is None and self._master_key is None:
                 salt = os.urandom(16)
-                key = self._derive_key(self._seed, salt)
-                token = self._make_fernet(key).encrypt(plaintext.encode("utf-8"))
+                key_b64 = self._derive_key(self._seed, salt)
                 salt_b64 = base64.urlsafe_b64encode(salt).decode("utf-8")
-                content = f"{_V1_PREFIX}{salt_b64}:{token.decode('utf-8')}"
             else:
-                token = f.encrypt(plaintext.encode("utf-8"))
-                content = token.decode("utf-8")
+                key_b64 = self._key
+                salt_b64 = ""
+            raw_key = base64.urlsafe_b64decode(key_b64)  # 32 字节 → AES-256
+            nonce = os.urandom(12)
+            ct = AESGCM(raw_key).encrypt(nonce, plaintext.encode("utf-8"), None)
+            payload = base64.urlsafe_b64encode(nonce + ct).decode("utf-8")
+            content = f"{_V2_PREFIX}{salt_b64}:{payload}"
             return {
                 "content": content,
                 "encryption_status": "enabled",
@@ -198,18 +206,21 @@ class MemoryEncryption:
         return "cryptography not installed"
 
     def decrypt(self, ciphertext: str) -> str:
-        """Decrypt ciphertext. Handles legacy fallback markers gracefully."""
+        """Decrypt ciphertext. Handles V2 (AES-GCM) / V1 (Fernet) / legacy formats."""
         if not ciphertext:
             return ciphertext
         if ciphertext.startswith(_UNENCRYPTED_PREFIX):
             return ciphertext[len(_UNENCRYPTED_PREFIX) :]
+        # ★ P3: V2 AES-256-GCM 格式
+        if ciphertext.startswith(_V2_PREFIX):
+            return self._decrypt_v2(ciphertext)
         f = self._get_fernet()
         if f is None:
             logger.error("Cannot decrypt: cryptography not available")
             return _DECRYPTION_FAILED
         try:
             if ciphertext.startswith(_V1_PREFIX):
-                # 新格式：盐随密文存储，使用相同 seed 重新派生密钥
+                # V1 格式：盐随密文存储，使用相同 seed 重新派生密钥
                 payload = ciphertext[len(_V1_PREFIX) :]
                 salt_b64, token = payload.split(":", 1)
                 salt = base64.urlsafe_b64decode(salt_b64)
@@ -226,11 +237,33 @@ class MemoryEncryption:
             logger.error("Decryption failed: %s", e)
             return _DECRYPTION_FAILED
 
+    def _decrypt_v2(self, ciphertext: str) -> str:
+        """解密 V2 AES-256-GCM 格式：OMNI_ENC_V2:<salt_b64>:<b64(nonce+ct)>。"""
+        try:
+            from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+            payload = ciphertext[len(_V2_PREFIX) :]
+            salt_b64, data_b64 = payload.split(":", 1)
+            if salt_b64 and self._seed:
+                salt = base64.urlsafe_b64decode(salt_b64)
+                key_b64 = self._derive_key(self._seed, salt)
+            else:
+                key_b64 = self._key
+            raw_key = base64.urlsafe_b64decode(key_b64)
+            data = base64.urlsafe_b64decode(data_b64)
+            nonce, ct = data[:12], data[12:]
+            return AESGCM(raw_key).decrypt(nonce, ct, None).decode("utf-8")
+        except Exception as e:
+            logger.error("V2 decryption failed: %s", e)
+            return _DECRYPTION_FAILED
+
     def is_encrypted(self, text: str) -> bool:
         """Heuristic: check if text appears to be encrypted by this class."""
         if not text:
             return False
         if text.startswith(_UNENCRYPTED_PREFIX):
+            return True
+        if text.startswith(_V2_PREFIX):
             return True
         if text.startswith(_V1_PREFIX):
             return True
