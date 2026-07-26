@@ -92,7 +92,8 @@ mypy_*.txt
 ANALYSIS_REPORT*.md
 
 # Temporary fix scripts
-_*.py
+# ★ 修复：原 _*.py 误伤 __init__.py（包入口从未入库），改为单下划线前缀
+_[!_]*.py
 fix_*.py
 nul
 
