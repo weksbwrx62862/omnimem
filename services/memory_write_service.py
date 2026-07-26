@@ -250,28 +250,78 @@ class MemoryWriteService:
                     "existing_id": m.get("memory_id", ""),
                 }
 
-        # ★ 语义去重
-        dedup_result = (
-            self.deps.semantic_dedup(content, memory_type, candidates)
-            if self.deps.semantic_dedup
-            else {"action": "create"}
-        )
+        # ★ M7-10: LLM 驱动的 ADD/UPDATE/DELETE 决策（同步，优先于规则去重）
+        # 当 LLM 客户端可用且有候选记忆时，用 LLM 语义理解替代纯相似度去重
+        dedup_result: dict[str, Any] = {"action": "create"}
+        if self.llm_memory_manager and self.llm_memory_manager.is_available and len(candidates) > 0:
+            try:
+                llm_decision = self.llm_memory_manager.decide(content, memory_type, candidates[:5])
+                dedup_result = llm_decision.to_dedup_result()
+                logger.info(
+                    "LLM memory decision: action=%s, target=%s, reason=%s",
+                    llm_decision.action.value, llm_decision.target_memory_id, llm_decision.reason,
+                )
+            except Exception as e:
+                logger.warning("LLM memory decision failed (fallback to rule dedup): %s", e)
+                dedup_result = {"action": "create"}
+
+        # ★ 语义去重（规则引擎，LLM 决策未覆盖时回退到此）
+        if dedup_result["action"] == "create" and not dedup_result.get("existing_id"):
+            dedup_result = (
+                self.deps.semantic_dedup(content, memory_type, candidates)
+                if self.deps.semantic_dedup
+                else {"action": "create"}
+            )
 
         if dedup_result["action"] == "skip":
             existing_id = dedup_result.get("existing_id", "")
             existing_entry = self.deps.store.get(existing_id) if existing_id else {}
             return {
                 "status": "duplicate_skipped",
-                "reason": dedup_result["reason"],
+                "reason": dedup_result.get("reason", ""),
                 "existing_id": existing_id,
                 "wing": existing_entry.get("wing", ""),
                 "privacy": existing_entry.get("privacy", ""),
             }
 
+        # ★ M7-10: LLM 决策 UPDATE — 用合并/修正后的内容替换，旧记忆标记为 superseded
+        if dedup_result["action"] == "update":
+            target_id = dedup_result.get("existing_id", "")
+            updated_text = dedup_result.get("updated_content", "")
+            if target_id and updated_text:
+                content = updated_text  # 用 LLM 合并后的内容替换原内容
+                logger.info("M7-10 UPDATE: using merged content, superseding %s", target_id)
+            else:
+                logger.warning("M7-10 UPDATE: missing target_id or updated_content, falling back to ADD")
+                dedup_result = {"action": "create"}
+
+        # ★ M7-10: LLM 决策 DELETE — 仅标记旧记忆为 superseded，不存储新内容
+        if dedup_result["action"] == "delete":
+            target_id = dedup_result.get("existing_id", "")
+            if target_id:
+                try:
+                    self.deps.store.update_field(target_id, is_superseded=True)
+                except Exception as e:
+                    logger.warning("M7-10 DELETE: failed to supersede %s: %s", target_id, e)
+                if self.deps.audit:
+                    self.deps.audit.info("LLM delete decision", memory_id=target_id,
+                                         reason=dedup_result.get("reason", ""))
+            return {
+                "status": "deleted_by_llm",
+                "reason": dedup_result.get("reason", ""),
+                "deleted_id": target_id,
+            }
+
         # ★ ADD-only 策略：dedup 返回 create + superseded_id 时，记录待标记的旧记忆 ID
         # add_only 模式下不标记旧记忆为 superseded，保留所有记忆
+        # M7-10: UPDATE 决策也设置 superseded_id（优先于规则 dedup 的 superseded_id）
         _is_add_only = self.deps.conflict_resolver._strategy == "add_only"
-        _dedup_superseded_id = "" if _is_add_only else dedup_result.get("superseded_id", "")
+        _dedup_superseded_id = ""
+        if not _is_add_only:
+            _dedup_superseded_id = (
+                dedup_result.get("existing_id", "")  # LLM UPDATE 的 target_id
+                or dedup_result.get("superseded_id", "")  # 规则 dedup 的 superseded_id
+            )
 
         # ★ Dry-run 模式
         if dry_run:
