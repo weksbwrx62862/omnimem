@@ -1,0 +1,930 @@
+{
+  "name": "extraction_quality_eval_v1",
+  "version": "1.0",
+  "description": "OmniMem 事实抽取质量评测集 — 100条中文对话，标注「该记/不该记」事实",
+  "scoring": {
+    "precision": "提取的事实中，正确（在 should_extract 中）的比例",
+    "recall": "should_extract 中被提取到的比例",
+    "f1": "精确率和召回率的调和平均",
+    "false_positive_rate": "不应记但被提取的比例"
+  },
+  "schema": {
+    "id": "唯一标识",
+    "dialogue": "用户对话文本",
+    "dialogue_context": "对话场景说明（可选）",
+    "should_extract": ["应该提取为记忆的事实"],
+    "should_not_extract": ["不应该提取的内容"],
+    "tags": ["分类标签"],
+    "capability": "能力维度: information_extraction|knowledge_update|temporal|preference|personal_info|refusal"
+  },
+  "capability_distribution": {
+    "information_extraction": 25,
+    "knowledge_update": 20,
+    "temporal": 15,
+    "preference": 20,
+    "personal_info": 15,
+    "refusal": 5
+  },
+  "items": [
+    {
+      "id": "eq001",
+      "dialogue": "我叫张三，今年28岁，在北京做软件工程师。主要做后端开发，用 Python 和 Go。",
+      "dialogue_context": "用户自我介绍",
+      "should_extract": ["姓名是张三", "年龄28岁", "职业是软件工程师", "工作地点在北京", "技术栈包括Python和Go", "做后端开发"],
+      "should_not_extract": [],
+      "tags": ["个人信息", "职业", "技术"],
+      "capability": "personal_info"
+    },
+    {
+      "id": "eq002",
+      "dialogue": "今天天气真好啊，阳光明媚的。",
+      "dialogue_context": "闲聊天气",
+      "should_extract": [],
+      "should_not_extract": ["今天天气好", "阳光明媚"],
+      "tags": ["闲聊", "无关信息"],
+      "capability": "refusal"
+    },
+    {
+      "id": "eq003",
+      "dialogue": "我不喜欢吃香菜，每次吃饭都要挑出来。芹菜也不太喜欢。",
+      "dialogue_context": "用户谈论饮食偏好",
+      "should_extract": ["不喜欢吃香菜", "不喜欢吃芹菜"],
+      "should_not_extract": ["每次吃饭都要挑出来"],
+      "tags": ["偏好", "饮食"],
+      "capability": "preference"
+    },
+    {
+      "id": "eq004",
+      "dialogue": "我们项目的数据库用的是 PostgreSQL 14，Redis 做缓存，部署在阿里云上。CI/CD 用的 GitHub Actions。",
+      "dialogue_context": "用户介绍项目技术架构",
+      "should_extract": ["项目使用PostgreSQL 14数据库", "使用Redis做缓存", "部署在阿里云", "CI/CD使用GitHub Actions"],
+      "should_not_extract": [],
+      "tags": ["技术", "项目信息", "架构"],
+      "capability": "information_extraction"
+    },
+    {
+      "id": "eq005",
+      "dialogue": "我每天6点半起床，7点出门坐地铁到公司大概8点。晚上一般11点睡觉。",
+      "dialogue_context": "用户描述日常作息",
+      "should_extract": ["每天6:30起床", "7:00出门", "通勤方式为地铁", "晚上一般11:00睡觉"],
+      "should_not_extract": [],
+      "tags": ["生活习惯", "时间", "作息"],
+      "capability": "personal_info"
+    },
+    {
+      "id": "eq006",
+      "dialogue": "哦对了，你刚才说的那个问题，我觉得可以试试看。",
+      "dialogue_context": "模糊回应，无实质信息",
+      "should_extract": [],
+      "should_not_extract": ["可以试试看", "觉得那个问题"],
+      "tags": ["模糊", "无关信息"],
+      "capability": "refusal"
+    },
+    {
+      "id": "eq007",
+      "dialogue": "我们团队下个季度的目标是完成支付系统的重构，把原来的单体架构拆成微服务。Deadline 是 9 月底。",
+      "dialogue_context": "用户谈论工作计划",
+      "should_extract": ["下季度目标是完成支付系统重构", "将单体架构拆分为微服务", "截止日期是9月底"],
+      "should_not_extract": [],
+      "tags": ["计划", "工作", "目标"],
+      "capability": "information_extraction"
+    },
+    {
+      "id": "eq008",
+      "dialogue": "我女朋友叫李小花，她在上海工作，是设计师。我们在一起两年了。",
+      "dialogue_context": "用户谈论恋爱关系",
+      "should_extract": ["女朋友名字是李小花", "女朋友在上海工作", "女朋友职业是设计师", "交往两年"],
+      "should_not_extract": [],
+      "tags": ["人际关系", "个人信息"],
+      "capability": "personal_info"
+    },
+    {
+      "id": "eq009",
+      "dialogue": "哈哈是的，我觉得也是，那就这样吧。",
+      "dialogue_context": "简单附和，无实质信息",
+      "should_extract": [],
+      "should_not_extract": ["我觉得也是", "那就这样吧"],
+      "tags": ["闲聊", "无关信息"],
+      "capability": "refusal"
+    },
+    {
+      "id": "eq010",
+      "dialogue": "国庆节我打算去云南旅游，已经订了机票和酒店。计划先去大理待三天，然后去丽江。",
+      "dialogue_context": "用户谈论旅行计划",
+      "should_extract": ["国庆节计划去云南旅游", "已订机票和酒店", "计划先去大理三天", "之后去丽江"],
+      "should_not_extract": [],
+      "tags": ["计划", "旅行"],
+      "capability": "information_extraction"
+    },
+    {
+      "id": "eq011",
+      "dialogue": "我之前跟你说的那个叫 王五 的同事离职了，现在他的工作由我来接手。",
+      "dialogue_context": "用户更新之前的信息",
+      "should_extract": ["同事王五已离职", "用户接管了王五的工作"],
+      "should_not_extract": [],
+      "tags": ["知识更新", "工作"],
+      "capability": "knowledge_update"
+    },
+    {
+      "id": "eq012",
+      "dialogue": "我最喜欢的编程语言是 Rust，虽然还在学，但它的内存安全机制真的很吸引我。",
+      "dialogue_context": "用户表达技术偏好",
+      "should_extract": ["最喜欢的编程语言是Rust", "正在学习Rust", "看重Rust的内存安全机制"],
+      "should_not_extract": [],
+      "tags": ["偏好", "技术"],
+      "capability": "preference"
+    },
+    {
+      "id": "eq013",
+      "dialogue": "今天午饭吃的是宫保鸡丁和米饭，味道还不错。",
+      "dialogue_context": "用户描述某餐食",
+      "should_extract": [],
+      "should_not_extract": ["今天午饭吃的是宫保鸡丁", "味道还不错"],
+      "tags": ["闲聊", "临时信息"],
+      "capability": "refusal"
+    },
+    {
+      "id": "eq014",
+      "dialogue": "我的邮箱是 zhangsan@example.com，手机号是 13812345678。有急事可以打这个电话。",
+      "dialogue_context": "用户提供联系方式",
+      "should_extract": ["邮箱为zhangsan@example.com", "手机号为13812345678", "紧急情况可通过电话联系"],
+      "should_not_extract": [],
+      "tags": ["个人信息", "联系方式"],
+      "capability": "personal_info"
+    },
+    {
+      "id": "eq015",
+      "dialogue": "那个 PR 我 review 完了，有几个小问题已经 comment 了，你改一下再 push。",
+      "dialogue_context": "代码审查反馈",
+      "should_extract": ["PR已review完成", "已提交comment", "需要修改后再push"],
+      "should_not_extract": [],
+      "tags": ["工作", "技术"],
+      "capability": "information_extraction"
+    },
+    {
+      "id": "eq016",
+      "dialogue": "我喜欢在安静的环境里工作，所以一般会戴上降噪耳机。听一些轻音乐或者白噪音。",
+      "dialogue_context": "用户谈论工作习惯",
+      "should_extract": ["喜欢安静的工作环境", "习惯戴降噪耳机工作", "工作时喜欢听轻音乐或白噪音"],
+      "should_not_extract": [],
+      "tags": ["偏好", "工作习惯"],
+      "capability": "preference"
+    },
+    {
+      "id": "eq017",
+      "dialogue": "上次去的那家火锅店关门了，现在换成了湘菜馆。",
+      "dialogue_context": "用户更新地点信息",
+      "should_extract": ["之前去过的火锅店已关闭", "原地址现在改为湘菜馆"],
+      "should_not_extract": [],
+      "tags": ["知识更新", "地点"],
+      "capability": "knowledge_update"
+    },
+    {
+      "id": "eq018",
+      "dialogue": "嗯嗯，好的，明白了。",
+      "dialogue_context": "确认回应",
+      "should_extract": [],
+      "should_not_extract": ["明白了"],
+      "tags": ["闲聊", "无实质内容"],
+      "capability": "refusal"
+    },
+    {
+      "id": "eq019",
+      "dialogue": "我们公司从下周开始实行混合办公，周二和周四必须到办公室，其他时间可以远程。",
+      "dialogue_context": "用户告知制度变更",
+      "should_extract": ["下周开始实行混合办公", "周二和周四必须到办公室", "其余时间可远程办公"],
+      "should_not_extract": [],
+      "tags": ["知识更新", "工作制度"],
+      "capability": "knowledge_update"
+    },
+    {
+      "id": "eq020",
+      "dialogue": "我养了一只猫，叫咪咪，是橘猫，已经三岁了。特别爱吃，每天要喂三次。",
+      "dialogue_context": "用户谈论宠物",
+      "should_extract": ["养了一只名叫咪咪的猫", "品种是橘猫", "猫已经三岁", "每天喂三次"],
+      "should_not_extract": ["特别爱吃"],
+      "tags": ["个人信息", "宠物"],
+      "capability": "personal_info"
+    },
+    {
+      "id": "eq021",
+      "dialogue": "这个 bug 是因为并发的 race condition 导致的，需要加个分布式锁。我已经在 Redis 上实现了。",
+      "dialogue_context": "用户分析并解决问题",
+      "should_extract": ["bug原因是并发race condition", "解决方案是加分布式锁", "使用Redis实现分布式锁"],
+      "should_not_extract": [],
+      "tags": ["技术", "问题解决"],
+      "capability": "information_extraction"
+    },
+    {
+      "id": "eq022",
+      "dialogue": "周末去看了《流浪地球3》，特效很震撼，但剧情一般。我个人更喜欢第二部。",
+      "dialogue_context": "用户谈论观影体验",
+      "should_extract": ["看过《流浪地球3》", "认为特效震撼", "认为剧情一般", "更喜欢《流浪地球2》"],
+      "should_not_extract": [],
+      "tags": ["偏好", "娱乐"],
+      "capability": "preference"
+    },
+    {
+      "id": "eq023",
+      "dialogue": "明天上午十点钟有个需求评审会，记得准备好 PRD 文档。",
+      "dialogue_context": "用户提醒会议安排",
+      "should_extract": ["明天上午10:00有需求评审会", "需要准备PRD文档"],
+      "should_not_extract": [],
+      "tags": ["工作", "日程"],
+      "capability": "temporal"
+    },
+    {
+      "id": "eq024",
+      "dialogue": "我上次体检是今年三月份，各项指标都正常。就是医生说要多运动。",
+      "dialogue_context": "用户谈论健康状况",
+      "should_extract": ["上次体检时间为今年3月", "体检结果各项指标正常", "医生建议多运动"],
+      "should_not_extract": [],
+      "tags": ["个人信息", "健康"],
+      "capability": "personal_info"
+    },
+    {
+      "id": "eq025",
+      "dialogue": "API 的 rate limit 从每分钟 100 次调整到 500 次了，因为用户量增长很快。",
+      "dialogue_context": "用户告知系统参数变更",
+      "should_extract": ["API rate limit从100次/分钟调整到500次/分钟", "调整原因是用户量增长"],
+      "should_not_extract": [],
+      "tags": ["知识更新", "技术决策"],
+      "capability": "knowledge_update"
+    },
+    {
+      "id": "eq026",
+      "dialogue": "这家咖啡店的拿铁很好喝，比星巴克的好喝多了。价格也便宜，才 18 块。",
+      "dialogue_context": "用户表达消费偏好",
+      "should_extract": ["认为某咖啡店拿铁比星巴克好喝", "该店拿铁价格18元"],
+      "should_not_extract": [],
+      "tags": ["偏好", "消费"],
+      "capability": "preference"
+    },
+    {
+      "id": "eq027",
+      "dialogue": "用 kubectl apply -f deployment.yaml 就能部署了。注意要把 namespace 设置对。",
+      "dialogue_context": "用户分享技术操作步骤",
+      "should_extract": ["部署命令是kubectl apply -f deployment.yaml", "需要注意设置正确的namespace"],
+      "should_not_extract": [],
+      "tags": ["技术", "操作流程"],
+      "capability": "information_extraction"
+    },
+    {
+      "id": "eq028",
+      "dialogue": "我住的小区在朝阳区望京，离公司大概 5 公里，骑共享单车 20 分钟能到。",
+      "dialogue_context": "用户描述住所和通勤",
+      "should_extract": ["住在朝阳区望京", "距离公司约5公里", "骑共享单车通勤约20分钟"],
+      "should_not_extract": [],
+      "tags": ["个人信息", "地点", "出行"],
+      "capability": "personal_info"
+    },
+    {
+      "id": "eq029",
+      "dialogue": "今天发工资了！到手比上个月多了 800 块，应该是绩效奖金。",
+      "dialogue_context": "用户分享个人财务",
+      "should_extract": [],
+      "should_not_extract": ["今天发工资了", "比上个月多了800块"],
+      "tags": ["临时信息", "财务"],
+      "capability": "refusal"
+    },
+    {
+      "id": "eq030",
+      "dialogue": "我们的用户画像主要是 25-35 岁的互联网从业者，月收入 15k-30k，一线城市居多。",
+      "dialogue_context": "用户分享产品数据分析",
+      "should_extract": ["目标用户为25-35岁互联网从业者", "用户月收入范围15k-30k", "用户主要集中在一线城市"],
+      "should_not_extract": [],
+      "tags": ["工作", "数据分析"],
+      "capability": "information_extraction"
+    },
+    {
+      "id": "eq031",
+      "dialogue": "最近在学日语，感觉五十音图真的好难背。本来以为自己有语言天赋的。",
+      "dialogue_context": "用户分享学习状态",
+      "should_extract": ["正在学习日语", "觉得五十音图难背"],
+      "should_not_extract": ["本来以为自己有语言天赋"],
+      "tags": ["个人信息", "学习"],
+      "capability": "information_extraction"
+    },
+    {
+      "id": "eq032",
+      "dialogue": "对了，上次那个部署脚本我改了一下，加了一个 health check 的重试逻辑，现在更稳定了。",
+      "dialogue_context": "用户更新技术改动",
+      "should_extract": ["部署脚本已增加health check重试逻辑", "脚本稳定性已提升"],
+      "should_not_extract": [],
+      "tags": ["知识更新", "技术改进"],
+      "capability": "knowledge_update"
+    },
+    {
+      "id": "eq033",
+      "dialogue": "我每天晚上睡前都要看半小时书，最近在看《人类简史》。纸质书比电子书有感觉。",
+      "dialogue_context": "用户谈论阅读习惯",
+      "should_extract": ["每天睡前阅读半小时", "最近在读《人类简史》", "偏好纸质书胜过电子书"],
+      "should_not_extract": [],
+      "tags": ["偏好", "习惯"],
+      "capability": "preference"
+    },
+    {
+      "id": "eq034",
+      "dialogue": "生产环境的数据库连接池设置得太小了，改成 50 个连接后 QPS 翻了一倍。",
+      "dialogue_context": "用户复盘技术优化",
+      "should_extract": ["数据库连接池从较小改为50个连接", "调整后QPS翻倍"],
+      "should_not_extract": [],
+      "tags": ["技术", "优化"],
+      "capability": "knowledge_update"
+    },
+    {
+      "id": "eq035",
+      "dialogue": "妈妈下周三过生日，我已经订好了蛋糕，还准备给她买条围巾。",
+      "dialogue_context": "用户谈论家庭计划",
+      "should_extract": ["妈妈生日是下周三", "已为妈妈订好蛋糕", "计划给妈妈买围巾作为礼物"],
+      "should_not_extract": [],
+      "tags": ["计划", "家庭", "日期"],
+      "capability": "temporal"
+    },
+    {
+      "id": "eq036",
+      "dialogue": "我感觉 Python 的异步编程比 JavaScript 的容易理解多了，asyncio 的协程模型更直观。",
+      "dialogue_context": "用户表达技术观点",
+      "should_extract": ["认为Python异步编程比JavaScript容易理解", "认为asyncio协程模型更直观"],
+      "should_not_extract": [],
+      "tags": ["偏好", "技术观点"],
+      "capability": "preference"
+    },
+    {
+      "id": "eq037",
+      "dialogue": "公司团建定在下周五下午，去奥森公园烧烤。每个人要交 100 块钱。",
+      "dialogue_context": "用户告知活动安排",
+      "should_extract": ["下周五下午有公司团建", "地点在奥森公园", "活动为烧烤", "每人费用100元"],
+      "should_not_extract": [],
+      "tags": ["工作", "活动", "日期"],
+      "capability": "temporal"
+    },
+    {
+      "id": "eq038",
+      "dialogue": "我们的竞品最近上线了一个 AI 客服功能，效果好像不错，我们也得跟进。",
+      "dialogue_context": "用户讨论竞品动态",
+      "should_extract": ["竞品已上线AI客服功能", "认为需要跟进此功能"],
+      "should_not_extract": ["效果好像不错"],
+      "tags": ["工作", "竞品分析"],
+      "capability": "information_extraction"
+    },
+    {
+      "id": "eq039",
+      "dialogue": "我弟弟今年高考，考了 680 分，被清华计算机系录取了。全家都很高兴。",
+      "dialogue_context": "用户分享家庭喜讯",
+      "should_extract": ["弟弟今年高考680分", "被清华大学计算机系录取"],
+      "should_not_extract": ["全家都很高兴"],
+      "tags": ["个人信息", "家庭"],
+      "capability": "personal_info"
+    },
+    {
+      "id": "eq040",
+      "dialogue": "这个接口的响应时间 P99 从 800ms 优化到了 200ms，主要是加了缓存和索引。",
+      "dialogue_context": "用户汇报性能优化成果",
+      "should_extract": ["接口P99响应时间从800ms优化到200ms", "优化手段包括加缓存和索引"],
+      "should_not_extract": [],
+      "tags": ["知识更新", "性能"],
+      "capability": "knowledge_update"
+    },
+    {
+      "id": "eq041",
+      "dialogue": "我不太喜欢开会，尤其是那种没有议程的会。我觉得站着开会效率更高。",
+      "dialogue_context": "用户表达工作偏好",
+      "should_extract": ["不喜欢无议程的会议", "认为站立会议效率更高"],
+      "should_not_extract": [],
+      "tags": ["偏好", "工作方式"],
+      "capability": "preference"
+    },
+    {
+      "id": "eq042",
+      "dialogue": "用户反馈说注册流程太复杂了，要填 8 个字段。我们考虑改成手机号+验证码的方式。",
+      "dialogue_context": "用户分享产品改进思路",
+      "should_extract": ["用户反馈注册流程太复杂（8个字段）", "考虑简化为手机号+验证码方式"],
+      "should_not_extract": [],
+      "tags": ["工作", "产品决策"],
+      "capability": "information_extraction"
+    },
+    {
+      "id": "eq043",
+      "dialogue": "哦随便吧，我都行。",
+      "dialogue_context": "无所谓的态度表达",
+      "should_extract": [],
+      "should_not_extract": ["随便", "都行"],
+      "tags": ["闲聊", "无信息量"],
+      "capability": "refusal"
+    },
+    {
+      "id": "eq044",
+      "dialogue": "我们下个里程碑要支持多租户架构，每个租户的数据要完全隔离。这是一项大工程。",
+      "dialogue_context": "用户讨论技术规划",
+      "should_extract": ["下个里程碑目标是支持多租户架构", "要求每个租户数据完全隔离"],
+      "should_not_extract": ["这是一项大工程"],
+      "tags": ["计划", "技术决策"],
+      "capability": "information_extraction"
+    },
+    {
+      "id": "eq045",
+      "dialogue": "微信小程序的审核又被拒了，说是有诱导分享的嫌疑。已经是第三次了。",
+      "dialogue_context": "用户分享工作挫折",
+      "should_extract": ["微信小程序审核被拒（第三次）", "被拒原因是疑似诱导分享"],
+      "should_not_extract": [],
+      "tags": ["工作", "问题"],
+      "capability": "information_extraction"
+    },
+    {
+      "id": "eq046",
+      "dialogue": "我比较习惯用 VS Code，虽然同事都推荐 JetBrains 全家桶。不过 IntelliJ 确实重构能力更强。",
+      "dialogue_context": "用户表达工具偏好",
+      "should_extract": ["习惯使用VS Code编辑器", "认可IntelliJ在重构方面更强"],
+      "should_not_extract": ["同事都推荐JetBrains全家桶"],
+      "tags": ["偏好", "工具"],
+      "capability": "preference"
+    },
+    {
+      "id": "eq047",
+      "dialogue": "下午两点和产品经理有个一对一的 sync，讨论一下登录页的改版方案。",
+      "dialogue_context": "用户安排工作会议",
+      "should_extract": ["下午2:00与产品经理有1对1会议", "会议主题为登录页改版方案"],
+      "should_not_extract": [],
+      "tags": ["工作", "日程"],
+      "capability": "temporal"
+    },
+    {
+      "id": "eq048",
+      "dialogue": "老家在湖南长沙，爸妈还在那边。我每年过年都回去，大概待一周。",
+      "dialogue_context": "用户谈论家乡",
+      "should_extract": ["老家在湖南长沙", "父母在长沙生活", "每年春节回老家约一周"],
+      "should_not_extract": [],
+      "tags": ["个人信息", "家庭", "习惯"],
+      "capability": "personal_info"
+    },
+    {
+      "id": "eq049",
+      "dialogue": "那个第三方 API 上周突然涨价了，费用翻了三倍。我们在评估要不要换供应商。",
+      "dialogue_context": "用户告知外部依赖变化",
+      "should_extract": ["第三方API费用翻了三倍", "正在评估更换供应商"],
+      "should_not_extract": [],
+      "tags": ["知识更新", "工作"],
+      "capability": "knowledge_update"
+    },
+    {
+      "id": "eq050",
+      "dialogue": "最近失眠有点严重，可能是压力太大了。在考虑要不要去看看中医调理一下。",
+      "dialogue_context": "用户分享健康困扰",
+      "should_extract": ["最近有失眠困扰", "考虑看中医调理"],
+      "should_not_extract": ["可能是压力太大了"],
+      "tags": ["个人信息", "健康"],
+      "capability": "personal_info"
+    },
+    {
+      "id": "eq051",
+      "dialogue": "用 Docker Compose 搭建本地开发环境很方便，一个命令就能把所有服务都启动。",
+      "dialogue_context": "用户分享技术经验",
+      "should_extract": ["认为Docker Compose搭建本地环境方便", "一个命令可启动所有服务"],
+      "should_not_extract": [],
+      "tags": ["技术", "经验分享"],
+      "capability": "preference"
+    },
+    {
+      "id": "eq052",
+      "dialogue": "项目从 Java 迁移到 Kotlin 的计划推迟到下个季度了，因为还要先处理一些技术债务。",
+      "dialogue_context": "用户更新项目计划",
+      "should_extract": ["Java迁移到Kotlin计划推迟到下季度", "推迟原因是要先处理技术债务"],
+      "should_not_extract": [],
+      "tags": ["知识更新", "项目计划"],
+      "capability": "knowledge_update"
+    },
+    {
+      "id": "eq053",
+      "dialogue": "我每天早上到公司第一件事是看监控面板，然后处理昨晚的告警。已经成习惯了。",
+      "dialogue_context": "用户描述工作流程",
+      "should_extract": ["早上到公司先检查监控面板", "然后处理昨晚告警"],
+      "should_not_extract": [],
+      "tags": ["工作习惯", "流程"],
+      "capability": "information_extraction"
+    },
+    {
+      "id": "eq054",
+      "dialogue": "行吧，那就先这样，回头再聊。",
+      "dialogue_context": "对话结束语",
+      "should_extract": [],
+      "should_not_extract": ["先这样", "回头再聊"],
+      "tags": ["闲聊", "结束语"],
+      "capability": "refusal"
+    },
+    {
+      "id": "eq055",
+      "dialogue": "我们租的办公室明年一月份到期，房东说要涨 20% 的租金。在考虑要不要搬家。",
+      "dialogue_context": "用户讨论办公场地",
+      "should_extract": ["办公室租约明年1月到期", "房东要求涨租20%", "在考虑是否搬迁"],
+      "should_not_extract": [],
+      "tags": ["工作", "财务", "计划"],
+      "capability": "information_extraction"
+    },
+    {
+      "id": "eq056",
+      "dialogue": "我比较注重代码质量，每次 PR 至少要有一个人 approve 才能合并。我们团队也认同这个规则。",
+      "dialogue_context": "用户表达工程规范",
+      "should_extract": ["代码合并要求至少一人approve", "重视代码质量"],
+      "should_not_extract": [],
+      "tags": ["偏好", "工作规范"],
+      "capability": "preference"
+    },
+    {
+      "id": "eq057",
+      "dialogue": "线上出了个 P0 故障，支付接口报 500 了。初步排查是数据库连接池耗尽。正在紧急修复。",
+      "dialogue_context": "用户汇报紧急问题",
+      "should_extract": ["线上发生P0故障（支付接口500错误）", "初步原因是数据库连接池耗尽", "正在紧急修复中"],
+      "should_not_extract": [],
+      "tags": ["工作", "故障"],
+      "capability": "information_extraction"
+    },
+    {
+      "id": "eq058",
+      "dialogue": "下周一是双十一，我们提前做好了压测，峰值 QPS 预计 5 万。已经扩容了 3 倍。",
+      "dialogue_context": "用户谈论活动准备",
+      "should_extract": ["下周一是双十一活动", "已提前做好压测", "预计峰值QPS为5万", "已扩容3倍"],
+      "should_not_extract": [],
+      "tags": ["工作", "日期", "准备"],
+      "capability": "temporal"
+    },
+    {
+      "id": "eq059",
+      "dialogue": "我不喝酒，酒精过敏。所以每次聚会都喝果汁或者茶。",
+      "dialogue_context": "用户谈论饮食限制",
+      "should_extract": ["不喝酒（酒精过敏）", "聚会时喝果汁或茶"],
+      "should_not_extract": [],
+      "tags": ["偏好", "个人信息", "健康"],
+      "capability": "personal_info"
+    },
+    {
+      "id": "eq060",
+      "dialogue": "日志系统从 ELK 迁移到了 Loki，因为 Loki 更省资源而且和 Grafana 集成得更好。",
+      "dialogue_context": "用户告知技术栈变更",
+      "should_extract": ["日志系统从ELK迁移到Loki", "迁移原因是Loki更省资源且Grafana集成更好"],
+      "should_not_extract": [],
+      "tags": ["知识更新", "技术栈"],
+      "capability": "knowledge_update"
+    },
+    {
+      "id": "eq061",
+      "dialogue": "我周末喜欢去爬山，香山和八大处都经常去。运动完出一身汗特别舒服。",
+      "dialogue_context": "用户谈论爱好",
+      "should_extract": ["周末喜欢爬山", "常去的山有香山和八大处"],
+      "should_not_extract": ["运动完出一身汗特别舒服"],
+      "tags": ["偏好", "爱好"],
+      "capability": "preference"
+    },
+    {
+      "id": "eq062",
+      "dialogue": "这次季度回顾中，我们团队交付了 12 个需求，修复了 47 个 bug，整体完成率 95%。",
+      "dialogue_context": "用户汇报工作成果",
+      "should_extract": ["本季度团队交付12个需求", "修复47个bug", "整体完成率95%"],
+      "should_not_extract": [],
+      "tags": ["工作", "成果"],
+      "capability": "information_extraction"
+    },
+    {
+      "id": "eq063",
+      "dialogue": "我的 Git 全局配置用的是公司邮箱，个人项目就单独用项目级别的 .gitconfig 覆盖。",
+      "dialogue_context": "用户分享技术习惯",
+      "should_extract": ["Git全局配置使用公司邮箱", "个人项目使用项目级.gitconfig覆盖"],
+      "should_not_extract": [],
+      "tags": ["技术习惯", "配置"],
+      "capability": "information_extraction"
+    },
+    {
+      "id": "eq064",
+      "dialogue": "听说公司可能要裁员 10%，不知道我们部门会不会受影响。有点担心。",
+      "dialogue_context": "用户表达工作焦虑",
+      "should_extract": ["公司可能裁员10%"],
+      "should_not_extract": ["不知道我们部门会不会受影响", "有点担心"],
+      "tags": ["工作", "情绪"],
+      "capability": "information_extraction"
+    },
+    {
+      "id": "eq065",
+      "dialogue": "今年上半年我们完成了 A 轮融资，金额是 2000 万人民币，投资方是红杉和经纬。",
+      "dialogue_context": "用户分享公司里程碑",
+      "should_extract": ["上半年完成A轮融资", "融资金额2000万人民币", "投资方包括红杉和经纬"],
+      "should_not_extract": [],
+      "tags": ["工作", "里程碑"],
+      "capability": "information_extraction"
+    },
+    {
+      "id": "eq066",
+      "dialogue": "我不喜欢被打断，所以一般会把钉钉设成免打扰模式，然后每小时统一处理一次消息。",
+      "dialogue_context": "用户表达工作偏好",
+      "should_extract": ["不喜欢工作中被打断", "使用钉钉免打扰模式", "每小时统一处理一次消息"],
+      "should_not_extract": [],
+      "tags": ["偏好", "工作习惯"],
+      "capability": "preference"
+    },
+    {
+      "id": "eq067",
+      "dialogue": "上次说的那个安全漏洞已经修了，升到了最新的 Spring Boot 版本，顺便把一些过时的依赖也更新了。",
+      "dialogue_context": "用户更新问题修复状态",
+      "should_extract": ["安全漏洞已修复", "升级到最新Spring Boot版本", "同时更新了过时依赖"],
+      "should_not_extract": [],
+      "tags": ["知识更新", "技术"],
+      "capability": "knowledge_update"
+    },
+    {
+      "id": "eq068",
+      "dialogue": "我家住在 15 楼，朝南，两个卧室。房租每个月 6500，在望京算便宜的。",
+      "dialogue_context": "用户描述住房详情",
+      "should_extract": ["住15楼", "朝向南", "两室户型", "房租6500元/月", "位于望京地区"],
+      "should_not_extract": [],
+      "tags": ["个人信息", "住房"],
+      "capability": "personal_info"
+    },
+    {
+      "id": "eq069",
+      "dialogue": "做 Code Review 的时候我发现有个函数圈复杂度太高了，高达 15，建议重构。",
+      "dialogue_context": "用户说明代码审查发现",
+      "should_extract": ["发现某函数圈复杂度为15", "建议对该函数进行重构"],
+      "should_not_extract": [],
+      "tags": ["工作", "代码质量"],
+      "capability": "information_extraction"
+    },
+    {
+      "id": "eq070",
+      "dialogue": "元旦假期我打算回老家，陪陪父母。已经请了三天年假，加上周末一共可以休五天。",
+      "dialogue_context": "用户谈论假期安排",
+      "should_extract": ["元旦假期计划回老家陪伴父母", "已请三天年假", "连周末共休假五天"],
+      "should_not_extract": [],
+      "tags": ["计划", "家庭", "假期"],
+      "capability": "temporal"
+    },
+    {
+      "id": "eq071",
+      "dialogue": "我觉得 Go 语言的错误处理方式太啰嗦了，每次都要 if err != nil。不过并发模型确实好。",
+      "dialogue_context": "用户评价编程语言",
+      "should_extract": ["认为Go语言错误处理太啰嗦", "认可Go语言的并发模型"],
+      "should_not_extract": [],
+      "tags": ["偏好", "技术观点"],
+      "capability": "preference"
+    },
+    {
+      "id": "eq072",
+      "dialogue": "从下个月开始，我们的 on-call 排班制度改了，每人轮一周而不是之前的每天轮换。",
+      "dialogue_context": "用户告知值班制度变更",
+      "should_extract": ["下月起on-call排班改为每人轮一周", "之前是每天轮换"],
+      "should_not_extract": [],
+      "tags": ["知识更新", "工作制度"],
+      "capability": "knowledge_update"
+    },
+    {
+      "id": "eq073",
+      "dialogue": "今天公交堵得不行，迟到了 20 分钟。明天得早点出门。",
+      "dialogue_context": "用户描述临时事件",
+      "should_extract": [],
+      "should_not_extract": ["今天公交堵", "迟到20分钟", "明天早点出门"],
+      "tags": ["临时事件", "日常"],
+      "capability": "refusal"
+    },
+    {
+      "id": "eq074",
+      "dialogue": "产品的日活用户突破了 100 万，是我们今年的一个重要里程碑。准备搞个庆祝活动。",
+      "dialogue_context": "用户分享业务成果",
+      "should_extract": ["产品日活用户突破100万", "是今年的重要里程碑", "计划举办庆祝活动"],
+      "should_not_extract": [],
+      "tags": ["工作", "里程碑"],
+      "capability": "information_extraction"
+    },
+    {
+      "id": "eq075",
+      "dialogue": "我习惯在写代码前先画流程图，用 draw.io 或者 excalidraw 都行。理清思路再动手。",
+      "dialogue_context": "用户分享工作方法",
+      "should_extract": ["习惯写代码前画流程图", "常用工具包括draw.io和excalidraw", "倾向先理清思路再动手编码"],
+      "should_not_extract": [],
+      "tags": ["偏好", "工作方法"],
+      "capability": "preference"
+    },
+    {
+      "id": "eq076",
+      "dialogue": "周六下午两点在朝阳大悦城见面，位置已经订好了，Costa 咖啡靠窗那一桌。",
+      "dialogue_context": "用户约定见面",
+      "should_extract": ["周六下午2:00在朝阳大悦城见面", "在Costa咖啡靠窗位置"],
+      "should_not_extract": [],
+      "tags": ["日程", "地点"],
+      "capability": "temporal"
+    },
+    {
+      "id": "eq077",
+      "dialogue": "之前使用 MySQL 5.7，最近刚升级到 8.0。主要是为了用窗口函数和 CTE。",
+      "dialogue_context": "用户更新技术选型",
+      "should_extract": ["数据库从MySQL 5.7升级到8.0", "升级目的是使用窗口函数和CTE"],
+      "should_not_extract": [],
+      "tags": ["知识更新", "技术栈"],
+      "capability": "knowledge_update"
+    },
+    {
+      "id": "eq078",
+      "dialogue": "我最近在培养冥想的习惯，每天早上花 10 分钟，用 Headspace 这个 App。感觉专注力提升了。",
+      "dialogue_context": "用户分享新习惯",
+      "should_extract": ["正在培养冥想的习惯", "每天早晨冥想10分钟", "使用Headspace App"],
+      "should_not_extract": ["感觉专注力提升了"],
+      "tags": ["个人信息", "习惯"],
+      "capability": "personal_info"
+    },
+    {
+      "id": "eq079",
+      "dialogue": "这次重构把 2000 行的 god class 拆成了 5 个模块，每个不超过 400 行。测试覆盖率也提到了 85%。",
+      "dialogue_context": "用户汇报重构成果",
+      "should_extract": ["将2000行god class拆分为5个模块", "每个模块不超过400行", "测试覆盖率提升到85%"],
+      "should_not_extract": [],
+      "tags": ["工作", "技术改进"],
+      "capability": "information_extraction"
+    },
+    {
+      "id": "eq080",
+      "dialogue": "嗯。",
+      "dialogue_context": "单字回应",
+      "should_extract": [],
+      "should_not_extract": ["嗯"],
+      "tags": ["闲聊", "无信息量"],
+      "capability": "refusal"
+    },
+    {
+      "id": "eq081",
+      "dialogue": "前端框架我们最后选了 Next.js 14，因为它支持 React Server Components 而且社区生态最好。",
+      "dialogue_context": "用户说明技术选型决策",
+      "should_extract": ["前端框架选型为Next.js 14", "选型原因是支持React Server Components和社区生态好"],
+      "should_not_extract": [],
+      "tags": ["技术决策", "工作"],
+      "capability": "information_extraction"
+    },
+    {
+      "id": "eq082",
+      "dialogue": "我不太能吃辣，微辣就是我的极限了。所以一般去川菜馆都点不辣的菜。",
+      "dialogue_context": "用户谈论饮食偏好",
+      "should_extract": ["不太能吃辣（微辣为极限）", "去川菜馆会选不辣的菜"],
+      "should_not_extract": [],
+      "tags": ["偏好", "饮食"],
+      "capability": "preference"
+    },
+    {
+      "id": "eq083",
+      "dialogue": "下周要上线新版本，这周是 code freeze，只能修 bug 不能加新功能了。",
+      "dialogue_context": "用户告知项目状态",
+      "should_extract": ["下周上线新版本", "本周为code freeze期", "只允许修bug不允许加新功能"],
+      "should_not_extract": [],
+      "tags": ["工作", "时间线"],
+      "capability": "temporal"
+    },
+    {
+      "id": "eq084",
+      "dialogue": "原来的产品经理调到别的项目组了，现在换了一个叫刘芳的来负责。她之前在字节做过。",
+      "dialogue_context": "用户更新人员变化",
+      "should_extract": ["产品经理从原负责人更换为刘芳", "刘芳之前有字节跳动工作经历"],
+      "should_not_extract": [],
+      "tags": ["知识更新", "人事"],
+      "capability": "knowledge_update"
+    },
+    {
+      "id": "eq085",
+      "dialogue": "我衣柜里的衣服 80% 都是优衣库的，因为性价比高又百搭。",
+      "dialogue_context": "用户谈论消费习惯",
+      "should_extract": ["大部分衣服来自优衣库", "选择原因是性价比高和百搭"],
+      "should_not_extract": [],
+      "tags": ["偏好", "消费"],
+      "capability": "preference"
+    },
+    {
+      "id": "eq086",
+      "dialogue": "冒烟测试跑过了，所有关键路径都正常。准备今天下午 3 点发版。",
+      "dialogue_context": "用户确认发布状态",
+      "should_extract": ["冒烟测试通过", "关键路径正常", "计划下午3:00发版"],
+      "should_not_extract": [],
+      "tags": ["工作", "发布"],
+      "capability": "temporal"
+    },
+    {
+      "id": "eq087",
+      "dialogue": "过敏原检测结果显示我对尘螨和花粉过敏，医生开了氯雷他定。",
+      "dialogue_context": "用户分享医疗信息",
+      "should_extract": ["过敏原为尘螨和花粉", "医生开了氯雷他定药物"],
+      "should_not_extract": [],
+      "tags": ["个人信息", "健康"],
+      "capability": "personal_info"
+    },
+    {
+      "id": "eq088",
+      "dialogue": "这次压测发现 Redis 是瓶颈，单机 Redis 撑不住 10 万 QPS。下一步考虑 Redis Cluster。",
+      "dialogue_context": "用户分析性能瓶颈",
+      "should_extract": ["Redis单机无法支撑10万QPS", "下一步考虑Redis Cluster方案"],
+      "should_not_extract": [],
+      "tags": ["工作", "性能分析"],
+      "capability": "information_extraction"
+    },
+    {
+      "id": "eq089",
+      "dialogue": "我觉得远程办公比在办公室效率高，少了很多不必要的打扰。但团队沟通确实是个问题。",
+      "dialogue_context": "用户对比工作模式",
+      "should_extract": ["认为远程办公比办公室效率高", "远程办公减少了不必要的打扰", "认为团队沟通是远程办公的挑战"],
+      "should_not_extract": [],
+      "tags": ["偏好", "工作方式"],
+      "capability": "preference"
+    },
+    {
+      "id": "eq090",
+      "dialogue": "K8s 集群从 1.27 升级到 1.30 了，新版本废弃了一些旧的 API，我们提前做了适配。",
+      "dialogue_context": "用户更新基础设施",
+      "should_extract": ["Kubernetes集群从1.27升级到1.30", "新版本废弃了旧API", "已提前完成适配工作"],
+      "should_not_extract": [],
+      "tags": ["知识更新", "基础设施"],
+      "capability": "knowledge_update"
+    },
+    {
+      "id": "eq091",
+      "dialogue": "周末在公司加班，顺便把一直想重构的那个 auth 模块给写了。用了 JWT + refresh token 方案。",
+      "dialogue_context": "用户分享周末工作",
+      "should_extract": ["重构了auth模块", "使用了JWT+refresh token认证方案"],
+      "should_not_extract": [],
+      "tags": ["工作", "技术"],
+      "capability": "information_extraction"
+    },
+    {
+      "id": "eq092",
+      "dialogue": "啊好的好的，谢谢提醒。",
+      "dialogue_context": "礼貌回应",
+      "should_extract": [],
+      "should_not_extract": ["谢谢提醒"],
+      "tags": ["闲聊", "礼貌用语"],
+      "capability": "refusal"
+    },
+    {
+      "id": "eq093",
+      "dialogue": "我跑步的配速大概在每公里 5 分半左右，每周跑三次，每次 5 公里。参加过两次半马。",
+      "dialogue_context": "用户谈论运动习惯",
+      "should_extract": ["跑步配速约5分30秒/公里", "每周跑步3次", "每次跑5公里", "参加过两次半程马拉松"],
+      "should_not_extract": [],
+      "tags": ["个人信息", "运动"],
+      "capability": "personal_info"
+    },
+    {
+      "id": "eq094",
+      "dialogue": "产品路线图上 Q3 的重点是国际化，要支持中英日三种语言。Q4 做移动端适配。",
+      "dialogue_context": "用户分享产品规划",
+      "should_extract": ["Q3重点是国际化（中英日三种语言）", "Q4计划做移动端适配"],
+      "should_not_extract": [],
+      "tags": ["工作", "计划"],
+      "capability": "information_extraction"
+    },
+    {
+      "id": "eq095",
+      "dialogue": "用 tRPC 替代了之前的 REST API，类型安全而且不用手写接口文档了。前后端开发效率都提升了不少。",
+      "dialogue_context": "用户分享技术改进",
+      "should_extract": ["API方案从REST改为tRPC", "换用tRPC实现了类型安全", "前后端开发效率得到提升"],
+      "should_not_extract": [],
+      "tags": ["知识更新", "技术"],
+      "capability": "knowledge_update"
+    },
+    {
+      "id": "eq096",
+      "dialogue": "我对手机的要求不高，两千块左右的就行。主要用来微信、刷视频、偶尔拍拍照。",
+      "dialogue_context": "用户表达消费偏好",
+      "should_extract": ["手机预算约2000元", "主要用途为微信、视频和拍照"],
+      "should_not_extract": [],
+      "tags": ["偏好", "消费"],
+      "capability": "preference"
+    },
+    {
+      "id": "eq097",
+      "dialogue": "五一假期去了趟成都，吃了火锅、串串，还去看了大熊猫。成都真是一个来了就不想走的城市。",
+      "dialogue_context": "用户分享旅行经历",
+      "should_extract": ["五一假期去过成都", "在成都体验了火锅和串串", "参观了成都大熊猫基地"],
+      "should_not_extract": ["成都真是一个来了就不想走的城市"],
+      "tags": ["个人经历", "旅行"],
+      "capability": "information_extraction"
+    },
+    {
+      "id": "eq098",
+      "dialogue": "下周的 sprint planning 记得把那个性能优化的 story 优先级调高，线上用户投诉越来越多了。",
+      "dialogue_context": "用户安排工作优先级",
+      "should_extract": ["需要在下周sprint planning中提高性能优化story优先级", "原因是线上用户投诉增多"],
+      "should_not_extract": [],
+      "tags": ["工作", "计划"],
+      "capability": "temporal"
+    },
+    {
+      "id": "eq099",
+      "dialogue": "有人说 TypeScript 太啰嗦了我不这么认为。类型系统在大型项目中能避免很多低级 bug。",
+      "dialogue_context": "用户表达技术观点",
+      "should_extract": ["不认同TypeScript太啰嗦的观点", "认为类型系统能避免大型项目的低级bug"],
+      "should_not_extract": [],
+      "tags": ["偏好", "技术观点"],
+      "capability": "preference"
+    },
+    {
+      "id": "eq100",
+      "dialogue": "今年年终总结我给自己的评价是 B+，领导说主要是沟通方面还需要提升。明年目标是拿到 A。",
+      "dialogue_context": "用户分享年度总结",
+      "should_extract": ["年终评价为B+", "领导指出需要提升沟通能力", "明年目标是拿到A评级"],
+      "should_not_extract": [],
+      "tags": ["工作", "目标"],
+      "capability": "information_extraction"
+    }
+  ]
+}
