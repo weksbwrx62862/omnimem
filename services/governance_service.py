@@ -269,6 +269,7 @@ class GovernanceService:
         registry.register("get_permissions", self._action_get_permissions)
         registry.register("configure_kms", self._action_configure_kms)
         registry.register("rotate_key", self._action_rotate_key)
+        registry.register("reencrypt", self._action_reencrypt)
         registry.register("kms_status", self._action_kms_status)
         registry.register("rebuild_index", self._action_rebuild_index)
         registry.register("purge_test_data", self._action_purge_test_data)
@@ -635,6 +636,45 @@ class GovernanceService:
         except Exception as e:
             logger.warning("OmniMem export_training_data failed: %s", e)
             return json.dumps({"status": "error", "reason": f"export failed: {e}"})
+
+    def _action_reencrypt(self, params: dict[str, Any]) -> str:
+        """★ M8-18: 批量将 secret 记忆密文升级为 V2 AES-GCM 格式。
+
+        params:
+            dry_run: 仅统计待升级数量，不实际重写
+            limit: 扫描索引的最大条数（默认 10000）
+        """
+        dry_run = bool(params.get("dry_run", False))
+        limit = int(params.get("limit", 10000) or 10000)
+        try:
+            entries = self.deps.index.search_l1(limit=limit)
+        except Exception as e:
+            return json.dumps({"status": "error", "reason": f"index scan failed: {e}"})
+        secret_ids = [e["memory_id"] for e in entries if e.get("privacy") == "secret"]
+        stats: dict[str, Any] = {
+            "total_secret": len(secret_ids),
+            "upgraded": 0, "already_current": 0, "skipped": 0, "failed": 0,
+        }
+        if dry_run:
+            return json.dumps({"status": "dry_run", **stats}, ensure_ascii=False)
+        for mid in secret_ids:
+            try:
+                r = self.deps.store.reencrypt_secret(mid)
+            except Exception as e:
+                logger.warning("reencrypt %s failed: %s", mid, e)
+                r = "error"
+            if r == "upgraded":
+                stats["upgraded"] += 1
+            elif r == "already_current":
+                stats["already_current"] += 1
+            elif r in ("not_secret", "not_found"):
+                stats["skipped"] += 1
+            else:
+                stats["failed"] += 1
+        # 审计：重加密属敏感批量操作
+        if getattr(self.deps, "audit_logger", None):
+            self.deps.audit_logger.log("reencrypt", details=stats)
+        return json.dumps({"status": "ok", **stats}, ensure_ascii=False)
 
     def _action_register_adapter(self, params: dict[str, Any]) -> str:
         """★ M4: L4 三段式第 3 段 — 回注外部训练完成的 LoRA 适配器。"""

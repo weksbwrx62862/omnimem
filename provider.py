@@ -368,6 +368,8 @@ class OmniMemProvider(
             turn_count=self._turn_count,
             last_query=getattr(self, "_last_query", ""),
             trace_chain=getattr(self, "_trace_chain", None),
+            # ★ M8-17: secret 解密审计
+            audit_logger=getattr(getattr(self, "_governance", None), "audit_logger", None),
         )
 
     def _handle_builtin_memory_compat(self, args: dict[str, Any]) -> str:

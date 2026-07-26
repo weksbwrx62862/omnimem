@@ -126,6 +126,7 @@ def handle_detail(
     turn_count: int,
     last_query: str,
     trace_chain: Any = None,  # ★ OPT: TraceChain 实例，用于 drill_down
+    audit_logger: Any = None,  # ★ M8-17: secret 解密审计
 ) -> str:
     action = args.get("action", "list")
 
@@ -166,6 +167,20 @@ def handle_detail(
         if result.get("status") == "found" and forgetting:
             stage = forgetting.get_stage(memory_id)
             result["archived"] = stage in ("archived", "forgotten")
+        # ★ M8-17: secret 记忆解锁强制写审计日志（解密事件可追溯）
+        if (
+            audit_logger is not None
+            and result.get("status") == "found"
+            and result.get("privacy") == "secret"
+        ):
+            try:
+                audit_logger.log(
+                    "secret_decrypt",
+                    memory_id=memory_id,
+                    details={"via": "omni_detail", "turn": turn_count},
+                )
+            except Exception as e:
+                logger.warning("secret_decrypt audit failed: %s", e)
         if feedback and result.get("status") == "found":
             feedback.record_click(
                 query=last_query,

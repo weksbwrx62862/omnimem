@@ -30,7 +30,8 @@ OmniMem 通过 `config.yaml` 文件管理所有配置项，支持运行时热重
 | `auto_memorize` | boolean | `true` | 是否启用感知驱动的自动记忆写入。关闭后仅通过 `omni_memorize` 工具手动存储 |
 | `extraction_mode` | string | `"hybrid"` | 事实抽取模式。`rule`：纯规则抽取；`hybrid`：规则信号触发后用 LLM 精炼事实内容与类型（LLM 不可用/失败时自动回退规则）；`llm`：同 hybrid |
 | `llm_model` | string | 环境变量 `OMNIMEM_LLM_MODEL` 或 `"glm-5.1"` | ★ M7-13: 默认 LLM 模型（单一来源 `utils/llm_client.DEFAULT_LLM_MODEL`）。优先级：凭证/配置中的 model > 本项 > 环境变量 > 内置缺省 |
-| `use_unified_index` | boolean | `false` | 灰度开关：启用 UnifiedMemoryIndex（合并 ThreeLevelIndex+MetaStore 表结构，读写连接分离+写锁串行化）。新数据目录可直接启用；存量数据迁移工具就绪前建议保持关闭 |
+| `use_unified_index` | boolean | `false` | 灰度开关：启用 UnifiedMemoryIndex（合并 ThreeLevelIndex+MetaStore 表结构，读写连接分离+写锁串行化）。新数据目录可直接启用；存量数据用 `omni-doctor migrate-index` 迁移 |
+| `mcp_rate_limit_per_minute` | integer | `120` | ★ M8-19: MCP 工具调用滑动窗口速率限制（每工具每分钟），与 REST API 安全策略对齐 |
 | `default_privacy` | string | `"personal"` | 新记忆的默认隐私级别。可选值：`public`、`team`、`personal`、`secret` |
 | `max_prefetch_tokens` | integer | `300` | prefetch（预取注入）阶段的最大 token 预算。控制每轮自动注入的记忆量 |
 

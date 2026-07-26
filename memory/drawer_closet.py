@@ -532,6 +532,76 @@ class DrawerClosetStore:
         logger.info("Warmed up %d entries into closet index%s", len(entries),
                      "" if self._skip_meta_write else " and meta store")
 
+    def reencrypt_secret(self, memory_id: str) -> str:
+        """★ M8-18: 将单条 secret 记忆的密文升级为当前加密格式（V2 AES-GCM）。
+
+        Returns:
+            "upgraded" / "already_current" / "not_secret" / "not_found" / "error"
+        """
+        if self._privacy_manager is None:
+            return "error"
+        # 定位 drawer 文件：路径索引优先，rglob 回退
+        path = self._id_to_path.get(memory_id)
+        if path is None or not path.exists():
+            path = None
+            for p in self._palace_dir.rglob(f"{memory_id}.md"):
+                if p.parent.name == "drawer":
+                    path = p
+                    break
+        if path is None or not path.exists():
+            return "not_found"
+
+        raw = self._read_drawer(path)
+        if not raw:
+            return "error"
+        if raw.get("privacy") != "secret":
+            return "not_secret"
+        ct = raw.get("content", "")
+        if ct.startswith("OMNI_ENC_V2:"):
+            return "already_current"
+
+        # 解密旧密文（V1/legacy Fernet）；历史明文（加密不可用时期写入）直接升级
+        if self._privacy_manager.is_encrypted(ct):
+            plaintext = self._privacy_manager.decrypt_content(ct)
+            if plaintext == "[DECRYPTION_FAILED]":
+                return "error"
+        else:
+            plaintext = ct
+
+        try:
+            new_ct = self._privacy_manager.encrypt_content(plaintext)
+        except Exception as e:
+            logger.warning("reencrypt_secret encrypt failed for %s: %s", memory_id, e)
+            return "error"
+
+        # 重写 drawer 文件，保留全部 front matter 字段
+        try:
+            stored_at_raw = raw.get("stored_at")
+            try:
+                stored_at = datetime.fromisoformat(str(stored_at_raw)) if stored_at_raw else datetime.now(timezone.utc)
+            except (ValueError, TypeError):
+                stored_at = datetime.now(timezone.utc)
+            self._write_drawer(
+                path,
+                new_ct,
+                raw.get("type", "fact"),
+                int(raw.get("confidence", 3) or 3),
+                "secret",
+                raw.get("provenance"),
+                stored_at,
+                raw.get("vc", ""),
+                raw.get("entities") or None,
+            )
+        except Exception as e:
+            logger.warning("reencrypt_secret rewrite failed for %s: %s", memory_id, e)
+            return "error"
+
+        # 内存索引中的旧密文同步失效
+        with self._index_lock:
+            if memory_id in self._closet_index:
+                self._closet_index[memory_id]["content"] = new_ct
+        return "upgraded"
+
     def update_privacy(self, memory_id: str, privacy: str, new_wing: str | None = None) -> bool:
         """更新记忆的隐私级别。可选同步更新wing。"""
         updated = False

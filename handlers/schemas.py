@@ -212,6 +212,7 @@ def get_tool_schemas() -> list[dict[str, Any]]:
                             "sync_instances",
                             "export_memories",
                             "import_memories",
+                            "reencrypt",
                             "wiki_upgrade",
                             "forgetting_heat",
                         ],

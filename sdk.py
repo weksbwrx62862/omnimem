@@ -136,6 +136,8 @@ class OmniMemSDK:
             feedback=getattr(self, "_feedback", None),
             turn_count=kwargs.get("turn_count", 0),
             last_query=kwargs.get("last_query", ""),
+            # ★ M8-17: secret 解密审计
+            audit_logger=getattr(self._governance, "audit_logger", None),
         )
         return json.loads(raw)
 

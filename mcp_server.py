@@ -37,6 +37,10 @@ class MCPAuthMiddleware:
 class OmniMemMCPServer:
     name = "omnimem"
 
+    # ★ M8-19: 类级缺省，兼容绕过 __init__ 的构造方式（测试桩/代理）
+    _rate_limiter: Any = None
+    _audit_logger: Any = None
+
     def __init__(self, storage_dir: str | None = None, config: dict | None = None):
         from omnimem.sdk import OmniMemSDK
 
@@ -45,6 +49,24 @@ class OmniMemMCPServer:
         self._require_api_key = bool(self._sdk._config.get("mcp_require_api_key", False))
         self._api_key = os.environ.get("OMNIMEM_API_KEY", "") or self._sdk._config.get("api_key", "")
         self._auth_middleware = MCPAuthMiddleware(api_key=self._api_key)
+        # ★ M8-19: MCP 入口安全对齐 REST — 速率限制 + 工具调用审计
+        from omnimem.rest_api import RateLimiter
+
+        self._rate_limiter = RateLimiter(
+            limit_per_minute=int(self._sdk._config.get("mcp_rate_limit_per_minute", 120))
+        )
+        self._audit_logger = getattr(self._sdk._governance, "audit_logger", None)
+
+    def _audit(self, tool: str, result_status: str) -> None:
+        """★ M8-19: MCP 工具调用写审计日志（失败不阻断主流程）。"""
+        if self._audit_logger is None:
+            return
+        try:
+            self._audit_logger.log(
+                "mcp_call", details={"tool": tool}, result=result_status,
+            )
+        except Exception as e:
+            logger.warning("MCP audit failed: %s", e)
 
     def list_tools(self) -> list[dict[str, Any]]:
         return [
@@ -205,6 +227,7 @@ class OmniMemMCPServer:
                                 "sync_instances",
                                 "export_memories",
                                 "import_memories",
+                                "reencrypt",
                             ],
                             "description": "Governance action to perform",
                         },
@@ -255,20 +278,33 @@ class OmniMemMCPServer:
         auth_error = self._check_api_key(arguments)
         if auth_error:
             logger.warning("MCP tool %s 被拒绝: %s", name, auth_error)
+            self._audit(name, "denied")
             return json.dumps({"error": auth_error}, ensure_ascii=False)
+
+        # ★ M8-19: 滑动窗口速率限制（stdio 无客户端 IP，按工具名计数；未初始化时跳过）
+        if self._rate_limiter is not None and not self._rate_limiter.is_allowed("mcp", name):
+            logger.warning("MCP tool %s 触发速率限制", name)
+            self._audit(name, "rate_limited")
+            return json.dumps({"error": "Rate limit exceeded"}, ensure_ascii=False)
 
         # 避免将 _api_key 透传给 SDK 工具实现
         call_args = {k: v for k, v in arguments.items() if k != "_api_key"}
-        if name == "omni_memorize":
-            result = self._sdk.memorize(**call_args)
-        elif name == "omni_recall":
-            result = self._sdk.recall(**call_args)
-        elif name == "omni_reflect":
-            result = self._sdk.reflect(**call_args)
-        elif name == "omni_govern":
-            result = self._sdk.govern(**call_args)
-        else:
-            return json.dumps({"error": f"Unknown tool: {name}"})
+        try:
+            if name == "omni_memorize":
+                result = self._sdk.memorize(**call_args)
+            elif name == "omni_recall":
+                result = self._sdk.recall(**call_args)
+            elif name == "omni_reflect":
+                result = self._sdk.reflect(**call_args)
+            elif name == "omni_govern":
+                result = self._sdk.govern(**call_args)
+            else:
+                self._audit(name, "error")
+                return json.dumps({"error": f"Unknown tool: {name}"})
+        except Exception:
+            self._audit(name, "error")
+            raise
+        self._audit(name, "success")
         return json.dumps(result, ensure_ascii=False)
 
     def close(self) -> None:

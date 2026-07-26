@@ -10,8 +10,11 @@
 > M6-8（GovernanceStore 治理合库，可选注入）、M6-9（forgetting 拆分为 core/ops+shim）、
 > M7-10（ADD/UPDATE/DELETE 决策）、M7-11（KG 抽取收口，无直连/硬编码残留）、
 > M7-12（评测集 + rule 基线 F1=64.34%，refusal 维度 F1=0）、
-> M7-13（DEFAULT_LLM_MODEL 单一来源 + OMNIMEM_LLM_MODEL）、M7-14（reranker_device + env 覆盖）。
-> ⬜ 待办：M5-1/2（Linux 回归 + LongMemEval A/B，及 hybrid 抽取评测对比）、M8 全部、M9 全部。
+> M7-13（DEFAULT_LLM_MODEL 单一来源 + OMNIMEM_LLM_MODEL）、M7-14（reranker_device + env 覆盖）、
+> M8-17（secret 解密强制审计）、M8-18（reencrypt 批量 V1→V2 重加密）、
+> M8-19（MCP 速率限制 + 调用审计，对齐 REST）。
+> ⬜ 待办：M5-1/2（Linux 回归 + LongMemEval A/B，及 hybrid 抽取评测对比）、
+> M8-15/16（GPU 训练循环/适配器推理集成，需 GPU 环境）、M9 全部。
 
 ---
 
