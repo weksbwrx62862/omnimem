@@ -1,0 +1,23 @@
+[
+  {"id": "prompt_injection", "pattern": "ignore\\s+(previous|all|above|prior)\\s+instructions"},
+  {"id": "prompt_injection", "pattern": "ignore\\s+(all\\s+)?(the\\s+)?(previous|above|prior|existing)\\s*instructions?"},
+  {"id": "disregard_rules", "pattern": "disregard\\s+(all\\s+)?(your\\s+)?(instructions|rules|guidelines|orders)"},
+  {"id": "forget_context", "pattern": "forget\\s+(everything|all|what)\\s+(you|that|we)(\\s+were|\\s*have)?\\s+told"},
+  {"id": "role_hijack", "pattern": "you\\s+are\\s+now\\s+"},
+  {"id": "deception_hide", "pattern": "do\\s+not\\s+tell\\s+the\\s+user"},
+  {"id": "sys_prompt_override", "pattern": "system\\s+prompt\\s+override"},
+  {"id": "disregard_rules", "pattern": "disregard\\s+(your|all|any)\\s+(instructions|rules|guidelines)"},
+  {"id": "bypass_restrictions", "pattern": "act\\s+as\\s+(if|though)\\s+you\\s+(have\\s+no|don't\\s+have)\\s*(restrictions|limits|rules)"},
+  {"id": "exfil_curl", "pattern": "curl\\s+[^\\n]*\\$\\{?\\w*(KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL|API)"},
+  {"id": "exfil_wget", "pattern": "wget\\s+[^\\n]*\\$\\{?\\w*(KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL|API)"},
+  {"id": "read_secrets", "pattern": "cat\\s+[^\\n]*(\\.env|credentials|\\.netrc|\\.pgpass|\\.npmrc|\\.pypirc)"},
+  {"id": "ssh_backdoor", "pattern": "authorized_keys"},
+  {"id": "ssh_access", "pattern": "\\$HOME/\\.ssh|\\~/\\.ssh"},
+  {"id": "hermes_env", "pattern": "\\$HOME/\\.hermes/\\.env|\\~/\\.hermes/.env"},
+  {"id": "prompt_injection_zh", "pattern": "忽略.{0,4}(之前|先前|上面|上文|以上).{0,4}(指令|提示|规则|限制|约束)"},
+  {"id": "role_hijack_zh", "pattern": "你现在是.{0,6}(黑客|恶意|DAN|无限制|越狱)"},
+  {"id": "forget_context_zh", "pattern": "忘掉.{0,4}(所有|一切).{0,4}(限制|规则|约束)"},
+  {"id": "exfil_zh", "pattern": "(导出|输出|显示|打印|泄露).{0,4}(所有|全部).{0,4}(记忆|数据|内容|信息)"},
+  {"id": "bypass_restrictions_zh", "pattern": "(假装|扮演|模拟).{0,4}(你是|为).{0,4}(DAN|黑客|恶意|无限制)"},
+  {"id": "bypass_restrictions_zh", "pattern": "(绕过|突破|无视|忽略).{0,4}(安全|限制|过滤|检查|防护)"}
+]
