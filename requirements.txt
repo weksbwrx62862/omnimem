@@ -30,3 +30,7 @@ httpx>=0.24.0
 
 # secret 级记忆加密（encryption.py 不可用时显式报错，属硬依赖）
 cryptography>=42.0.0
+
+# ★ M9-23: jieba 依赖 pkg_resources，setuptools>=81 将其移除后 jieba 导入即失败；
+# 钉版兜底，待 jieba 上游修复或替换 jieba-fast 后移除
+setuptools<81

@@ -22,3 +22,13 @@ repos:
       - id: mypy
         additional_dependencies: [types-PyYAML]
         args: [--ignore-missing-imports]
+
+  # ★ M9-22: 依赖单一来源校验（pyproject.toml ↔ requirements.txt ↔ plugin.yaml）
+  - repo: local
+    hooks:
+      - id: dependency-sync
+        name: dependency single-source check
+        entry: python scripts/check_dependency_sync.py --quiet
+        language: system
+        files: ^(pyproject\.toml|requirements\.txt|plugin\.yaml)$
+        pass_filenames: false
