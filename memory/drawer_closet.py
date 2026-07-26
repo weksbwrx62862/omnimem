@@ -83,6 +83,10 @@ class DrawerClosetStore:
         self._privacy_manager: Any = None
         # 配置引用，用于判断加密默认是否启用
         self._config = config
+        # ★ M6-6: use_unified_index 时跳过 MetaStore 双写
+        self._skip_meta_write = bool(
+            config.get("use_unified_index", False)
+        ) if config is not None else False
         # ★ 磁盘写入缓冲：批量 flush 减少高频 add 时的 IO 压力
         self._write_buffer: list[WriteOp] = []
         self._pending_disk_writes = 0
@@ -265,10 +269,12 @@ class DrawerClosetStore:
                     closet_path.unlink(missing_ok=True)
             except Exception as e:
                 logger.warning("Saga 补偿：删除 closet 文件失败: %s", e)
-            try:
-                self._meta_store.delete(memory_id)
-            except Exception as e:
-                logger.warning("Saga 补偿：删除 MetaStore 记录失败: %s", e)
+            # ★ M6-6: use_unified_index 时跳过 MetaStore 回滚
+            if not self._skip_meta_write:
+                try:
+                    self._meta_store.delete(memory_id)
+                except Exception as e:
+                    logger.warning("Saga 补偿：删除 MetaStore 记录失败: %s", e)
             # 清理内存索引 + 路径索引 + 倒排索引（统一在 _index_lock 内，修复 C1 竞态）
             with self._index_lock:
                 self._closet_index.pop(memory_id, None)
@@ -286,12 +292,18 @@ class DrawerClosetStore:
         #      作用是为后续 meta_store_write 失败时提供补偿锚点。
         #   3. _compensate 负责回滚已落盘的 drawer/closet 文件以及内存索引（closet_index、
         #      id_to_path、type_index、wing_index），保证 Saga 失败时数据一致性。
+        # ★ M6-6: use_unified_index 时 Saga 步骤从 2 → 1（跳过 meta_store_write），
+        #   统一索引已接管 MetaStore 职责，消除双写。
+        saga_steps = [
+            SagaStep(name="drawer_commit", action=lambda: None, compensate=_compensate),
+        ]
+        if not self._skip_meta_write:
+            saga_steps.append(
+                SagaStep(name="meta_store_write", action=_write_meta),
+            )
         saga_result = self._saga.execute(
             memory_id=memory_id,
-            steps=[
-                SagaStep(name="drawer_commit", action=lambda: None, compensate=_compensate),
-                SagaStep(name="meta_store_write", action=_write_meta),
-            ],
+            steps=saga_steps,
         )
 
         if not saga_result.success:
@@ -377,12 +389,13 @@ class DrawerClosetStore:
         """
         deleted_any = False
 
-        # 1. MetaStore（SQLite 元数据）
-        try:
-            self._meta_store.delete(memory_id)
-            deleted_any = True
-        except Exception as e:
-            logger.warning("DrawerClosetStore.delete: MetaStore failed for %s: %s", memory_id, e)
+        # 1. MetaStore（SQLite 元数据）★ M6-6: use_unified_index 时跳过
+        if not self._skip_meta_write:
+            try:
+                self._meta_store.delete(memory_id)
+                deleted_any = True
+            except Exception as e:
+                logger.warning("DrawerClosetStore.delete: MetaStore failed for %s: %s", memory_id, e)
 
         # ★ 修复 C2：内存索引 + 路径索引 + 倒排索引统一在 _index_lock 内清理
         # 原实现这三个索引在锁外操作，与 add() 的索引更新无互斥，导致悬空引用
@@ -513,9 +526,11 @@ class DrawerClosetStore:
                 )
         with self._index_lock:
             self._evict_if_needed()
-        # ★ P0方案一：同步预热 MetaStore
-        self._meta_store.warm_up(entries)
-        logger.info("Warmed up %d entries into closet index and meta store", len(entries))
+        # ★ P0方案一：同步预热 MetaStore（M6-6: use_unified_index 时跳过）
+        if not self._skip_meta_write:
+            self._meta_store.warm_up(entries)
+        logger.info("Warmed up %d entries into closet index%s", len(entries),
+                     "" if self._skip_meta_write else " and meta store")
 
     def update_privacy(self, memory_id: str, privacy: str, new_wing: str | None = None) -> bool:
         """更新记忆的隐私级别。可选同步更新wing。"""
@@ -541,8 +556,8 @@ class DrawerClosetStore:
                     self._update_drawer_privacy(memory_id, privacy, new_wing)
                     updated = True
 
-        # ★ P0方案一：同步更新 MetaStore
-        if updated:
+        # ★ P0方案一：同步更新 MetaStore（M6-6: use_unified_index 时跳过）
+        if updated and not self._skip_meta_write:
             self._meta_store.update_privacy(memory_id, privacy, new_wing or "")
         return updated
 
@@ -566,7 +581,8 @@ class DrawerClosetStore:
                         self._closet_index[memory_id][k] = v
                     self._touch(memory_id)
                     updated = True
-        if updated:
+        # ★ M6-6: use_unified_index 时跳过 MetaStore 写入
+        if updated and not self._skip_meta_write:
             self._meta_store.update_field(memory_id, **fields)
         return updated
 

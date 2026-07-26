@@ -244,15 +244,55 @@ class Doctor:
         print()
 
 
+def _cmd_migrate_index(args: argparse.Namespace) -> None:
+    """执行 UnifiedMemoryIndex 迁移。"""
+    from omnimem.memory.migration_tool import IndexMigrationTool
+
+    data_dir = args.data_dir or Path.home() / ".omnimem"
+
+    tool = IndexMigrationTool(
+        index_dir=data_dir / "index",
+        meta_dir=data_dir / ".meta",
+        unified_dir=data_dir / "index",  # 目标路径与 index/ 同目录，输出 unified_index.db
+    )
+
+    result = tool.migrate(dry_run=args.dry_run, skip_backup=args.no_backup)
+    tool.print_report(result)
+
+    if not result.get("success"):
+        sys.exit(1)
+
+
 def main() -> None:
-    parser = argparse.ArgumentParser(description="OmniMem 健康检查工具")
+    parser = argparse.ArgumentParser(description="OmniMem 健康检查与维护工具")
+    subparsers = parser.add_subparsers(dest="command", help="子命令")
+
+    # 默认：健康检查
     parser.add_argument("--quick", action="store_true", help="快速检查（跳过子系统测试）")
     parser.add_argument("--config", action="store_true", help="仅检查配置")
     parser.add_argument("--deps", action="store_true", help="仅检查依赖")
     parser.add_argument("--data-dir", type=Path, help="数据目录路径")
+
+    # migrate-index 子命令
+    migrate_parser = subparsers.add_parser(
+        "migrate-index",
+        help="将 ThreeLevelIndex + MetaStore 迁移到 UnifiedMemoryIndex",
+    )
+    migrate_parser.add_argument("--data-dir", type=Path, help="数据目录路径")
+    migrate_parser.add_argument(
+        "--dry-run", action="store_true", help="仅模拟，不实际写入"
+    )
+    migrate_parser.add_argument(
+        "--no-backup", action="store_true", help="跳过源数据库备份"
+    )
+
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.WARNING)
+
+    if args.command == "migrate-index":
+        _cmd_migrate_index(args)
+        return
 
     doctor = Doctor(data_dir=args.data_dir, quick=args.quick)
 
