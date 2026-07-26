@@ -89,6 +89,20 @@ class StorageFacade:
         if self._md_store:
             self._md_store.flush()
 
+    def get_fts5_read_conn(self):
+        """获取 unified_index FTS5 读连接回调（M6-7: FTS5 检索器）。
+
+        仅在 use_unified_index=True 时返回有效回调；
+        否则返回 None（回退到 BM25Retriever）。
+        ★ 修复：回调每次动态取 _read_conn，避免捕获快照在
+        UnifiedMemoryIndex 自动重连后返回失效连接。
+        """
+        index = self._index
+        # UnifiedMemoryIndex 暴露 _read_conn 供只读查询
+        if hasattr(index, "_read_conn") and index._read_conn is not None:
+            return lambda: getattr(index, "_read_conn", None)
+        return None
+
     def close(self) -> None:
         if self._index:
             self._index.close()

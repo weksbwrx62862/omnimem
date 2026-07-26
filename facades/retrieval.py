@@ -37,6 +37,7 @@ class RetrievalFacade:
             recall_strategy=config.get("recall_strategy", "hybrid"),
             query_cache_ttl=config.get("query_cache_ttl", 60.0),
             config=config,
+            get_fts5_conn=storage_facade.get_fts5_read_conn() if storage_facade else None,
         )
 
         # 上下文管理

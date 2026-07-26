@@ -89,6 +89,7 @@ class HybridRetriever:
         embedding_provider: EmbeddingProvider | None = None,
         vector_store: Any | None = None,
         registry: RetrieverRegistry | None = None,
+        get_fts5_conn: Any = None,  # M6-7: unified_index 读连接回调
     ):
         """初始化混合检索引擎。"""
         self._data_dir = data_dir or Path("/tmp/omnimem/retrieval")
@@ -123,6 +124,14 @@ class HybridRetriever:
             vector_store=vector_store,
         )
         bm25 = BM25Retriever(data_dir=self._data_dir)
+        # M6-7: FTS5 替代 BM25（灰度开关 use_fts5）
+        if _cfg("use_fts5", False) and get_fts5_conn is not None:
+            try:
+                from omnimem.retrieval.fts5 import FTS5Retriever
+                bm25 = FTS5Retriever(get_read_conn=get_fts5_conn)
+                logger.info("HybridRetriever: using FTS5Retriever (unified_index FTS5)")
+            except ImportError:
+                logger.warning("HybridRetriever: FTS5Retriever import failed, falling back to BM25")
         self.register_channel("vector", vec, weight=_cfg("vector_weight", 3.0))
         self.register_channel("bm25", bm25, weight=_cfg("bm25_weight", 1.0))
         self._vector = vec
