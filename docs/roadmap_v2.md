@@ -4,6 +4,13 @@
 > 共享检索线程池、embedding 缓存 SQLite 化、UnifiedMemoryIndex 灰度接入、LoRA 三段式闭环、文档全面对齐。
 > 本文档为剩余债务 + 执行过程中新发现问题的完整清单，按优先级排列，工作量按 1 人全职估算。
 
+> **进度更新（2026-07-26）**：
+> ✅ 已完成：M5-3（分批提交）、M5-4（1.1.0 + CHANGELOG）、M6-5（迁移工具+migrate-index 子命令）、
+> M6-6（unified 模式消除 MetaStore 双写）、M6-7（FTS5Retriever，use_fts5 灰度）、
+> M6-8（GovernanceStore 治理合库，可选注入）、M6-9（forgetting 拆分为 core/ops+shim）、
+> M7-10（ADD/UPDATE/DELETE 决策）、M7-12（评测集 + rule 基线 F1=64.34%，refusal 维度 F1=0）。
+> ⬜ 待办：M5-1/2（Linux 回归 + LongMemEval A/B，及 hybrid 抽取评测对比）、M7-11/13/14、M8 全部、M9 全部。
+
 ---
 
 ## M5 — 验证与入库（P0，最先执行，约 1 周）
