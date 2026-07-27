@@ -484,6 +484,18 @@ class L3PersistentCache:
             logger.debug("L3PersistentCache stats failed: %s", e)
             return {"level": "L3", "available": False, "size": 0}
 
+    def close(self) -> None:
+        """关闭 SQLite 连接（Windows 下未关闭会导致临时目录无法删除）。"""
+        if self._conn is None:
+            return
+        try:
+            with self._lock:
+                self._conn.close()
+        except Exception as e:
+            logger.debug("L3PersistentCache close failed: %s", e)
+        finally:
+            self._conn = None
+
 
 class MultiLevelCache:
     """多级缓存编排 — L1 → L2 → L3，支持异步回填与精准失效。
@@ -648,6 +660,11 @@ class MultiLevelCache:
             "L2": {"available": self._l2.is_available()},
             "L3": self._l3.stats() if self._l3 else {"available": False, "size": 0},
         }
+
+    def close(self) -> None:
+        """释放 L3 SQLite 连接等底层资源（幂等）。"""
+        if self._l3 is not None:
+            self._l3.close()
 
     async def async_get(self, key: str) -> Any | None:
         """异步版本（L2 查询不阻塞）。"""

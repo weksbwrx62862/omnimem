@@ -186,12 +186,14 @@ class FullStackBenchmark:
             fb.get_memory_trust(mid)
             latencies.append((time.perf_counter() - t0) * 1000)
 
-        return {
+        result = {
             "clicks_recorded": 50,
             "avg_lookup_ms": round(statistics.mean(latencies), 3),
             "sample_trust_0": fb.get_memory_trust("mem-000"),
             "sample_trust_9": fb.get_memory_trust("mem-009"),
         }
+        fb.close()
+        return result
 
     def _bench_security(self) -> dict:
         """安全防护吞吐量。"""

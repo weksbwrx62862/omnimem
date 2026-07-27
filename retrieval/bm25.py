@@ -214,7 +214,7 @@ class BM25Retriever:
         self._buffer_size = buffer_size
         self._max_documents = max_documents
         self._data_dir = data_dir
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()  # RLock: add() -> _start_background_rebuild() 同线程重入
         self._dirty = False
         self._rebuilding = False
         self._cache_loaded = False

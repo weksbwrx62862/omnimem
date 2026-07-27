@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+
 from omnimem.utils.cache import (
     L1LRUCache,
     L2RedisCache,
@@ -70,8 +71,10 @@ class TestL3PersistentCacheTagIndex:
     """L3 SQLite tag 反向索引正确性与性能测试。"""
 
     @pytest.fixture
-    def l3(self, omni_tmp_path: Path) -> L3PersistentCache:
-        return L3PersistentCache(cache_dir=omni_tmp_path)
+    def l3(self, omni_tmp_path: Path):
+        cache = L3PersistentCache(cache_dir=omni_tmp_path)
+        yield cache
+        cache.close()
 
     def test_delete_by_tag_uses_index(self, l3: L3PersistentCache) -> None:
         l3.set("k1", "v1", tags={"t1", "t2"})
@@ -119,6 +122,7 @@ class TestL3PersistentCacheTagIndex:
         assert l3.stats()["size"] == total - 10
         # 1000 行规模下，反向索引失效应远小于朴素全表扫描
         assert elapsed < 1.0
+        l3.close()
 
 
 class TestMultiLevelCacheTagInvalidation:
@@ -129,6 +133,7 @@ class TestMultiLevelCacheTagInvalidation:
         ml.set("k1", "v1")
         # 同步上下文中 get 不应触发 asyncio 事件循环异常
         assert ml.get("k1") == "v1"
+        ml.close()
 
     def test_delete_by_tag_invalidates_all_levels(self, omni_tmp_path: Path) -> None:
         ml = MultiLevelCache(l1_size=10, l1_ttl=60, cache_dir=omni_tmp_path)
@@ -141,6 +146,7 @@ class TestMultiLevelCacheTagInvalidation:
         assert ml.get("k1") is None
         assert ml.get("k2") is None
         assert ml.get("k3") == "v3"
+        ml.close()
 
     def test_fallback_without_l3(self) -> None:
         ml = MultiLevelCache(l1_size=10, l1_ttl=60, cache_dir=None)
@@ -154,6 +160,7 @@ class TestMultiLevelCacheTagInvalidation:
         ml = MultiLevelCache(l1_size=10, l1_ttl=60, cache_dir=omni_tmp_path)
         await ml.async_set("k1", "v1", tags={"t1"})
         assert await ml.async_get("k1") == "v1"
+        ml.close()
 
     def test_get_inside_running_event_loop(self, omni_tmp_path: Path) -> None:
         """确保同步 get 在已有事件循环的线程中也能安全返回。"""
@@ -170,3 +177,4 @@ class TestMultiLevelCacheTagInvalidation:
 
         result = run_in_loop()
         assert result == "v1"
+        ml.close()

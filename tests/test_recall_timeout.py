@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import time
 from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FuturesTimeoutError
 from unittest.mock import MagicMock, patch
 
 
@@ -86,7 +87,7 @@ class TestRecallTimeoutDegradation:
             future = executor.submit(slow_search, "test", 10)
             try:
                 results = future.result(timeout=timeout_sec)
-            except TimeoutError:
+            except FuturesTimeoutError:  # Py3.10: futures.TimeoutError != builtin TimeoutError
                 future.cancel()
                 results = []
 

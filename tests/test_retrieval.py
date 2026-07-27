@@ -526,7 +526,9 @@ class TestHybridRetrieverConfig(unittest.TestCase):
 
     def test_shutdown_closes_thread_pool(self) -> None:
         """shutdown() 应释放共享线程池引用；引用归零时真正关闭。"""
-        from omnimem.retrieval import hybrid_orchestrator as ho
+        # _shared_executor is a mutable module global; read it from executor
+        # directly (re-exports are stale snapshots bound at import time)
+        from omnimem.retrieval import executor as ho
 
         tmpdir = tempfile.mkdtemp()
         hybrid = HybridRetriever(data_dir=Path(tmpdir))
