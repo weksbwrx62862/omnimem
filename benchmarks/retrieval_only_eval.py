@@ -22,17 +22,15 @@
 from __future__ import annotations
 
 import argparse
-from datetime import datetime
 import gc
 import json
 import logging
 import os
 import re
-import shutil
 import sys
-import tempfile
 import time
 from collections import defaultdict
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -43,18 +41,16 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from omnimem.retrieval.bm25 import BM25Retriever
-from omnimem.retrieval.vector import VectorRetriever
-from omnimem.retrieval.rrf import RRFFusion
-from benchmarks.longmemeval_adapter import OmniMemMemoryProvider, _PREFERENCE_KEYWORDS
+from benchmarks.longmemeval_adapter import _PREFERENCE_KEYWORDS, OmniMemMemoryProvider
 from benchmarks.run_longmemeval import (
-    evaluate_retrieval_quality,
-    build_answer_turn_contents,
+    _check_llm_available,
     _generate_answer_with_llm,
     _judge_answer_with_llm,
-    _check_llm_available,
+    build_answer_turn_contents,
+    evaluate_retrieval_quality,
 )
-
+from omnimem.retrieval.bm25 import BM25Retriever
+from omnimem.retrieval.vector import VectorRetriever
 
 # ── Chain-of-Note 阅读策略 ──
 
@@ -940,7 +936,7 @@ def _print_summary(results: list[dict], args, elapsed: float) -> None:
                 print(f"  QA 准确率: {correct}/{len(judged)} = {accuracy:.1%}")
 
                 # 分维度准确率
-                print(f"\n  ── 分维度 QA 准确率 ──")
+                print("\n  ── 分维度 QA 准确率 ──")
                 print(f"  {'类型':<28} {'准确率':>8} {'正确/总数':>10}")
                 print(f"  {'-'*28} {'-'*8} {'-'*10}")
                 for qtype in sorted(by_type):
@@ -952,7 +948,7 @@ def _print_summary(results: list[dict], args, elapsed: float) -> None:
                     print(f"  {qtype:<28} {acc:>7.1%} {corr}/{len(items)}")
 
     # 分维度
-    print(f"\n  ── 分维度排名指标 ──")
+    print("\n  ── 分维度排名指标 ──")
     print(f"  {'类型':<28} {'MRR':>6} {'Top-5':>7} {'Top-10':>7} {'Top-20':>7} {'中位排名':>8}")
     print(f"  {'-'*28} {'-'*6} {'-'*7} {'-'*7} {'-'*7} {'-'*8}")
 
@@ -985,7 +981,7 @@ def _print_summary(results: list[dict], args, elapsed: float) -> None:
         type_counts = defaultdict(int)
         for r in results:
             type_counts[r.get("query_type", "default")] += 1
-        print(f"\n  ── 查询类型分布（动态权重路由） ──")
+        print("\n  ── 查询类型分布（动态权重路由） ──")
         for qt in ("preference", "temporal", "default"):
             cnt = type_counts.get(qt, 0)
             if cnt > 0:
@@ -993,7 +989,7 @@ def _print_summary(results: list[dict], args, elapsed: float) -> None:
                 print(f"  {qt:<12} {cnt:>4} 题  (bm25_w={w_bm25}, vec_w={w_vec})")
 
     # 排名分布
-    print(f"\n  ── 答案排名分布 ──")
+    print("\n  ── 答案排名分布 ──")
     if ranks:
         buckets = [(1, 3), (4, 5), (6, 10), (11, 20), (21, 50), (51, 100)]
         for lo, hi in buckets:
@@ -1010,7 +1006,7 @@ def _print_summary(results: list[dict], args, elapsed: float) -> None:
     print(f"  Context 条数: {args.gen_context_size}")
     print(f"  Top-K: {args.top_k}")
     print(f"  Judge 模型: {args.judge_model if args.mode == 'full' else 'N/A'}")
-    print(f"  嵌入模型: all-MiniLM-L6-v2 (384维, CPU)")
+    print("  嵌入模型: all-MiniLM-L6-v2 (384维, CPU)")
 
 
 def _save_results_json(results: list[dict], args, elapsed: float) -> None:

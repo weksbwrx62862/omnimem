@@ -18,3 +18,7 @@ pre-commit>=3.0.0
 # 可选依赖（开发时建议安装）
 cryptography>=42.0.0
 sentence-transformers>=2.2.0
+
+# ★ M9-20: REST(FastAPI) 测试依赖（对应 omnimem[api] extra）
+fastapi>=0.110.0
+uvicorn>=0.27.0

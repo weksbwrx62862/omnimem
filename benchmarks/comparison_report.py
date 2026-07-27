@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 OmniMem 与开源项目 LongMemEval 评测对比报告生成器。
 

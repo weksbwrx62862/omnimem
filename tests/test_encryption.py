@@ -13,6 +13,7 @@ import uuid
 from unittest.mock import MagicMock, patch
 
 import pytest
+
 from omnimem.config import OmniMemConfig
 from omnimem.governance.encryption import (
     _UNENCRYPTED_PREFIX,

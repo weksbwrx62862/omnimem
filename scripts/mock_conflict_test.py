@@ -13,16 +13,14 @@
 from __future__ import annotations
 
 import argparse
-import json
 import logging
 import sys
-from dataclasses import asdict
 from pathlib import Path
 
 # 确保可以导入 omnimem
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from omnimem.governance.conflict import ConflictResult, ConflictResolver
+from omnimem.governance.conflict import ConflictResolver
 
 logging.basicConfig(
     level=logging.INFO,

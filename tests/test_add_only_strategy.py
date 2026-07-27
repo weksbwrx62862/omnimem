@@ -11,9 +11,8 @@ from __future__ import annotations
 
 import logging
 import unittest
-from unittest.mock import MagicMock, patch
 
-from omnimem.governance.conflict import ConflictResult, ConflictResolver
+from omnimem.governance.conflict import ConflictResolver, ConflictResult
 
 logger = logging.getLogger(__name__)
 

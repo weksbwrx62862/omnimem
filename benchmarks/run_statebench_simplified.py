@@ -40,7 +40,6 @@ import json
 import logging
 import os
 import random
-import sys
 import tempfile
 import time
 from dataclasses import dataclass, field
@@ -245,7 +244,7 @@ class SimpleLLMClient:
                     base_url=self._base_url,
                 )
             except ImportError:
-                raise ImportError("需要安装 openai 库: pip install openai")
+                raise ImportError("需要安装 openai 库: pip install openai") from None
         return self._client
 
     def chat(self, messages: list[dict], temperature: float = 0.7) -> tuple[str, dict]:

@@ -30,7 +30,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta, timezone
+import sqlite3
 from pathlib import Path
 from typing import Any
 
@@ -133,11 +133,11 @@ class _ForgettingCore:
             get_pipeline_start_time=self._get_pipeline_start_time,
         )
 
-    def _get_conn(self) -> "sqlite3.Connection":
+    def _get_conn(self) -> sqlite3.Connection:
         """获取数据库连接（子模块回调用）。★ M6-8: 委托给 GovernanceStore。"""
         return self._conn
 
-    def _get_index_conn(self) -> "sqlite3.Connection":
+    def _get_index_conn(self) -> sqlite3.Connection:
         """获取只读索引连接。★ M6-8: 委托给 GovernanceStore。"""
         if not hasattr(self, '_store') or self._store is None:
             return self._conn

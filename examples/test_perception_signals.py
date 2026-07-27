@@ -25,8 +25,7 @@ _PLUGINS_DIR = Path(__file__).resolve().parent.parent.parent
 if str(_PLUGINS_DIR) not in sys.path:
     sys.path.insert(0, str(_PLUGINS_DIR))
 
-from omnimem.perception.engine import PerceptionEngine, PerceptionSignals
-
+from omnimem.perception.engine import PerceptionEngine
 
 # ─── 测试用例定义 ─────────────────────────────────────────────
 
@@ -315,7 +314,7 @@ def run_tests() -> tuple[int, int]:
     )
     implicit = engine.extract_implicit_memories(session_text)
     print(f"  会话内容: {session_text}")
-    print(f"  提取结果:")
+    print("  提取结果:")
     for mem in implicit:
         print(f"    - {mem}")
 

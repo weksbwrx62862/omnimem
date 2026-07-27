@@ -2,13 +2,10 @@
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
-
-import pytest
+from unittest.mock import MagicMock
 
 from omnimem.retrieval.hybrid_orchestrator import HybridOrchestrator
 from omnimem.retrieval.synonym_expander import SynonymExpander
-
 
 # ── 辅助：构造最小 facade ──
 

@@ -15,7 +15,6 @@ KnowledgeGraphEnhancer — 知识图谱增强模块。
 
 from __future__ import annotations
 
-import json
 import logging
 import math
 import os

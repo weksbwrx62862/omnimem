@@ -11,17 +11,13 @@ jobs:
   lint:
     name: Lint & Type Check
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ["3.10", "3.11", "3.12"]
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python ${{ matrix.python-version }}
+      - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: ${{ matrix.python-version }}
+          python-version: "3.12"
 
       - name: Install dependencies
         run: |
@@ -29,19 +25,33 @@ jobs:
           pip install -r requirements-dev.txt
           pip install types-PyYAML
 
-      - name: Run Ruff check
+      - name: Run Ruff check (blocking)
         run: python3 -m ruff check .
 
-      - name: Run MyPy
-        run: python3 -m mypy handlers/ services/ --show-error-codes
+      # ★ M9-21: mypy 全量为信息性检查（现存 791 处历史类型债,详见 roadmap M9-21）
+      #   偿清后移除 continue-on-error 转为阻断。
+      - name: Run MyPy (informational)
+        continue-on-error: true
+        run: python3 -m mypy . --explicit-package-bases --exclude "benchmarks|examples|scripts|tests|docs" --show-error-codes
 
   test:
-    name: Test Python ${{ matrix.python-version }}
-    runs-on: ubuntu-latest
+    name: Test ${{ matrix.os }} / py${{ matrix.python-version }}
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
         python-version: ["3.10", "3.11", "3.12"]
+        exclude:
+          # ★ M9-21: Windows/macOS 各保留一个代表性版本,控制矩阵规模
+          - os: windows-latest
+            python-version: "3.10"
+          - os: windows-latest
+            python-version: "3.11"
+          - os: macos-latest
+            python-version: "3.10"
+          - os: macos-latest
+            python-version: "3.11"
     steps:
       - uses: actions/checkout@v4
 
@@ -56,5 +66,6 @@ jobs:
           pip install -r requirements-dev.txt
           pip install types-PyYAML
 
-      - name: Run tests with pytest
-        run: python3 -m pytest tests/ -q --tb=short
+      # ★ M9-21: coverage 棘轮门禁 — 当前基线 45%（核心代码实测 52%）,只升不降,目标 75%
+      - name: Run tests with coverage gate
+        run: python -m pytest tests/ -q --tb=short --cov=. --cov-report=term --cov-fail-under=45

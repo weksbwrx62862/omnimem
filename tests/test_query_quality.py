@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+
 from omnimem.retrieval.query_quality import is_garbage_query, trim_to_budget
 
 

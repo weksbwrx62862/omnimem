@@ -147,7 +147,7 @@ class GovernanceFacade:
         return self._temporal_kg
 
     @property
-    def vector_clock(self) -> "VectorClock | None":
+    def vector_clock(self) -> VectorClock | None:
         return self._vector_clock
 
     @property

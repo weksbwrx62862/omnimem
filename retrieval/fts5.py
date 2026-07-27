@@ -100,7 +100,7 @@ class FTS5Retriever:
 
         results = []
         for row in rows:
-            rowid, content, content_preview, memory_id, memory_type, stored_at, confidence = (
+            _rowid, content, content_preview, memory_id, memory_type, stored_at, confidence = (
                 row[0], row[1], row[2], row[3], row[4], row[5], row[6]
             )
             # 过滤已删除/已过时的记忆

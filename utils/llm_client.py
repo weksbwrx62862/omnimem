@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os as _os
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -17,8 +18,6 @@ logger = logging.getLogger(__name__)
 # ★ M7-13: 默认 LLM 模型单一来源。
 # 优先级：调用方显式传入 > 凭证/配置中的 model > OMNIMEM_LLM_MODEL 环境变量 > 内置缺省。
 # 所有模块从此处 import，禁止各自硬编码模型名。
-import os as _os
-
 DEFAULT_LLM_MODEL = _os.environ.get("OMNIMEM_LLM_MODEL", "glm-5.1")
 
 

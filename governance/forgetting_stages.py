@@ -4,9 +4,10 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-logger = logging.getLogger("governance.forgetting")
+from omnimem.governance.forgetting_core import HEAT_LEVELS
 from omnimem.utils.migration import SchemaMigrator
-from omnimem.governance.forgetting_core import HEAT_LEVELS, STAGES
+
+logger = logging.getLogger("governance.forgetting")
 
 
 class _ForgettingStages:

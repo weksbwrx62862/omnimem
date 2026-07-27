@@ -6,6 +6,7 @@ import threading
 import time
 
 import pytest
+
 from omnimem.core.background import BackgroundTaskExecutor
 
 

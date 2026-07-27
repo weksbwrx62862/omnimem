@@ -21,6 +21,7 @@ import logging
 from typing import Any
 
 from agent.memory_provider import MemoryProvider
+
 from omnimem.compat.provider_proxy import ProviderProxyMixin
 from omnimem.core.provider_initializer import ProviderInitializerMixin
 from omnimem.core.provider_lifecycle import ProviderLifecycleMixin
@@ -267,7 +268,7 @@ class OmniMemProvider(
 
     # ─── 工具实现（委托到 handlers 子模块） ─────────────────────
 
-    def get_next_vc(self) -> "VectorClock | None":
+    def get_next_vc(self) -> VectorClock | None:
         """获取下一个向量时钟值（递增当前实例计数器）。
 
         单机模式（sync_mode=none）下返回 None，跳过递增操作。

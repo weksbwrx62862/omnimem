@@ -85,7 +85,7 @@ class IndexMigrationTool:
         conn.row_factory = sqlite3.Row
         # 安全获取所有列名
         cur = conn.execute("SELECT * FROM memory_index LIMIT 1")
-        columns = [desc[0] for desc in cur.description] if cur.description else []
+        _columns = [desc[0] for desc in cur.description] if cur.description else []
         records: dict[str, dict[str, Any]] = {}
         try:
             rows = conn.execute("SELECT * FROM memory_index").fetchall()

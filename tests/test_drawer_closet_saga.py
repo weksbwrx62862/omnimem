@@ -13,7 +13,6 @@ from unittest.mock import patch
 import pytest
 
 from omnimem.memory.drawer_closet import DrawerClosetStore
-from omnimem.memory.meta_store import MetaStore
 
 
 class TestDrawerClosetSagaCompensation:

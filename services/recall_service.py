@@ -730,13 +730,7 @@ class RecallService:
         for r in results:
             rtype = r.get("type", "")
             # 系统内部类型（图谱、时序、联想）总是保留
-            if rtype in {"graph_rag", "graph_triple", "temporal_kg", "association", "store_supplement", "store_fts_fallback", "store_fallback"}:
-                filtered.append(r)
-            # store 记忆类型按过滤器匹配
-            elif rtype in type_set:
-                filtered.append(r)
-            # 没有 type 字段的也保留（兼容旧数据）
-            elif not rtype:
+            if rtype in {"graph_rag", "graph_triple", "temporal_kg", "association", "store_supplement", "store_fts_fallback", "store_fallback"} or rtype in type_set or not rtype:
                 filtered.append(r)
         logger.debug(
             "_filter_by_type: %d -> %d results (filter=%s)",

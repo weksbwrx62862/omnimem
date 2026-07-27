@@ -329,7 +329,7 @@ class HybridRetriever:
         """从文档中提取数值型实体（数量、价格、时间等）生成结构化摘要注入检索。"""
         import re as _re
 
-        _PATTERNS = [
+        patterns = [
             # 数量: "3 tanks", "five projects", "0.5 hours"
             (r'\b(\d+[\d,.]*)\s*(tank|project|item|shirt|boot|pair|kit|baby|child|friend|magazine|subscription|movie|book|episode|day|hour|minute|mile|dollar|percent|pound|ounce|cup|tsp|tbsp|fish|tank|plant|flower|room|bedroom|bathroom|car|bike|computer|phone|tv|monitor|screen|keyboard|mouse|chair|desk|lamp|light|bulb|door|window|painting|photo|video|song|playlist|album|game|level|character|weapon|armor|potion|spell|skill|achievement|trophy|badge)\w*\b', 1),
             # 金额: "$185", "185 dollars", "$720"
@@ -351,7 +351,7 @@ class HybridRetriever:
             base_id = doc.get("memory_id", "")
             facts = []
 
-            for pattern, grp in _PATTERNS:
+            for pattern, grp in patterns:
                 for m in _re.finditer(pattern, content.lower()):
                     val = m.group(1) or m.group(2) or m.group(3) or m.group(4)
                     if val:

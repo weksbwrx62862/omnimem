@@ -689,10 +689,7 @@ class OmniMemMemoryProvider:
 
     # 技术关键词（不区分大小写）
     _TECH_KEYWORDS = frozenset(
-        "python java rust docker kubernetes api database server model training "
-        "algorithm code function class method data analysis research experiment "
-        "test debug deploy config install upgrade migrate performance security "
-        "network cloud framework library plugin module package version release".split()
+        ["python", "java", "rust", "docker", "kubernetes", "api", "database", "server", "model", "training", "algorithm", "code", "function", "class", "method", "data", "analysis", "research", "experiment", "test", "debug", "deploy", "config", "install", "upgrade", "migrate", "performance", "security", "network", "cloud", "framework", "library", "plugin", "module", "package", "version", "release"]
     )
 
     # 中文专有名词指示词
@@ -1046,7 +1043,7 @@ if __name__ == "__main__":
             for i, ctx in enumerate(results):
                 print(f"    [{i}] {ctx[:80]}...")
             if not results:
-                print(f"    (无结果)")
+                print("    (无结果)")
 
         # --- 测试 4: question_type 映射 ---
         print("\n[测试 4] question_type → capability 映射...")

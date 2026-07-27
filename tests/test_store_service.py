@@ -5,6 +5,7 @@ from __future__ import annotations
 from unittest.mock import MagicMock
 
 import pytest
+
 from omnimem.core.store_service import MemoryStoreService
 
 

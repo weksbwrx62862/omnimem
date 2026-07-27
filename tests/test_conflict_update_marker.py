@@ -9,7 +9,7 @@
 
 from __future__ import annotations
 
-from omnimem.governance.conflict import ConflictResult, ConflictResolver
+from omnimem.governance.conflict import ConflictResolver, ConflictResult
 from omnimem.retrieval.hybrid_orchestrator import HybridOrchestrator
 
 

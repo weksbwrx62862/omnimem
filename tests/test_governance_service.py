@@ -9,6 +9,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 from cryptography.fernet import Fernet
+
 from omnimem.handlers.deps import HandlerDependencies
 from omnimem.services.governance_service import GovernanceService
 
