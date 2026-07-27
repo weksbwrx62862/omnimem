@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import sqlite3
 import threading
 from dataclasses import dataclass, field
@@ -24,7 +25,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from omnimem.utils.experimental import experimental_class
 from omnimem.utils.migration import SchemaMigrator
 
 logger = logging.getLogger(__name__)
@@ -77,7 +77,6 @@ class TrainingData:
 # ─── LoRATrainer ──────────────────────────────────────────────
 
 
-@experimental_class
 class LoRATrainer:
     """LoRA 微调管线。
 
@@ -126,6 +125,8 @@ class LoRATrainer:
         self._torch_available = False
         self._train_count = 0
         self._lock = threading.RLock()
+        # ★ M8-16: shade 切换回调（宿主注入）
+        self._shade_change_hooks: list = []
 
         # 检测 GPU/训练依赖
         self._check_dependencies()
@@ -378,40 +379,40 @@ class LoRATrainer:
         具体的基座模型和训练框架调整。
         """
         try:
-            from peft import LoraConfig, TaskType
+            # ★ M8-15: 环境门控 — 避免测试/宿主环境意外触发大模型下载
+            if os.environ.get("OMNIMEM_REAL_TRAIN", "") != "1":
+                logger.info("LoRATrainer: real train gated off (set OMNIMEM_REAL_TRAIN=1)")
+                return self._simulate_train(adapter_id, samples, epochs, lr)
 
-            # LoRA 配置 (Second-Me 参数)
-            LoraConfig(
-                task_type=TaskType.CAUSAL_LM,
-                r=self._lora_rank,
-                lora_alpha=self._lora_alpha,
-                target_modules=["q_proj", "v_proj"],
-                lora_dropout=0.05,
-            )
+            from omnimem.internalize.train_loop import run_sft
 
             logger.info(
                 "LoRATrainer: starting real training with %d samples, %d epochs",
-                len(samples),
-                epochs,
+                len(samples), epochs,
             )
-
-            # 实际训练逻辑需要基座模型加载器，这里记录配置
-            self._adapters.get(adapter_id)
-            adapter_path = ""
-            if self._data_dir:
-                adapter_path = str(self._data_dir / "adapters" / adapter_id)
-
+            base = self._data_dir or Path(".")
+            output_dir = Path(base) / "adapters" / adapter_id
+            summary = run_sft(
+                self._base_model,
+                samples,
+                output_dir,
+                epochs=epochs,
+                lr=lr,
+                lora_rank=self._lora_rank,
+                lora_alpha=self._lora_alpha,
+            )
+            # 产物路径写回适配器（train() 随后统一持久化）
+            adapter = self._adapters.get(adapter_id)
+            if adapter is not None:
+                adapter.path = summary["adapter_path"]
             return {
                 "status": "trained",
                 "mode": "gpu",
                 "adapter_id": adapter_id,
-                "base_model": self._base_model,
-                "samples": len(samples),
-                "epochs": epochs,
-                "lr": lr,
                 "lora_rank": self._lora_rank,
                 "lora_alpha": self._lora_alpha,
-                "adapter_path": adapter_path,
+                "lr": lr,
+                **summary,
                 "message": "Training completed. Adapter saved.",
             }
         except Exception as e:
@@ -479,13 +480,67 @@ class LoRATrainer:
         if adapter_id and adapter_id in self._adapters:
             adapter_status = self._adapters[adapter_id].status
 
+        # ★ M8-16: 生成推理加载指令并通知宿主
+        directive = self._build_inference_directive(shade_name)
+        self._notify_shade_change(directive)
+
         return {
             "status": "switched",
             "previous_shade": old_shade,
             "current_shade": shade_name,
             "adapter_id": adapter_id,
             "adapter_status": adapter_status,
+            "inference": directive,
         }
+
+    # ─── M8-16: 适配器推理侧集成 ─────────────────────────────
+
+    def register_shade_change_hook(self, callback) -> None:
+        """注册 shade 切换回调（宿主注入,切换时收到推理加载指令）。"""
+        self._shade_change_hooks.append(callback)
+
+    def _build_inference_directive(self, shade_name: str) -> dict[str, Any]:
+        """构建推理侧加载指令:宿主据此加载/卸载 LoRA 适配器。"""
+        shade = self._shades.get(shade_name)
+        adapter = None
+        if shade and shade.adapter_id:
+            adapter = self._adapters.get(shade.adapter_id)
+        if adapter and adapter.status == "ready" and adapter.path:
+            return {
+                "action": "load_adapter",
+                "shade": shade_name,
+                "adapter_id": adapter.adapter_id,
+                "adapter_path": adapter.path,
+                "base_model": self._base_model,
+                "version": adapter.version,
+            }
+        return {
+            "action": "unload_adapter",
+            "shade": shade_name,
+            "adapter_id": adapter.adapter_id if adapter else "",
+            "adapter_path": "",
+            "base_model": self._base_model,
+            "reason": "no ready adapter for shade",
+        }
+
+    def _notify_shade_change(self, directive: dict[str, Any]) -> None:
+        """落盘 active_adapter.json 并回调宿主 hook（都是尽力而为,不阻断切换）。"""
+        if self._data_dir:
+            try:
+                marker = Path(self._data_dir) / "active_adapter.json"
+                with open(marker, "w", encoding="utf-8") as f:
+                    json.dump(directive, f, ensure_ascii=False, indent=2)
+            except Exception as e:
+                logger.warning("active_adapter.json write failed: %s", e)
+        for hook in self._shade_change_hooks:
+            try:
+                hook(directive)
+            except Exception as e:
+                logger.warning("shade change hook failed: %s", e)
+
+    def get_inference_directive(self) -> dict[str, Any]:
+        """获取当前活跃 shade 的推理加载指令（宿主可随时拉取）。"""
+        return self._build_inference_directive(self._active_shade)
 
     def register_shade(self, name: str, description: str = "") -> dict[str, Any]:
         """注册自定义 Shade 角色。"""
