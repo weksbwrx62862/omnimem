@@ -1,0 +1,19 @@
+{
+  "dataset": "extraction_quality_eval_v1 dialogues",
+  "results": [
+    {
+      "engine": "bm25(rank-bm25)",
+      "queries": 233,
+      "recall@1": 0.9614,
+      "recall@5": 0.9871,
+      "mrr": 0.9728
+    },
+    {
+      "engine": "fts5(unified_index)",
+      "queries": 233,
+      "recall@1": 0.9614,
+      "recall@5": 0.9871,
+      "mrr": 0.9722
+    }
+  ]
+}

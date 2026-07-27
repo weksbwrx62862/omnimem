@@ -22,6 +22,13 @@ from __future__ import annotations
 
 import logging
 import sqlite3
+
+try:
+    import jieba as _jieba
+
+    _HAS_JIEBA = True
+except ImportError:
+    _HAS_JIEBA = False
 import threading
 import time
 from datetime import datetime, timedelta
@@ -31,6 +38,13 @@ from typing import Any
 from omnimem.utils.migration import SchemaMigrator
 
 logger = logging.getLogger(__name__)
+
+
+def _tokenize_for_fts(text: str) -> str:
+    """M6-7: jieba pre-tokenize for FTS5 Chinese matching (fallback: raw text)."""
+    if not text or not _HAS_JIEBA:
+        return text or ""
+    return " ".join(_jieba.cut(text))
 
 _DB_RETRY_COUNT = 5
 _DB_RETRY_DELAY = 0.15
@@ -121,7 +135,9 @@ class UnifiedMemoryIndex:
                     created_at TEXT
                 )
             """,
-            migrations=[],
+            migrations=[
+                (2, "ALTER TABLE memory_index ADD COLUMN content_tok TEXT"),
+            ],
         )
 
         # 索引
@@ -138,20 +154,45 @@ class UnifiedMemoryIndex:
             "CREATE INDEX IF NOT EXISTS idx_stage ON memory_index(is_superseded, stored_at)"
         )
 
-        # FTS5 全文索引（content + summary + content_preview 三字段）
-        # ★ P2修复：原 "content_u='unindexed'" 为无效 FTS5 选项，建表即抛
-        #   OperationalError（该组件此前从未成功初始化过）
-        self._write_conn.execute(
-            "CREATE VIRTUAL TABLE IF NOT EXISTS memory_index_fts USING fts5("
-            "content, summary, content_preview)"
-        )
-        # 重建触发器（DROP IF EXISTS 保证幂等）
+        # FTS5 全文索引（content_tok + summary + content_preview）
+        # ★ M6-7 修复：unicode61 对中文整句不分词，查询侧 jieba 多词 MATCH 无法命中
+        #   （基准实测 recall@5 仅 40.8% vs BM25 98.7%）。改为主表 content_tok 预分词列，
+        #   旧库虚表缺列时 DROP 重建并回填。
         for trig in ("memory_index_fts_ai", "memory_index_fts_ad", "memory_index_fts_au"):
             self._write_conn.execute(f"DROP TRIGGER IF EXISTS {trig}")
+        fts_cols: list[str] = []
+        try:
+            fts_cols = [r[1] for r in self._write_conn.execute(
+                "PRAGMA table_info(memory_index_fts)").fetchall()]
+        except sqlite3.Error:
+            fts_cols = []
+        rebuilt = bool(fts_cols) and "content_tok" not in fts_cols
+        if rebuilt:
+            self._write_conn.execute("DROP TABLE IF EXISTS memory_index_fts")
+        self._write_conn.execute(
+            "CREATE VIRTUAL TABLE IF NOT EXISTS memory_index_fts USING fts5("
+            "content_tok, summary, content_preview)"
+        )
+        # 回填预分词列（幂等：仅处理 NULL 行）
+        rows = self._write_conn.execute(
+            "SELECT rowid, content FROM memory_index WHERE content_tok IS NULL"
+        ).fetchall()
+        for rid, content in rows:
+            self._write_conn.execute(
+                "UPDATE memory_index SET content_tok = ? WHERE rowid = ?",
+                (_tokenize_for_fts(content or ""), rid),
+            )
+        if rebuilt:
+            self._write_conn.execute(
+                "INSERT INTO memory_index_fts(rowid, content_tok, summary, content_preview) "
+                "SELECT rowid, COALESCE(content_tok, content), COALESCE(summary,''), "
+                "COALESCE(content_preview,'') FROM memory_index"
+            )
         self._write_conn.execute("""
             CREATE TRIGGER memory_index_fts_ai AFTER INSERT ON memory_index BEGIN
-                INSERT INTO memory_index_fts(rowid, content, summary, content_preview)
-                VALUES (new.rowid, new.content, COALESCE(new.summary,''), COALESCE(new.content_preview,''));
+                INSERT INTO memory_index_fts(rowid, content_tok, summary, content_preview)
+                VALUES (new.rowid, COALESCE(new.content_tok, new.content),
+                        COALESCE(new.summary,''), COALESCE(new.content_preview,''));
             END
         """)
         self._write_conn.execute("""
@@ -162,8 +203,9 @@ class UnifiedMemoryIndex:
         self._write_conn.execute("""
             CREATE TRIGGER memory_index_fts_au AFTER UPDATE ON memory_index BEGIN
                 DELETE FROM memory_index_fts WHERE rowid = old.rowid;
-                INSERT INTO memory_index_fts(rowid, content, summary, content_preview)
-                VALUES (new.rowid, new.content, COALESCE(new.summary,''), COALESCE(new.content_preview,''));
+                INSERT INTO memory_index_fts(rowid, content_tok, summary, content_preview)
+                VALUES (new.rowid, COALESCE(new.content_tok, new.content),
+                        COALESCE(new.summary,''), COALESCE(new.content_preview,''));
             END
         """)
         self._write_conn.commit()
@@ -239,13 +281,14 @@ class UnifiedMemoryIndex:
                    (memory_id, wing, hall, room, content, summary, content_preview,
                     drawer_path, vc, type, confidence, privacy, scope, stored_at,
                     provenance, metadata, conflicting_with, conflict_type,
-                    is_updated, is_superseded, created_at)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    is_updated, is_superseded, created_at, content_tok)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (
                     memory_id, wing, hall, room, content, summary, content_preview,
                     drawer_path, vc, type, confidence, privacy, scope, stored_at,
                     provenance, metadata, conflicting_with, conflict_type,
                     is_updated, is_superseded, created_at,
+                    _tokenize_for_fts(content),
                 ),
             )
             self._maybe_commit()

@@ -192,3 +192,17 @@ M5 剩余:仅 LongMemEval 全链路 A/B(run_longmemeval.sh 需 bash + 长时 emb
 结论:M8-15 验收标准「24G 显存跑通 7B」达成。实测 bf16 LoRA + 梯度检查点在 Windows ROCm(RX 7900 XTX,torch 2.9.1)上稳定,峰值仅 14.5G——无需 QLoRA 4bit 降级(bitsandbytes 的 Windows/ROCm 限制因此不构成阻塞),精度优于量化方案。QLoRA 分支保留为低显存环境的自动降级路径。
 
 **至此 roadmap v2 全部 23 项任务(含全部 GPU/Linux 验收)完成。**
+
+---
+
+## 十二、2026-07-27 深夜：后续工作收官(清理/1.2.0/提交/FTS5 中文召回修复)
+
+1. **全面代码检查**后清理:删除误置 core/ 的重复测试文件、LoRATrainer 摘 experimental 标注、`use_unified_index`/`extraction_mode` 补入配置 schema。
+2. **v1.2.0 发布**:CHANGELOG 完整条目,pyproject/plugin.yaml 版本推进。
+3. **全部成果分 6 批提交**(fix-p0 / m6-9 / m8 / m9 / m5-2+release / fts5-fix),工作区仅剩 benchmarks/results 历史产物(用户决策项)。
+4. **FTS5 中文召回缺陷发现与修复(M6-7 验收补课)**:
+   - 新基准 `benchmarks/fts5_recall_bench.py`(233 中文查询,复用标注集):修复前 FTS5 recall@5 仅 **40.8%** vs BM25 98.7%——unicode61 对中文整句不分词,roadmap 规定的"jieba 预分词列"从未实现;
+   - 修复:memory_index 新增 `content_tok` 预分词列(schema v2 迁移),FTS 虚表/触发器改写该列,旧库自动重建回填;
+   - 修复后:**FTS5 recall@5=98.71% 与 BM25 完全持平,MRR 97.2%,验收 PASS**。`use_fts5` 转默认开启的数据障碍已清除(建议随 2.0 一起决策)。
+
+回归:972 passed / ruff 全量清零 / 依赖校验 PASS。
