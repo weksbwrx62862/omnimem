@@ -1,0 +1,1998 @@
+{
+  "dataset": "extraction_quality_eval_v1",
+  "mode": "hybrid",
+  "total_items": 100,
+  "overall": {
+    "precision": 0.6842,
+    "recall": 0.9485,
+    "f1": 0.795,
+    "false_positive_hit_rate": 0.5152,
+    "true_positives": 221,
+    "false_positives": 102,
+    "false_negatives": 12
+  },
+  "by_capability": {
+    "personal_info": {
+      "precision": 0.7143,
+      "recall": 0.9,
+      "f1": 0.7965,
+      "count": 15
+    },
+    "refusal": {
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0,
+      "count": 11
+    },
+    "preference": {
+      "precision": 0.6515,
+      "recall": 0.8958,
+      "f1": 0.7544,
+      "count": 20
+    },
+    "information_extraction": {
+      "precision": 0.7474,
+      "recall": 1.0,
+      "f1": 0.8554,
+      "count": 28
+    },
+    "knowledge_update": {
+      "precision": 0.7083,
+      "recall": 0.9444,
+      "f1": 0.8095,
+      "count": 16
+    },
+    "temporal": {
+      "precision": 0.8,
+      "recall": 1.0,
+      "f1": 0.8889,
+      "count": 10
+    }
+  },
+  "details": [
+    {
+      "id": "eq001",
+      "dialogue": "我叫张三，今年28岁，在北京做软件工程师。主要做后端开发，用 Python 和 Go。",
+      "capability": "personal_info",
+      "extracted": [
+        "用户叫张三",
+        "用户今年28岁",
+        "用户在北京",
+        "用户是软件工程师",
+        "用户做后端开发",
+        "用户使用 Python",
+        "用户使用 Go"
+      ],
+      "expected": [
+        "姓名是张三",
+        "年龄28岁",
+        "职业是软件工程师",
+        "工作地点在北京",
+        "技术栈包括Python和Go",
+        "做后端开发"
+      ],
+      "true_positives": 5,
+      "false_positives": 2,
+      "false_negatives": 1,
+      "should_not_extracted": 0,
+      "should_not_count": 0
+    },
+    {
+      "id": "eq002",
+      "dialogue": "今天天气真好啊，阳光明媚的。",
+      "capability": "refusal",
+      "extracted": [
+        "今天天气真好啊，阳光明媚的。"
+      ],
+      "expected": [],
+      "true_positives": 0,
+      "false_positives": 1,
+      "false_negatives": 0,
+      "should_not_extracted": 1,
+      "should_not_count": 2
+    },
+    {
+      "id": "eq003",
+      "dialogue": "我不喜欢吃香菜，每次吃饭都要挑出来。芹菜也不太喜欢。",
+      "capability": "preference",
+      "extracted": [
+        "用户不喜欢吃香菜",
+        "用户每次吃饭都要挑出香菜",
+        "用户不太喜欢芹菜"
+      ],
+      "expected": [
+        "不喜欢吃香菜",
+        "不喜欢吃芹菜"
+      ],
+      "true_positives": 2,
+      "false_positives": 1,
+      "false_negatives": 0,
+      "should_not_extracted": 0,
+      "should_not_count": 1
+    },
+    {
+      "id": "eq004",
+      "dialogue": "我们项目的数据库用的是 PostgreSQL 14，Redis 做缓存，部署在阿里云上。CI/CD 用的 GitHub Actions。",
+      "capability": "information_extraction",
+      "extracted": [
+        "项目使用 PostgreSQL 14 作为数据库",
+        "项目使用 Redis 做缓存",
+        "项目部署在阿里云上",
+        "项目使用 GitHub Actions 进行 CI/CD"
+      ],
+      "expected": [
+        "项目使用PostgreSQL 14数据库",
+        "使用Redis做缓存",
+        "部署在阿里云",
+        "CI/CD使用GitHub Actions"
+      ],
+      "true_positives": 4,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "should_not_extracted": 0,
+      "should_not_count": 0
+    },
+    {
+      "id": "eq005",
+      "dialogue": "我每天6点半起床，7点出门坐地铁到公司大概8点。晚上一般11点睡觉。",
+      "capability": "personal_info",
+      "extracted": [
+        "用户每天6点半起床",
+        "用户每天7点出门",
+        "用户坐地铁到公司",
+        "用户到公司时间大概8点",
+        "用户晚上一般11点睡觉"
+      ],
+      "expected": [
+        "每天6:30起床",
+        "7:00出门",
+        "通勤方式为地铁",
+        "晚上一般11:00睡觉"
+      ],
+      "true_positives": 3,
+      "false_positives": 2,
+      "false_negatives": 1,
+      "should_not_extracted": 0,
+      "should_not_count": 0
+    },
+    {
+      "id": "eq006",
+      "dialogue": "哦对了，你刚才说的那个问题，我觉得可以试试看。",
+      "capability": "refusal",
+      "extracted": [
+        "哦对了，你刚才说的那个问题，我觉得可以试试看"
+      ],
+      "expected": [],
+      "true_positives": 0,
+      "false_positives": 1,
+      "false_negatives": 0,
+      "should_not_extracted": 1,
+      "should_not_count": 2
+    },
+    {
+      "id": "eq007",
+      "dialogue": "我们团队下个季度的目标是完成支付系统的重构，把原来的单体架构拆成微服务。Deadline 是 9 月底。",
+      "capability": "information_extraction",
+      "extracted": [
+        "团队下个季度的目标是完成支付系统的重构",
+        "团队计划把原来的单体架构拆成微服务",
+        "支付系统重构的截止日期是9月底"
+      ],
+      "expected": [
+        "下季度目标是完成支付系统重构",
+        "将单体架构拆分为微服务",
+        "截止日期是9月底"
+      ],
+      "true_positives": 3,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "should_not_extracted": 0,
+      "should_not_count": 0
+    },
+    {
+      "id": "eq008",
+      "dialogue": "我女朋友叫李小花，她在上海工作，是设计师。我们在一起两年了。",
+      "capability": "personal_info",
+      "extracted": [
+        "用户的女朋友叫李小花",
+        "用户的女朋友在上海工作",
+        "用户的女朋友是设计师",
+        "用户和女朋友在一起两年了"
+      ],
+      "expected": [
+        "女朋友名字是李小花",
+        "女朋友在上海工作",
+        "女朋友职业是设计师",
+        "交往两年"
+      ],
+      "true_positives": 4,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "should_not_extracted": 0,
+      "should_not_count": 0
+    },
+    {
+      "id": "eq009",
+      "dialogue": "哈哈是的，我觉得也是，那就这样吧。",
+      "capability": "refusal",
+      "extracted": [
+        "哈哈是的，我觉得也是，那就这样吧。"
+      ],
+      "expected": [],
+      "true_positives": 0,
+      "false_positives": 1,
+      "false_negatives": 0,
+      "should_not_extracted": 2,
+      "should_not_count": 2
+    },
+    {
+      "id": "eq010",
+      "dialogue": "国庆节我打算去云南旅游，已经订了机票和酒店。计划先去大理待三天，然后去丽江。",
+      "capability": "information_extraction",
+      "extracted": [
+        "用户打算在国庆节去云南旅游",
+        "用户已经订了机票",
+        "用户已经订了酒店",
+        "用户计划先去大理",
+        "用户计划在大理待三天",
+        "用户计划之后去丽江"
+      ],
+      "expected": [
+        "国庆节计划去云南旅游",
+        "已订机票和酒店",
+        "计划先去大理三天",
+        "之后去丽江"
+      ],
+      "true_positives": 4,
+      "false_positives": 2,
+      "false_negatives": 0,
+      "should_not_extracted": 0,
+      "should_not_count": 0
+    },
+    {
+      "id": "eq011",
+      "dialogue": "我之前跟你说的那个叫 王五 的同事离职了，现在他的工作由我来接手。",
+      "capability": "knowledge_update",
+      "extracted": [
+        "用户有一个叫王五的同事",
+        "王五已经离职",
+        "用户接手了王五的工作"
+      ],
+      "expected": [
+        "同事王五已离职",
+        "用户接管了王五的工作"
+      ],
+      "true_positives": 2,
+      "false_positives": 1,
+      "false_negatives": 0,
+      "should_not_extracted": 0,
+      "should_not_count": 0
+    },
+    {
+      "id": "eq012",
+      "dialogue": "我最喜欢的编程语言是 Rust，虽然还在学，但它的内存安全机制真的很吸引我。",
+      "capability": "preference",
+      "extracted": [
+        "用户最喜欢的编程语言是 Rust",
+        "用户正在学习 Rust",
+        "Rust 的内存安全机制吸引用户"
+      ],
+      "expected": [
+        "最喜欢的编程语言是Rust",
+        "正在学习Rust",
+        "看重Rust的内存安全机制"
+      ],
+      "true_positives": 3,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "should_not_extracted": 0,
+      "should_not_count": 0
+    },
+    {
+      "id": "eq013",
+      "dialogue": "今天午饭吃的是宫保鸡丁和米饭，味道还不错。",
+      "capability": "refusal",
+      "extracted": [
+        "用户今天午饭吃了宫保鸡丁",
+        "用户今天午饭吃了米饭",
+        "用户认为宫保鸡丁和米饭味道不错"
+      ],
+      "expected": [],
+      "true_positives": 0,
+      "false_positives": 3,
+      "false_negatives": 0,
+      "should_not_extracted": 0,
+      "should_not_count": 2
+    },
+    {
+      "id": "eq014",
+      "dialogue": "我的邮箱是 zhangsan@example.com，手机号是 13812345678。有急事可以打这个电话。",
+      "capability": "personal_info",
+      "extracted": [
+        "用户的邮箱是 zhangsan@example.com",
+        "用户的手机号是 13812345678",
+        "有急事可以拨打用户的手机号"
+      ],
+      "expected": [
+        "邮箱为zhangsan@example.com",
+        "手机号为13812345678",
+        "紧急情况可通过电话联系"
+      ],
+      "true_positives": 2,
+      "false_positives": 1,
+      "false_negatives": 1,
+      "should_not_extracted": 0,
+      "should_not_count": 0
+    },
+    {
+      "id": "eq015",
+      "dialogue": "那个 PR 我 review 完了，有几个小问题已经 comment 了，你改一下再 push。",
+      "capability": "information_extraction",
+      "extracted": [
+        "用户 review 了那个 PR",
+        "用户发现 PR 中有几个小问题",
+        "用户已经 comment 了那些问题",
+        "用户要求对方修改问题",
+        "用户要求对方修改后 push"
+      ],
+      "expected": [
+        "PR已review完成",
+        "已提交comment",
+        "需要修改后再push"
+      ],
+      "true_positives": 3,
+      "false_positives": 2,
+      "false_negatives": 0,
+      "should_not_extracted": 0,
+      "should_not_count": 0
+    },
+    {
+      "id": "eq016",
+      "dialogue": "我喜欢在安静的环境里工作，所以一般会戴上降噪耳机。听一些轻音乐或者白噪音。",
+      "capability": "preference",
+      "extracted": [
+        "用户喜欢在安静的环境里工作",
+        "用户一般会戴上降噪耳机",
+        "用户听一些轻音乐或者白噪音"
+      ],
+      "expected": [
+        "喜欢安静的工作环境",
+        "习惯戴降噪耳机工作",
+        "工作时喜欢听轻音乐或白噪音"
+      ],
+      "true_positives": 3,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "should_not_extracted": 0,
+      "should_not_count": 0
+    },
+    {
+      "id": "eq017",
+      "dialogue": "上次去的那家火锅店关门了，现在换成了湘菜馆。",
+      "capability": "knowledge_update",
+      "extracted": [
+        "上次用户去的那家火锅店关门了",
+        "那家火锅店现在换成了湘菜馆"
+      ],
+      "expected": [
+        "之前去过的火锅店已关闭",
+        "原地址现在改为湘菜馆"
+      ],
+      "true_positives": 2,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "should_not_extracted": 0,
+      "should_not_count": 0
+    },
+    {
+      "id": "eq018",
+      "dialogue": "嗯嗯，好的，明白了。",
+      "capability": "refusal",
+      "extracted": [
+        "嗯嗯，好的，明白了。"
+      ],
+      "expected": [],
+      "true_positives": 0,
+      "false_positives": 1,
+      "false_negatives": 0,
+      "should_not_extracted": 1,
+      "should_not_count": 1
+    },
+    {
+      "id": "eq019",
+      "dialogue": "我们公司从下周开始实行混合办公，周二和周四必须到办公室，其他时间可以远程。",
+      "capability": "knowledge_update",
+      "extracted": [
+        "公司从下周开始实行混合办公",
+        "周二必须到办公室",
+        "周四必须到办公室",
+        "其他时间可以远程"
+      ],
+      "expected": [
+        "下周开始实行混合办公",
+        "周二和周四必须到办公室",
+        "其余时间可远程办公"
+      ],
+      "true_positives": 3,
+      "false_positives": 1,
+      "false_negatives": 0,
+      "should_not_extracted": 0,
+      "should_not_count": 0
+    },
+    {
+      "id": "eq020",
+      "dialogue": "我养了一只猫，叫咪咪，是橘猫，已经三岁了。特别爱吃，每天要喂三次。",
+      "capability": "personal_info",
+      "extracted": [
+        "用户养了一只猫",
+        "猫的名字是咪咪",
+        "猫是橘猫",
+        "猫已经三岁",
+        "猫特别爱吃",
+        "猫每天要喂三次"
+      ],
+      "expected": [
+        "养了一只名叫咪咪的猫",
+        "品种是橘猫",
+        "猫已经三岁",
+        "每天喂三次"
+      ],
+      "true_positives": 4,
+      "false_positives": 2,
+      "false_negatives": 0,
+      "should_not_extracted": 1,
+      "should_not_count": 1
+    },
+    {
+      "id": "eq021",
+      "dialogue": "这个 bug 是因为并发的 race condition 导致的，需要加个分布式锁。我已经在 Redis 上实现了。",
+      "capability": "information_extraction",
+      "extracted": [
+        "bug 是由并发的 race condition 导致的",
+        "需要加分布式锁来解决 bug",
+        "用户在 Redis 上实现了分布式锁"
+      ],
+      "expected": [
+        "bug原因是并发race condition",
+        "解决方案是加分布式锁",
+        "使用Redis实现分布式锁"
+      ],
+      "true_positives": 3,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "should_not_extracted": 0,
+      "should_not_count": 0
+    },
+    {
+      "id": "eq022",
+      "dialogue": "周末去看了《流浪地球3》，特效很震撼，但剧情一般。我个人更喜欢第二部。",
+      "capability": "preference",
+      "extracted": [
+        "用户周末去看了《流浪地球3》",
+        "《流浪地球3》特效很震撼",
+        "《流浪地球3》剧情一般",
+        "用户更喜欢第二部"
+      ],
+      "expected": [
+        "看过《流浪地球3》",
+        "认为特效震撼",
+        "认为剧情一般",
+        "更喜欢《流浪地球2》"
+      ],
+      "true_positives": 3,
+      "false_positives": 1,
+      "false_negatives": 1,
+      "should_not_extracted": 0,
+      "should_not_count": 0
+    },
+    {
+      "id": "eq023",
+      "dialogue": "明天上午十点钟有个需求评审会，记得准备好 PRD 文档。",
+      "capability": "temporal",
+      "extracted": [
+        "明天上午十点钟有一个需求评审会",
+        "用户需要准备好 PRD 文档"
+      ],
+      "expected": [
+        "明天上午10:00有需求评审会",
+        "需要准备PRD文档"
+      ],
+      "true_positives": 2,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "should_not_extracted": 0,
+      "should_not_count": 0
+    },
+    {
+      "id": "eq024",
+      "dialogue": "我上次体检是今年三月份，各项指标都正常。就是医生说要多运动。",
+      "capability": "personal_info",
+      "extracted": [
+        "用户上次体检在今年三月份",
+        "用户体检各项指标正常",
+        "医生建议用户多运动"
+      ],
+      "expected": [
+        "上次体检时间为今年3月",
+        "体检结果各项指标正常",
+        "医生建议多运动"
+      ],
+      "true_positives": 3,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "should_not_extracted": 0,
+      "should_not_count": 0
+    },
+    {
+      "id": "eq025",
+      "dialogue": "API 的 rate limit 从每分钟 100 次调整到 500 次了，因为用户量增长很快。",
+      "capability": "knowledge_update",
+      "extracted": [
+        "API 的 rate limit 从每分钟 100 次调整到 500 次",
+        "用户量增长很快"
+      ],
+      "expected": [
+        "API rate limit从100次/分钟调整到500次/分钟",
+        "调整原因是用户量增长"
+      ],
+      "true_positives": 2,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "should_not_extracted": 0,
+      "should_not_count": 0
+    },
+    {
+      "id": "eq026",
+      "dialogue": "这家咖啡店的拿铁很好喝，比星巴克的好喝多了。价格也便宜，才 18 块。",
+      "capability": "preference",
+      "extracted": [
+        "这家咖啡店的拿铁很好喝",
+        "这家咖啡店的拿铁比星巴克的好喝",
+        "这家咖啡店的价格便宜",
+        "这家咖啡店的拿铁价格是18块"
+      ],
+      "expected": [
+        "认为某咖啡店拿铁比星巴克好喝",
+        "该店拿铁价格18元"
+      ],
+      "true_positives": 2,
+      "false_positives": 2,
+      "false_negatives": 0,
+      "should_not_extracted": 0,
+      "should_not_count": 0
+    },
+    {
+      "id": "eq027",
+      "dialogue": "用 kubectl apply -f deployment.yaml 就能部署了。注意要把 namespace 设置对。",
+      "capability": "information_extraction",
+      "extracted": [
+        "kubectl apply -f deployment.yaml 可以部署应用",
+        "部署时需要设置正确的 namespace"
+      ],
+      "expected": [
+        "部署命令是kubectl apply -f deployment.yaml",
+        "需要注意设置正确的namespace"
+      ],
+      "true_positives": 2,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "should_not_extracted": 0,
+      "should_not_count": 0
+    },
+    {
+      "id": "eq028",
+      "dialogue": "我住的小区在朝阳区望京，离公司大概 5 公里，骑共享单车 20 分钟能到。",
+      "capability": "personal_info",
+      "extracted": [
+        "用户住的小区在朝阳区望京",
+        "用户住的小区离公司大概5公里",
+        "用户骑共享单车20分钟能到公司"
+      ],
+      "expected": [
+        "住在朝阳区望京",
+        "距离公司约5公里",
+        "骑共享单车通勤约20分钟"
+      ],
+      "true_positives": 3,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "should_not_extracted": 0,
+      "should_not_count": 0
+    },
+    {
+      "id": "eq029",
+      "dialogue": "今天发工资了！到手比上个月多了 800 块，应该是绩效奖金。",
+      "capability": "refusal",
+      "extracted": [
+        "用户今天发工资了",
+        "用户到手工资比上个月多了800块",
+        "用户认为多出的800块是绩效奖金"
+      ],
+      "expected": [],
+      "true_positives": 0,
+      "false_positives": 3,
+      "false_negatives": 0,
+      "should_not_extracted": 2,
+      "should_not_count": 2
+    },
+    {
+      "id": "eq030",
+      "dialogue": "我们的用户画像主要是 25-35 岁的互联网从业者，月收入 15k-30k，一线城市居多。",
+      "capability": "information_extraction",
+      "extracted": [
+        "用户画像年龄范围是 25-35 岁",
+        "用户画像职业是互联网从业者",
+        "用户画像月收入范围是 15k-30k",
+        "用户画像居住地以一线城市居多"
+      ],
+      "expected": [
+        "目标用户为25-35岁互联网从业者",
+        "用户月收入范围15k-30k",
+        "用户主要集中在一线城市"
+      ],
+      "true_positives": 3,
+      "false_positives": 1,
+      "false_negatives": 0,
+      "should_not_extracted": 0,
+      "should_not_count": 0
+    },
+    {
+      "id": "eq031",
+      "dialogue": "最近在学日语，感觉五十音图真的好难背。本来以为自己有语言天赋的。",
+      "capability": "information_extraction",
+      "extracted": [
+        "用户在学日语",
+        "用户感觉五十音图难背",
+        "用户原本认为自己有语言天赋"
+      ],
+      "expected": [
+        "正在学习日语",
+        "觉得五十音图难背"
+      ],
+      "true_positives": 2,
+      "false_positives": 1,
+      "false_negatives": 0,
+      "should_not_extracted": 0,
+      "should_not_count": 1
+    },
+    {
+      "id": "eq032",
+      "dialogue": "对了，上次那个部署脚本我改了一下，加了一个 health check 的重试逻辑，现在更稳定了。",
+      "capability": "knowledge_update",
+      "extracted": [
+        "用户修改了部署脚本",
+        "用户添加了 health check 的重试逻辑",
+        "部署脚本现在更稳定了"
+      ],
+      "expected": [
+        "部署脚本已增加health check重试逻辑",
+        "脚本稳定性已提升"
+      ],
+      "true_positives": 2,
+      "false_positives": 1,
+      "false_negatives": 0,
+      "should_not_extracted": 0,
+      "should_not_count": 0
+    },
+    {
+      "id": "eq033",
+      "dialogue": "我每天晚上睡前都要看半小时书，最近在看《人类简史》。纸质书比电子书有感觉。",
+      "capability": "preference",
+      "extracted": [
+        "用户每天晚上睡前看书",
+        "用户看书时长为半小时",
+        "用户最近在看《人类简史》",
+        "用户认为纸质书比电子书有感觉"
+      ],
+      "expected": [
+        "每天睡前阅读半小时",
+        "最近在读《人类简史》",
+        "偏好纸质书胜过电子书"
+      ],
+      "true_positives": 2,
+      "false_positives": 2,
+      "false_negatives": 1,
+      "should_not_extracted": 0,
+      "should_not_count": 0
+    },
+    {
+      "id": "eq034",
+      "dialogue": "生产环境的数据库连接池设置得太小了，改成 50 个连接后 QPS 翻了一倍。",
+      "capability": "knowledge_update",
+      "extracted": [
+        "生产环境的数据库连接池设置得太小",
+        "用户将数据库连接池改成50个连接",
+        "修改后QPS翻了一倍"
+      ],
+      "expected": [
+        "数据库连接池从较小改为50个连接",
+        "调整后QPS翻倍"
+      ],
+      "true_positives": 2,
+      "false_positives": 1,
+      "false_negatives": 0,
+      "should_not_extracted": 0,
+      "should_not_count": 0
+    },
+    {
+      "id": "eq035",
+      "dialogue": "妈妈下周三过生日，我已经订好了蛋糕，还准备给她买条围巾。",
+      "capability": "temporal",
+      "extracted": [
+        "妈妈下周三过生日",
+        "用户已经订好了蛋糕",
+        "用户准备给妈妈买条围巾"
+      ],
+      "expected": [
+        "妈妈生日是下周三",
+        "已为妈妈订好蛋糕",
+        "计划给妈妈买围巾作为礼物"
+      ],
+      "true_positives": 3,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "should_not_extracted": 0,
+      "should_not_count": 0
+    },
+    {
+      "id": "eq036",
+      "dialogue": "我感觉 Python 的异步编程比 JavaScript 的容易理解多了，asyncio 的协程模型更直观。",
+      "capability": "preference",
+      "extracted": [
+        "用户感觉 Python 的异步编程比 JavaScript 的容易理解",
+        "用户认为 asyncio 的协程模型更直观"
+      ],
+      "expected": [
+        "认为Python异步编程比JavaScript容易理解",
+        "认为asyncio协程模型更直观"
+      ],
+      "true_positives": 2,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "should_not_extracted": 0,
+      "should_not_count": 0
+    },
+    {
+      "id": "eq037",
+      "dialogue": "公司团建定在下周五下午，去奥森公园烧烤。每个人要交 100 块钱。",
+      "capability": "temporal",
+      "extracted": [
+        "公司团建定在下周五下午",
+        "公司团建地点是奥森公园",
+        "公司团建活动是烧烤",
+        "每个人要交100块钱"
+      ],
+      "expected": [
+        "下周五下午有公司团建",
+        "地点在奥森公园",
+        "活动为烧烤",
+        "每人费用100元"
+      ],
+      "true_positives": 4,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "should_not_extracted": 0,
+      "should_not_count": 0
+    },
+    {
+      "id": "eq038",
+      "dialogue": "我们的竞品最近上线了一个 AI 客服功能，效果好像不错，我们也得跟进。",
+      "capability": "information_extraction",
+      "extracted": [
+        "竞品最近上线了 AI 客服功能",
+        "竞品的 AI 客服功能效果不错",
+        "用户需要跟进竞品的 AI 客服功能"
+      ],
+      "expected": [
+        "竞品已上线AI客服功能",
+        "认为需要跟进此功能"
+      ],
+      "true_positives": 2,
+      "false_positives": 1,
+      "false_negatives": 0,
+      "should_not_extracted": 0,
+      "should_not_count": 1
+    },
+    {
+      "id": "eq039",
+      "dialogue": "我弟弟今年高考，考了 680 分，被清华计算机系录取了。全家都很高兴。",
+      "capability": "personal_info",
+      "extracted": [
+        "用户的弟弟今年参加高考",
+        "用户的弟弟高考考了680分",
+        "用户的弟弟被清华大学计算机系录取",
+        "用户全家都很高兴"
+      ],
+      "expected": [
+        "弟弟今年高考680分",
+        "被清华大学计算机系录取"
+      ],
+      "true_positives": 2,
+      "false_positives": 2,
+      "false_negatives": 0,
+      "should_not_extracted": 1,
+      "should_not_count": 1
+    },
+    {
+      "id": "eq040",
+      "dialogue": "这个接口的响应时间 P99 从 800ms 优化到了 200ms，主要是加了缓存和索引。",
+      "capability": "knowledge_update",
+      "extracted": [
+        "接口的响应时间 P99 从 800ms 优化到了 200ms",
+        "优化主要通过添加缓存实现",
+        "优化主要通过添加索引实现"
+      ],
+      "expected": [
+        "接口P99响应时间从800ms优化到200ms",
+        "优化手段包括加缓存和索引"
+      ],
+      "true_positives": 1,
+      "false_positives": 2,
+      "false_negatives": 1,
+      "should_not_extracted": 0,
+      "should_not_count": 0
+    },
+    {
+      "id": "eq041",
+      "dialogue": "我不太喜欢开会，尤其是那种没有议程的会。我觉得站着开会效率更高。",
+      "capability": "preference",
+      "extracted": [
+        "用户不太喜欢开会",
+        "用户不喜欢没有议程的会议",
+        "用户认为站着开会效率更高"
+      ],
+      "expected": [
+        "不喜欢无议程的会议",
+        "认为站立会议效率更高"
+      ],
+      "true_positives": 2,
+      "false_positives": 1,
+      "false_negatives": 0,
+      "should_not_extracted": 0,
+      "should_not_count": 0
+    },
+    {
+      "id": "eq042",
+      "dialogue": "用户反馈说注册流程太复杂了，要填 8 个字段。我们考虑改成手机号+验证码的方式。",
+      "capability": "information_extraction",
+      "extracted": [
+        "用户反馈注册流程太复杂",
+        "注册流程需要填写8个字段",
+        "团队考虑将注册方式改为手机号加验证码"
+      ],
+      "expected": [
+        "用户反馈注册流程太复杂（8个字段）",
+        "考虑简化为手机号+验证码方式"
+      ],
+      "true_positives": 2,
+      "false_positives": 1,
+      "false_negatives": 0,
+      "should_not_extracted": 0,
+      "should_not_count": 0
+    },
+    {
+      "id": "eq043",
+      "dialogue": "哦随便吧，我都行。",
+      "capability": "refusal",
+      "extracted": [
+        "哦随便吧，我都行。"
+      ],
+      "expected": [],
+      "true_positives": 0,
+      "false_positives": 1,
+      "false_negatives": 0,
+      "should_not_extracted": 2,
+      "should_not_count": 2
+    },
+    {
+      "id": "eq044",
+      "dialogue": "我们下个里程碑要支持多租户架构，每个租户的数据要完全隔离。这是一项大工程。",
+      "capability": "information_extraction",
+      "extracted": [
+        "下个里程碑要支持多租户架构",
+        "每个租户的数据要完全隔离",
+        "这是一项大工程"
+      ],
+      "expected": [
+        "下个里程碑目标是支持多租户架构",
+        "要求每个租户数据完全隔离"
+      ],
+      "true_positives": 2,
+      "false_positives": 1,
+      "false_negatives": 0,
+      "should_not_extracted": 1,
+      "should_not_count": 1
+    },
+    {
+      "id": "eq045",
+      "dialogue": "微信小程序的审核又被拒了，说是有诱导分享的嫌疑。已经是第三次了。",
+      "capability": "information_extraction",
+      "extracted": [
+        "微信小程序的审核被拒",
+        "微信小程序审核被拒的原因是存在诱导分享的嫌疑",
+        "微信小程序审核被拒是第三次"
+      ],
+      "expected": [
+        "微信小程序审核被拒（第三次）",
+        "被拒原因是疑似诱导分享"
+      ],
+      "true_positives": 2,
+      "false_positives": 1,
+      "false_negatives": 0,
+      "should_not_extracted": 0,
+      "should_not_count": 0
+    },
+    {
+      "id": "eq046",
+      "dialogue": "我比较习惯用 VS Code，虽然同事都推荐 JetBrains 全家桶。不过 IntelliJ 确实重构能力更强。",
+      "capability": "preference",
+      "extracted": [
+        "用户习惯使用 VS Code",
+        "同事推荐 JetBrains 全家桶",
+        "IntelliJ 重构能力更强"
+      ],
+      "expected": [
+        "习惯使用VS Code编辑器",
+        "认可IntelliJ在重构方面更强"
+      ],
+      "true_positives": 2,
+      "false_positives": 1,
+      "false_negatives": 0,
+      "should_not_extracted": 0,
+      "should_not_count": 1
+    },
+    {
+      "id": "eq047",
+      "dialogue": "下午两点和产品经理有个一对一的 sync，讨论一下登录页的改版方案。",
+      "capability": "temporal",
+      "extracted": [
+        "用户下午两点有与产品经理的一对一 sync",
+        "用户与产品经理讨论登录页的改版方案"
+      ],
+      "expected": [
+        "下午2:00与产品经理有1对1会议",
+        "会议主题为登录页改版方案"
+      ],
+      "true_positives": 2,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "should_not_extracted": 0,
+      "should_not_count": 0
+    },
+    {
+      "id": "eq048",
+      "dialogue": "老家在湖南长沙，爸妈还在那边。我每年过年都回去，大概待一周。",
+      "capability": "personal_info",
+      "extracted": [
+        "用户老家在湖南长沙",
+        "用户爸妈在湖南长沙",
+        "用户每年过年回老家",
+        "用户每年在老家待一周"
+      ],
+      "expected": [
+        "老家在湖南长沙",
+        "父母在长沙生活",
+        "每年春节回老家约一周"
+      ],
+      "true_positives": 2,
+      "false_positives": 2,
+      "false_negatives": 1,
+      "should_not_extracted": 0,
+      "should_not_count": 0
+    },
+    {
+      "id": "eq049",
+      "dialogue": "那个第三方 API 上周突然涨价了，费用翻了三倍。我们在评估要不要换供应商。",
+      "capability": "knowledge_update",
+      "extracted": [
+        "第三方 API 上周突然涨价",
+        "第三方 API 费用翻了三倍",
+        "用户正在评估是否更换供应商"
+      ],
+      "expected": [
+        "第三方API费用翻了三倍",
+        "正在评估更换供应商"
+      ],
+      "true_positives": 2,
+      "false_positives": 1,
+      "false_negatives": 0,
+      "should_not_extracted": 0,
+      "should_not_count": 0
+    },
+    {
+      "id": "eq050",
+      "dialogue": "最近失眠有点严重，可能是压力太大了。在考虑要不要去看看中医调理一下。",
+      "capability": "personal_info",
+      "extracted": [
+        "用户最近失眠严重",
+        "用户失眠可能是压力太大导致的",
+        "用户在考虑是否去看中医调理"
+      ],
+      "expected": [
+        "最近有失眠困扰",
+        "考虑看中医调理"
+      ],
+      "true_positives": 2,
+      "false_positives": 1,
+      "false_negatives": 0,
+      "should_not_extracted": 0,
+      "should_not_count": 1
+    },
+    {
+      "id": "eq051",
+      "dialogue": "用 Docker Compose 搭建本地开发环境很方便，一个命令就能把所有服务都启动。",
+      "capability": "preference",
+      "extracted": [
+        "Docker Compose 可以搭建本地开发环境",
+        "使用 Docker Compose 搭建本地开发环境很方便",
+        "一个命令能启动所有服务"
+      ],
+      "expected": [
+        "认为Docker Compose搭建本地环境方便",
+        "一个命令可启动所有服务"
+      ],
+      "true_positives": 2,
+      "false_positives": 1,
+      "false_negatives": 0,
+      "should_not_extracted": 0,
+      "should_not_count": 0
+    },
+    {
+      "id": "eq052",
+      "dialogue": "项目从 Java 迁移到 Kotlin 的计划推迟到下个季度了，因为还要先处理一些技术债务。",
+      "capability": "knowledge_update",
+      "extracted": [
+        "项目从 Java 迁移到 Kotlin 的计划推迟到下个季度",
+        "项目需要先处理一些技术债务"
+      ],
+      "expected": [
+        "Java迁移到Kotlin计划推迟到下季度",
+        "推迟原因是要先处理技术债务"
+      ],
+      "true_positives": 2,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "should_not_extracted": 0,
+      "should_not_count": 0
+    },
+    {
+      "id": "eq053",
+      "dialogue": "我每天早上到公司第一件事是看监控面板，然后处理昨晚的告警。已经成习惯了。",
+      "capability": "information_extraction",
+      "extracted": [
+        "用户每天早上到公司第一件事是看监控面板",
+        "用户每天早上到公司第二件事是处理昨晚的告警",
+        "用户已经形成了这个习惯"
+      ],
+      "expected": [
+        "早上到公司先检查监控面板",
+        "然后处理昨晚告警"
+      ],
+      "true_positives": 2,
+      "false_positives": 1,
+      "false_negatives": 0,
+      "should_not_extracted": 0,
+      "should_not_count": 0
+    },
+    {
+      "id": "eq054",
+      "dialogue": "行吧，那就先这样，回头再聊。",
+      "capability": "refusal",
+      "extracted": [
+        "行吧，那就先这样，回头再聊。"
+      ],
+      "expected": [],
+      "true_positives": 0,
+      "false_positives": 1,
+      "false_negatives": 0,
+      "should_not_extracted": 2,
+      "should_not_count": 2
+    },
+    {
+      "id": "eq055",
+      "dialogue": "我们租的办公室明年一月份到期，房东说要涨 20% 的租金。在考虑要不要搬家。",
+      "capability": "information_extraction",
+      "extracted": [
+        "用户租的办公室明年一月份到期",
+        "房东要涨 20% 的租金",
+        "用户在考虑是否搬家"
+      ],
+      "expected": [
+        "办公室租约明年1月到期",
+        "房东要求涨租20%",
+        "在考虑是否搬迁"
+      ],
+      "true_positives": 3,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "should_not_extracted": 0,
+      "should_not_count": 0
+    },
+    {
+      "id": "eq056",
+      "dialogue": "我比较注重代码质量，每次 PR 至少要有一个人 approve 才能合并。我们团队也认同这个规则。",
+      "capability": "preference",
+      "extracted": [
+        "用户注重代码质量",
+        "用户要求每次 PR 至少有一人 approve 才能合并",
+        "用户团队认同该规则"
+      ],
+      "expected": [
+        "代码合并要求至少一人approve",
+        "重视代码质量"
+      ],
+      "true_positives": 2,
+      "false_positives": 1,
+      "false_negatives": 0,
+      "should_not_extracted": 0,
+      "should_not_count": 0
+    },
+    {
+      "id": "eq057",
+      "dialogue": "线上出了个 P0 故障，支付接口报 500 了。初步排查是数据库连接池耗尽。正在紧急修复。",
+      "capability": "information_extraction",
+      "extracted": [
+        "线上出现 P0 故障",
+        "支付接口报 500 错误",
+        "初步排查故障原因是数据库连接池耗尽",
+        "正在紧急修复故障"
+      ],
+      "expected": [
+        "线上发生P0故障（支付接口500错误）",
+        "初步原因是数据库连接池耗尽",
+        "正在紧急修复中"
+      ],
+      "true_positives": 3,
+      "false_positives": 1,
+      "false_negatives": 0,
+      "should_not_extracted": 0,
+      "should_not_count": 0
+    },
+    {
+      "id": "eq058",
+      "dialogue": "下周一是双十一，我们提前做好了压测，峰值 QPS 预计 5 万。已经扩容了 3 倍。",
+      "capability": "temporal",
+      "extracted": [
+        "下周一是双十一",
+        "用户提前做好了压测",
+        "峰值 QPS 预计 5 万",
+        "用户已经扩容了 3 倍"
+      ],
+      "expected": [
+        "下周一是双十一活动",
+        "已提前做好压测",
+        "预计峰值QPS为5万",
+        "已扩容3倍"
+      ],
+      "true_positives": 4,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "should_not_extracted": 0,
+      "should_not_count": 0
+    },
+    {
+      "id": "eq059",
+      "dialogue": "我不喝酒，酒精过敏。所以每次聚会都喝果汁或者茶。",
+      "capability": "personal_info",
+      "extracted": [
+        "用户不喝酒",
+        "用户对酒精过敏",
+        "用户在聚会时喝果汁",
+        "用户在聚会时喝茶"
+      ],
+      "expected": [
+        "不喝酒（酒精过敏）",
+        "聚会时喝果汁或茶"
+      ],
+      "true_positives": 2,
+      "false_positives": 2,
+      "false_negatives": 0,
+      "should_not_extracted": 0,
+      "should_not_count": 0
+    },
+    {
+      "id": "eq060",
+      "dialogue": "日志系统从 ELK 迁移到了 Loki，因为 Loki 更省资源而且和 Grafana 集成得更好。",
+      "capability": "knowledge_update",
+      "extracted": [
+        "日志系统从 ELK 迁移到了 Loki",
+        "Loki 更省资源",
+        "Loki 和 Grafana 集成得更好"
+      ],
+      "expected": [
+        "日志系统从ELK迁移到Loki",
+        "迁移原因是Loki更省资源且Grafana集成更好"
+      ],
+      "true_positives": 2,
+      "false_positives": 1,
+      "false_negatives": 0,
+      "should_not_extracted": 0,
+      "should_not_count": 0
+    },
+    {
+      "id": "eq061",
+      "dialogue": "我周末喜欢去爬山，香山和八大处都经常去。运动完出一身汗特别舒服。",
+      "capability": "preference",
+      "extracted": [
+        "用户周末喜欢去爬山",
+        "用户经常去香山",
+        "用户经常去八大处",
+        "用户运动完出一身汗感觉特别舒服"
+      ],
+      "expected": [
+        "周末喜欢爬山",
+        "常去的山有香山和八大处"
+      ],
+      "true_positives": 2,
+      "false_positives": 2,
+      "false_negatives": 0,
+      "should_not_extracted": 0,
+      "should_not_count": 1
+    },
+    {
+      "id": "eq062",
+      "dialogue": "这次季度回顾中，我们团队交付了 12 个需求，修复了 47 个 bug，整体完成率 95%。",
+      "capability": "information_extraction",
+      "extracted": [
+        "团队在季度回顾中交付了 12 个需求",
+        "团队在季度回顾中修复了 47 个 bug",
+        "团队整体完成率为 95%"
+      ],
+      "expected": [
+        "本季度团队交付12个需求",
+        "修复47个bug",
+        "整体完成率95%"
+      ],
+      "true_positives": 3,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "should_not_extracted": 0,
+      "should_not_count": 0
+    },
+    {
+      "id": "eq063",
+      "dialogue": "我的 Git 全局配置用的是公司邮箱，个人项目就单独用项目级别的 .gitconfig 覆盖。",
+      "capability": "information_extraction",
+      "extracted": [
+        "用户的 Git 全局配置使用公司邮箱",
+        "用户为个人项目单独使用项目级别的 .gitconfig 覆盖配置"
+      ],
+      "expected": [
+        "Git全局配置使用公司邮箱",
+        "个人项目使用项目级.gitconfig覆盖"
+      ],
+      "true_positives": 2,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "should_not_extracted": 0,
+      "should_not_count": 0
+    },
+    {
+      "id": "eq064",
+      "dialogue": "听说公司可能要裁员 10%，不知道我们部门会不会受影响。有点担心。",
+      "capability": "information_extraction",
+      "extracted": [
+        "公司可能裁员 10%",
+        "用户担心部门受裁员影响"
+      ],
+      "expected": [
+        "公司可能裁员10%"
+      ],
+      "true_positives": 1,
+      "false_positives": 1,
+      "false_negatives": 0,
+      "should_not_extracted": 0,
+      "should_not_count": 2
+    },
+    {
+      "id": "eq065",
+      "dialogue": "今年上半年我们完成了 A 轮融资，金额是 2000 万人民币，投资方是红杉和经纬。",
+      "capability": "information_extraction",
+      "extracted": [
+        "公司完成了 A 轮融资",
+        "A 轮融资金额为 2000 万人民币",
+        "A 轮融资投资方是红杉",
+        "A 轮融资投资方是经纬"
+      ],
+      "expected": [
+        "上半年完成A轮融资",
+        "融资金额2000万人民币",
+        "投资方包括红杉和经纬"
+      ],
+      "true_positives": 3,
+      "false_positives": 1,
+      "false_negatives": 0,
+      "should_not_extracted": 0,
+      "should_not_count": 0
+    },
+    {
+      "id": "eq066",
+      "dialogue": "我不喜欢被打断，所以一般会把钉钉设成免打扰模式，然后每小时统一处理一次消息。",
+      "capability": "preference",
+      "extracted": [
+        "用户不喜欢被打断",
+        "用户将钉钉设为免打扰模式",
+        "用户每小时统一处理一次消息"
+      ],
+      "expected": [
+        "不喜欢工作中被打断",
+        "使用钉钉免打扰模式",
+        "每小时统一处理一次消息"
+      ],
+      "true_positives": 3,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "should_not_extracted": 0,
+      "should_not_count": 0
+    },
+    {
+      "id": "eq067",
+      "dialogue": "上次说的那个安全漏洞已经修了，升到了最新的 Spring Boot 版本，顺便把一些过时的依赖也更新了。",
+      "capability": "knowledge_update",
+      "extracted": [
+        "安全漏洞已经修复",
+        "系统升级到最新的 Spring Boot 版本",
+        "一些过时的依赖被更新"
+      ],
+      "expected": [
+        "安全漏洞已修复",
+        "升级到最新Spring Boot版本",
+        "同时更新了过时依赖"
+      ],
+      "true_positives": 3,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "should_not_extracted": 0,
+      "should_not_count": 0
+    },
+    {
+      "id": "eq068",
+      "dialogue": "我家住在 15 楼，朝南，两个卧室。房租每个月 6500，在望京算便宜的。",
+      "capability": "personal_info",
+      "extracted": [
+        "用户家住在15楼",
+        "用户家朝南",
+        "用户家有两个卧室",
+        "用户家房租每个月6500元",
+        "用户家在望京",
+        "用户家房租在望京算便宜的"
+      ],
+      "expected": [
+        "住15楼",
+        "朝向南",
+        "两室户型",
+        "房租6500元/月",
+        "位于望京地区"
+      ],
+      "true_positives": 4,
+      "false_positives": 2,
+      "false_negatives": 1,
+      "should_not_extracted": 0,
+      "should_not_count": 0
+    },
+    {
+      "id": "eq069",
+      "dialogue": "做 Code Review 的时候我发现有个函数圈复杂度太高了，高达 15，建议重构。",
+      "capability": "information_extraction",
+      "extracted": [
+        "用户发现一个函数圈复杂度太高",
+        "该函数圈复杂度高达 15",
+        "用户建议重构该函数"
+      ],
+      "expected": [
+        "发现某函数圈复杂度为15",
+        "建议对该函数进行重构"
+      ],
+      "true_positives": 2,
+      "false_positives": 1,
+      "false_negatives": 0,
+      "should_not_extracted": 0,
+      "should_not_count": 0
+    },
+    {
+      "id": "eq070",
+      "dialogue": "元旦假期我打算回老家，陪陪父母。已经请了三天年假，加上周末一共可以休五天。",
+      "capability": "temporal",
+      "extracted": [
+        "用户打算在元旦假期回老家",
+        "用户打算在元旦假期陪父母",
+        "用户请了三天年假",
+        "用户加上周末一共可以休五天"
+      ],
+      "expected": [
+        "元旦假期计划回老家陪伴父母",
+        "已请三天年假",
+        "连周末共休假五天"
+      ],
+      "true_positives": 3,
+      "false_positives": 1,
+      "false_negatives": 0,
+      "should_not_extracted": 0,
+      "should_not_count": 0
+    },
+    {
+      "id": "eq071",
+      "dialogue": "我觉得 Go 语言的错误处理方式太啰嗦了，每次都要 if err != nil。不过并发模型确实好。",
+      "capability": "preference",
+      "extracted": [
+        "用户认为 Go 语言的错误处理方式太啰嗦",
+        "用户认为 Go 语言每次都要 if err != nil",
+        "用户认为 Go 语言的并发模型确实好"
+      ],
+      "expected": [
+        "认为Go语言错误处理太啰嗦",
+        "认可Go语言的并发模型"
+      ],
+      "true_positives": 2,
+      "false_positives": 1,
+      "false_negatives": 0,
+      "should_not_extracted": 0,
+      "should_not_count": 0
+    },
+    {
+      "id": "eq072",
+      "dialogue": "从下个月开始，我们的 on-call 排班制度改了，每人轮一周而不是之前的每天轮换。",
+      "capability": "knowledge_update",
+      "extracted": [
+        "on-call 排班制度从下个月开始改变",
+        "新的排班制度是每人轮一周",
+        "旧的排班制度是每天轮换"
+      ],
+      "expected": [
+        "下月起on-call排班改为每人轮一周",
+        "之前是每天轮换"
+      ],
+      "true_positives": 2,
+      "false_positives": 1,
+      "false_negatives": 0,
+      "should_not_extracted": 0,
+      "should_not_count": 0
+    },
+    {
+      "id": "eq073",
+      "dialogue": "今天公交堵得不行，迟到了 20 分钟。明天得早点出门。",
+      "capability": "refusal",
+      "extracted": [
+        "用户今天遇到公交拥堵",
+        "用户今天迟到了20分钟",
+        "用户计划明天早点出门"
+      ],
+      "expected": [],
+      "true_positives": 0,
+      "false_positives": 3,
+      "false_negatives": 0,
+      "should_not_extracted": 1,
+      "should_not_count": 3
+    },
+    {
+      "id": "eq074",
+      "dialogue": "产品的日活用户突破了 100 万，是我们今年的一个重要里程碑。准备搞个庆祝活动。",
+      "capability": "information_extraction",
+      "extracted": [
+        "产品的日活用户突破了 100 万",
+        "日活用户突破 100 万是今年的一个重要里程碑",
+        "用户准备搞个庆祝活动"
+      ],
+      "expected": [
+        "产品日活用户突破100万",
+        "是今年的重要里程碑",
+        "计划举办庆祝活动"
+      ],
+      "true_positives": 3,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "should_not_extracted": 0,
+      "should_not_count": 0
+    },
+    {
+      "id": "eq075",
+      "dialogue": "我习惯在写代码前先画流程图，用 draw.io 或者 excalidraw 都行。理清思路再动手。",
+      "capability": "preference",
+      "extracted": [
+        "用户习惯在写代码前先画流程图",
+        "用户使用 draw.io 画流程图",
+        "用户使用 excalidraw 画流程图",
+        "用户理清思路后再动手写代码"
+      ],
+      "expected": [
+        "习惯写代码前画流程图",
+        "常用工具包括draw.io和excalidraw",
+        "倾向先理清思路再动手编码"
+      ],
+      "true_positives": 3,
+      "false_positives": 1,
+      "false_negatives": 0,
+      "should_not_extracted": 0,
+      "should_not_count": 0
+    },
+    {
+      "id": "eq076",
+      "dialogue": "周六下午两点在朝阳大悦城见面，位置已经订好了，Costa 咖啡靠窗那一桌。",
+      "capability": "temporal",
+      "extracted": [
+        "见面时间定在周六下午两点",
+        "见面地点在朝阳大悦城",
+        "位置已经订好",
+        "位置在Costa咖啡",
+        "位置在靠窗那一桌"
+      ],
+      "expected": [
+        "周六下午2:00在朝阳大悦城见面",
+        "在Costa咖啡靠窗位置"
+      ],
+      "true_positives": 2,
+      "false_positives": 3,
+      "false_negatives": 0,
+      "should_not_extracted": 0,
+      "should_not_count": 0
+    },
+    {
+      "id": "eq077",
+      "dialogue": "之前使用 MySQL 5.7，最近刚升级到 8.0。主要是为了用窗口函数和 CTE。",
+      "capability": "knowledge_update",
+      "extracted": [
+        "用户之前使用 MySQL 5.7",
+        "用户最近将 MySQL 升级到 8.0",
+        "用户升级 MySQL 的主要目的是使用窗口函数",
+        "用户升级 MySQL 的主要目的是使用 CTE"
+      ],
+      "expected": [
+        "数据库从MySQL 5.7升级到8.0",
+        "升级目的是使用窗口函数和CTE"
+      ],
+      "true_positives": 2,
+      "false_positives": 2,
+      "false_negatives": 0,
+      "should_not_extracted": 0,
+      "should_not_count": 0
+    },
+    {
+      "id": "eq078",
+      "dialogue": "我最近在培养冥想的习惯，每天早上花 10 分钟，用 Headspace 这个 App。感觉专注力提升了。",
+      "capability": "personal_info",
+      "extracted": [
+        "用户最近在培养冥想的习惯",
+        "用户每天早上花10分钟冥想",
+        "用户使用Headspace这个App进行冥想",
+        "用户感觉专注力提升了"
+      ],
+      "expected": [
+        "正在培养冥想的习惯",
+        "每天早晨冥想10分钟",
+        "使用Headspace App"
+      ],
+      "true_positives": 3,
+      "false_positives": 1,
+      "false_negatives": 0,
+      "should_not_extracted": 1,
+      "should_not_count": 1
+    },
+    {
+      "id": "eq079",
+      "dialogue": "这次重构把 2000 行的 god class 拆成了 5 个模块，每个不超过 400 行。测试覆盖率也提到了 85%。",
+      "capability": "information_extraction",
+      "extracted": [
+        "重构将 2000 行的 god class 拆分成 5 个模块",
+        "每个模块不超过 400 行",
+        "测试覆盖率提升到 85%"
+      ],
+      "expected": [
+        "将2000行god class拆分为5个模块",
+        "每个模块不超过400行",
+        "测试覆盖率提升到85%"
+      ],
+      "true_positives": 3,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "should_not_extracted": 0,
+      "should_not_count": 0
+    },
+    {
+      "id": "eq080",
+      "dialogue": "嗯。",
+      "capability": "refusal",
+      "extracted": [],
+      "expected": [],
+      "true_positives": 0,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "should_not_extracted": 0,
+      "should_not_count": 1
+    },
+    {
+      "id": "eq081",
+      "dialogue": "前端框架我们最后选了 Next.js 14，因为它支持 React Server Components 而且社区生态最好。",
+      "capability": "information_extraction",
+      "extracted": [
+        "前端框架选择了 Next.js 14",
+        "Next.js 14 支持 React Server Components",
+        "Next.js 14 的社区生态最好"
+      ],
+      "expected": [
+        "前端框架选型为Next.js 14",
+        "选型原因是支持React Server Components和社区生态好"
+      ],
+      "true_positives": 2,
+      "false_positives": 1,
+      "false_negatives": 0,
+      "should_not_extracted": 0,
+      "should_not_count": 0
+    },
+    {
+      "id": "eq082",
+      "dialogue": "我不太能吃辣，微辣就是我的极限了。所以一般去川菜馆都点不辣的菜。",
+      "capability": "preference",
+      "extracted": [
+        "用户不太能吃辣",
+        "微辣是用户的极限",
+        "用户一般去川菜馆点不辣的菜"
+      ],
+      "expected": [
+        "不太能吃辣（微辣为极限）",
+        "去川菜馆会选不辣的菜"
+      ],
+      "true_positives": 2,
+      "false_positives": 1,
+      "false_negatives": 0,
+      "should_not_extracted": 0,
+      "should_not_count": 0
+    },
+    {
+      "id": "eq083",
+      "dialogue": "下周要上线新版本，这周是 code freeze，只能修 bug 不能加新功能了。",
+      "capability": "temporal",
+      "extracted": [
+        "下周要上线新版本",
+        "这周是 code freeze",
+        "code freeze 期间只能修 bug",
+        "code freeze 期间不能加新功能"
+      ],
+      "expected": [
+        "下周上线新版本",
+        "本周为code freeze期",
+        "只允许修bug不允许加新功能"
+      ],
+      "true_positives": 3,
+      "false_positives": 1,
+      "false_negatives": 0,
+      "should_not_extracted": 0,
+      "should_not_count": 0
+    },
+    {
+      "id": "eq084",
+      "dialogue": "原来的产品经理调到别的项目组了，现在换了一个叫刘芳的来负责。她之前在字节做过。",
+      "capability": "knowledge_update",
+      "extracted": [
+        "原来的产品经理调到别的项目组",
+        "现在换了一个叫刘芳的来负责",
+        "刘芳之前在字节做过"
+      ],
+      "expected": [
+        "产品经理从原负责人更换为刘芳",
+        "刘芳之前有字节跳动工作经历"
+      ],
+      "true_positives": 1,
+      "false_positives": 2,
+      "false_negatives": 1,
+      "should_not_extracted": 0,
+      "should_not_count": 0
+    },
+    {
+      "id": "eq085",
+      "dialogue": "我衣柜里的衣服 80% 都是优衣库的，因为性价比高又百搭。",
+      "capability": "preference",
+      "extracted": [
+        "用户衣柜里80%的衣服是优衣库的",
+        "用户认为优衣库性价比高",
+        "用户认为优衣库百搭"
+      ],
+      "expected": [
+        "大部分衣服来自优衣库",
+        "选择原因是性价比高和百搭"
+      ],
+      "true_positives": 0,
+      "false_positives": 3,
+      "false_negatives": 2,
+      "should_not_extracted": 0,
+      "should_not_count": 0
+    },
+    {
+      "id": "eq086",
+      "dialogue": "冒烟测试跑过了，所有关键路径都正常。准备今天下午 3 点发版。",
+      "capability": "temporal",
+      "extracted": [
+        "冒烟测试跑过了",
+        "所有关键路径都正常",
+        "用户准备今天下午 3 点发版"
+      ],
+      "expected": [
+        "冒烟测试通过",
+        "关键路径正常",
+        "计划下午3:00发版"
+      ],
+      "true_positives": 3,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "should_not_extracted": 0,
+      "should_not_count": 0
+    },
+    {
+      "id": "eq087",
+      "dialogue": "过敏原检测结果显示我对尘螨和花粉过敏，医生开了氯雷他定。",
+      "capability": "personal_info",
+      "extracted": [
+        "过敏原检测结果显示用户对尘螨过敏",
+        "过敏原检测结果显示用户对花粉过敏",
+        "医生为用户开了氯雷他定"
+      ],
+      "expected": [
+        "过敏原为尘螨和花粉",
+        "医生开了氯雷他定药物"
+      ],
+      "true_positives": 2,
+      "false_positives": 1,
+      "false_negatives": 0,
+      "should_not_extracted": 0,
+      "should_not_count": 0
+    },
+    {
+      "id": "eq088",
+      "dialogue": "这次压测发现 Redis 是瓶颈，单机 Redis 撑不住 10 万 QPS。下一步考虑 Redis Cluster。",
+      "capability": "information_extraction",
+      "extracted": [
+        "压测发现 Redis 是瓶颈",
+        "单机 Redis 撑不住 10 万 QPS",
+        "下一步考虑 Redis Cluster"
+      ],
+      "expected": [
+        "Redis单机无法支撑10万QPS",
+        "下一步考虑Redis Cluster方案"
+      ],
+      "true_positives": 2,
+      "false_positives": 1,
+      "false_negatives": 0,
+      "should_not_extracted": 0,
+      "should_not_count": 0
+    },
+    {
+      "id": "eq089",
+      "dialogue": "我觉得远程办公比在办公室效率高，少了很多不必要的打扰。但团队沟通确实是个问题。",
+      "capability": "preference",
+      "extracted": [
+        "用户认为远程办公比在办公室效率高",
+        "远程办公减少了不必要的打扰",
+        "团队沟通是远程办公的一个问题"
+      ],
+      "expected": [
+        "认为远程办公比办公室效率高",
+        "远程办公减少了不必要的打扰",
+        "认为团队沟通是远程办公的挑战"
+      ],
+      "true_positives": 3,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "should_not_extracted": 0,
+      "should_not_count": 0
+    },
+    {
+      "id": "eq090",
+      "dialogue": "K8s 集群从 1.27 升级到 1.30 了，新版本废弃了一些旧的 API，我们提前做了适配。",
+      "capability": "knowledge_update",
+      "extracted": [
+        "K8s 集群从 1.27 升级到 1.30",
+        "新版本废弃了一些旧的 API",
+        "用户提前做了适配"
+      ],
+      "expected": [
+        "Kubernetes集群从1.27升级到1.30",
+        "新版本废弃了旧API",
+        "已提前完成适配工作"
+      ],
+      "true_positives": 3,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "should_not_extracted": 0,
+      "should_not_count": 0
+    },
+    {
+      "id": "eq091",
+      "dialogue": "周末在公司加班，顺便把一直想重构的那个 auth 模块给写了。用了 JWT + refresh token 方案。",
+      "capability": "information_extraction",
+      "extracted": [
+        "用户周末在公司加班",
+        "用户重构了 auth 模块",
+        "用户使用了 JWT 方案",
+        "用户使用了 refresh token 方案"
+      ],
+      "expected": [
+        "重构了auth模块",
+        "使用了JWT+refresh token认证方案"
+      ],
+      "true_positives": 2,
+      "false_positives": 2,
+      "false_negatives": 0,
+      "should_not_extracted": 0,
+      "should_not_count": 0
+    },
+    {
+      "id": "eq092",
+      "dialogue": "啊好的好的，谢谢提醒。",
+      "capability": "refusal",
+      "extracted": [
+        "啊好的好的，谢谢提醒。"
+      ],
+      "expected": [],
+      "true_positives": 0,
+      "false_positives": 1,
+      "false_negatives": 0,
+      "should_not_extracted": 1,
+      "should_not_count": 1
+    },
+    {
+      "id": "eq093",
+      "dialogue": "我跑步的配速大概在每公里 5 分半左右，每周跑三次，每次 5 公里。参加过两次半马。",
+      "capability": "personal_info",
+      "extracted": [
+        "用户跑步配速约为每公里5分半",
+        "用户每周跑步三次",
+        "用户每次跑步距离为5公里",
+        "用户参加过两次半程马拉松"
+      ],
+      "expected": [
+        "跑步配速约5分30秒/公里",
+        "每周跑步3次",
+        "每次跑5公里",
+        "参加过两次半程马拉松"
+      ],
+      "true_positives": 4,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "should_not_extracted": 0,
+      "should_not_count": 0
+    },
+    {
+      "id": "eq094",
+      "dialogue": "产品路线图上 Q3 的重点是国际化，要支持中英日三种语言。Q4 做移动端适配。",
+      "capability": "information_extraction",
+      "extracted": [
+        "产品路线图 Q3 的重点是国际化",
+        "产品路线图 Q3 要支持中文语言",
+        "产品路线图 Q3 要支持英文语言",
+        "产品路线图 Q3 要支持日文语言",
+        "产品路线图 Q4 做移动端适配"
+      ],
+      "expected": [
+        "Q3重点是国际化（中英日三种语言）",
+        "Q4计划做移动端适配"
+      ],
+      "true_positives": 2,
+      "false_positives": 3,
+      "false_negatives": 0,
+      "should_not_extracted": 0,
+      "should_not_count": 0
+    },
+    {
+      "id": "eq095",
+      "dialogue": "用 tRPC 替代了之前的 REST API，类型安全而且不用手写接口文档了。前后端开发效率都提升了不少。",
+      "capability": "knowledge_update",
+      "extracted": [
+        "用户用 tRPC 替代了之前的 REST API",
+        "tRPC 提供类型安全",
+        "tRPC 不需要手写接口文档",
+        "tRPC 提升了前后端开发效率"
+      ],
+      "expected": [
+        "API方案从REST改为tRPC",
+        "换用tRPC实现了类型安全",
+        "前后端开发效率得到提升"
+      ],
+      "true_positives": 3,
+      "false_positives": 1,
+      "false_negatives": 0,
+      "should_not_extracted": 0,
+      "should_not_count": 0
+    },
+    {
+      "id": "eq096",
+      "dialogue": "我对手机的要求不高，两千块左右的就行。主要用来微信、刷视频、偶尔拍拍照。",
+      "capability": "preference",
+      "extracted": [
+        "用户对手机的要求不高",
+        "用户预算在两千块左右",
+        "用户主要使用微信",
+        "用户主要使用手机刷视频",
+        "用户偶尔使用手机拍照"
+      ],
+      "expected": [
+        "手机预算约2000元",
+        "主要用途为微信、视频和拍照"
+      ],
+      "true_positives": 1,
+      "false_positives": 4,
+      "false_negatives": 1,
+      "should_not_extracted": 0,
+      "should_not_count": 0
+    },
+    {
+      "id": "eq097",
+      "dialogue": "五一假期去了趟成都，吃了火锅、串串，还去看了大熊猫。成都真是一个来了就不想走的城市。",
+      "capability": "information_extraction",
+      "extracted": [
+        "用户五一假期去了成都",
+        "用户在成都吃了火锅",
+        "用户在成都吃了串串",
+        "用户去看了大熊猫",
+        "用户认为成都是一个来了就不想走的城市"
+      ],
+      "expected": [
+        "五一假期去过成都",
+        "在成都体验了火锅和串串",
+        "参观了成都大熊猫基地"
+      ],
+      "true_positives": 3,
+      "false_positives": 2,
+      "false_negatives": 0,
+      "should_not_extracted": 0,
+      "should_not_count": 1
+    },
+    {
+      "id": "eq098",
+      "dialogue": "下周的 sprint planning 记得把那个性能优化的 story 优先级调高，线上用户投诉越来越多了。",
+      "capability": "temporal",
+      "extracted": [
+        "下周有 sprint planning 会议",
+        "用户需要调整性能优化 story 的优先级",
+        "性能优化 story 的优先级需要调高",
+        "线上用户投诉越来越多"
+      ],
+      "expected": [
+        "需要在下周sprint planning中提高性能优化story优先级",
+        "原因是线上用户投诉增多"
+      ],
+      "true_positives": 2,
+      "false_positives": 2,
+      "false_negatives": 0,
+      "should_not_extracted": 0,
+      "should_not_count": 0
+    },
+    {
+      "id": "eq099",
+      "dialogue": "有人说 TypeScript 太啰嗦了我不这么认为。类型系统在大型项目中能避免很多低级 bug。",
+      "capability": "preference",
+      "extracted": [
+        "有人说 TypeScript 太啰嗦",
+        "用户不认为 TypeScript 太啰嗦",
+        "类型系统在大型项目中能避免很多低级 bug"
+      ],
+      "expected": [
+        "不认同TypeScript太啰嗦的观点",
+        "认为类型系统能避免大型项目的低级bug"
+      ],
+      "true_positives": 2,
+      "false_positives": 1,
+      "false_negatives": 0,
+      "should_not_extracted": 0,
+      "should_not_count": 0
+    },
+    {
+      "id": "eq100",
+      "dialogue": "今年年终总结我给自己的评价是 B+，领导说主要是沟通方面还需要提升。明年目标是拿到 A。",
+      "capability": "information_extraction",
+      "extracted": [
+        "用户给自己的年终评价是 B+",
+        "领导认为用户需要在沟通方面提升",
+        "用户明年的目标是拿到 A"
+      ],
+      "expected": [
+        "年终评价为B+",
+        "领导指出需要提升沟通能力",
+        "明年目标是拿到A评级"
+      ],
+      "true_positives": 3,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "should_not_extracted": 0,
+      "should_not_count": 0
+    }
+  ]
+}

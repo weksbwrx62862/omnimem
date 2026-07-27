@@ -9,8 +9,11 @@
 > M8-17/18/19（解密审计 / reencrypt / MCP 安全对齐）、M9-22/23（依赖单一来源校验 / jieba 钉版）。
 > 另修复发布级缺陷：.gitignore `_*.py` 误伤全部 `__init__.py`（23 个包结构文件从未入库，
 > clone 后无法 import），已补录。
-> ⬜ 待办（均需外部环境）：M5-1/2（Linux 回归 + LongMemEval/hybrid A/B）、
-> M8-15/16（GPU 训练循环/适配器推理集成）、M9-20/21（FastAPI/CI，发布前启动）。
+> ✅ 补充完成（2026-07-26 晚,按本机实际环境重评后执行）：M6-9 拆分补做（fusion/cache/index_admin,主文件 429 行）、
+> M8-15/16（LoRA 最小训练循环已在本机 GPU（RX 7900 XTX 24G/ROCm）tiny 模型冒烟跑通,QLoRA 4bit 依赖 bnb 可用性自动降级；适配器推理 hook + active_adapter.json）、
+> M9-20（FastAPI 版 REST + /docs,19 项安全语义测试对齐）、M9-21（CI 三平台矩阵 + ruff 全量阻断 + coverage 45% 棘轮门禁,绿灯验证待配置 git remote）。
+> ⬜ 待办：M5-1/2（Linux 回归 + LongMemEval/hybrid A/B,需 Linux SSH 授权与 LLM 凭证）；
+> mypy 全量 791 处历史类型债（CI 中为信息性检查,逐步偿还）；coverage 52%→75% 爬坡。
 
 ---
 

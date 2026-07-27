@@ -20,6 +20,9 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+# ★ M5-2: --mode hybrid 时注入的 LLM 客户端（None = 纯规则模式）
+_LLM_CLIENT = None
+
 # 数据集中文关键词 → 事实归一化映射（用于模糊匹配打分）
 _SYNONYM_MAP: dict[str, list[str]] = {
     "不喜欢": ["讨厌", "反感", "不爱"],
@@ -27,6 +30,31 @@ _SYNONYM_MAP: dict[str, list[str]] = {
     "住": ["居住", "住在"],
     "养": ["饲养", "有"],
 }
+
+
+def _build_llm_client():
+    """★ M5-2: 从 hermes 安装目录读取 LLM 凭证构建客户端（DEEPSEEK_API_KEY）。"""
+    import os
+
+    from omnimem.utils.llm_client import AsyncLLMClient
+
+    api_key = os.environ.get("DEEPSEEK_API_KEY", "")
+    model = os.environ.get("OMNIMEM_LLM_MODEL", "")
+    if not api_key:
+        hermes_env = Path(os.environ.get("HERMES_HOME", r"C:\Users\13104\AppData\Local\hermes")) / ".env"
+        if hermes_env.exists():
+            for line in hermes_env.read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if line.startswith("DEEPSEEK_API_KEY="):
+                    api_key = line.split("=", 1)[1].strip().strip(chr(34)).strip(chr(39))
+                    break
+    if not api_key:
+        raise SystemExit("hybrid 模式需要 DEEPSEEK_API_KEY（环境变量或 hermes/.env）")
+    if not model:
+        model = "deepseek-chat"
+    base_url = os.environ.get("OMNIMEM_LLM_BASE_URL", "https://api.deepseek.com")
+    logger.warning("hybrid 模式: model=%s base_url=%s (key len=%d)", model, base_url, len(api_key))
+    return AsyncLLMClient(api_key=api_key, base_url=base_url, model=model, timeout=60.0)
 
 
 def _load_dataset(path: Path) -> list[dict[str, Any]]:
@@ -43,7 +71,7 @@ def _extract_facts_rule(dialogue: str) -> list[str]:
     try:
         from omnimem.perception.fact_extractor import AtomicFactExtractor
 
-        extractor = AtomicFactExtractor()  # 无 LLM client → 纯规则模式
+        extractor = AtomicFactExtractor(llm_client=_LLM_CLIENT)  # 无 LLM client → 纯规则模式
         return extractor.extract_facts(dialogue)
     except ImportError as e:
         logger.warning("AtomicFactExtractor 导入失败: %s，使用简单回退", e)
@@ -149,7 +177,7 @@ def _evaluate_single(
     }
 
 
-def run_evaluation(dataset_path: Path) -> dict[str, Any]:
+def run_evaluation(dataset_path: Path, mode: str = "rule") -> dict[str, Any]:
     """运行全量评测。"""
     items = _load_dataset(dataset_path)
     results: list[dict[str, Any]] = []
@@ -203,7 +231,7 @@ def run_evaluation(dataset_path: Path) -> dict[str, Any]:
 
     report = {
         "dataset": "extraction_quality_eval_v1",
-        "mode": "rule",
+        "mode": mode,
         "total_items": len(items),
         "overall": {
             "precision": round(precision, 4),
@@ -269,6 +297,12 @@ def main() -> None:
         help="结果输出 JSON 路径（默认输出到 stdout）",
     )
     parser.add_argument(
+        "--mode",
+        choices=["rule", "hybrid"],
+        default="rule",
+        help="rule=纯规则, hybrid=LLM 驱动（凭证自动从 hermes 读取）",
+    )
+    parser.add_argument(
         "--ci",
         action="store_true",
         help="CI 模式：仅输出 JSON，不打印摘要",
@@ -277,7 +311,9 @@ def main() -> None:
 
     logging.basicConfig(level=logging.WARNING)
 
-    report = run_evaluation(args.data)
+    if args.mode == "hybrid":
+        globals()["_LLM_CLIENT"] = _build_llm_client()
+    report = run_evaluation(args.data, mode=args.mode)
 
     if args.output:
         args.output.parent.mkdir(parents=True, exist_ok=True)

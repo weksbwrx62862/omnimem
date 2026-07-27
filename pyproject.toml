@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "omnimem"
-version = "1.1.0"
+version = "1.2.0"
 description = "OmniMem — 五层混合记忆系统：感知→工作→结构化→深层→内化，含治理引擎"
 readme = "README.md"
 license = {text = "MIT"}
@@ -52,6 +52,10 @@ omni-doctor = "omnimem.doctor:main"
 [project.optional-dependencies]
 # cryptography 已提升为默认依赖，crypto extra 保留空列表以兼容旧安装命令
 crypto = []
+api = [
+    "fastapi>=0.110.0",
+    "uvicorn>=0.27.0",
+]
 lora = [
     "peft>=0.8.0",
     "transformers>=4.35.0",
@@ -143,6 +147,13 @@ ignore = [
     "B905",    # zip without strict (Python 3.9 compat, strict added in 3.10)
 ]
 
+[tool.ruff.lint.per-file-ignores]
+# tests/benchmarks/scripts: mock 签名占位参数与 sys.path 前置属合理用法
+"tests/*" = ["ARG001", "ARG005", "F841"]
+"benchmarks/*" = ["E402", "E741", "F841", "ARG004"]
+"examples/*" = ["E402"]
+"scripts/*" = ["E402", "ARG001", "F841"]
+
 [tool.ruff.lint.pydocstyle]
 convention = "google"
 
@@ -173,10 +184,15 @@ warn_no_return = true
 warn_unused_ignores = false
 
 [tool.coverage.run]
-source = ["omnimem"]
 omit = [
     "tests/*",
     "*/test_*",
+    "benchmarks/*",
+    "examples/*",
+    "scripts/*",
+    "docs/*",
+    "doctor.py",
+    "core/plur_server.py",
 ]
 
 [tool.coverage.report]

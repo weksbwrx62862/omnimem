@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] - 2026-07-27
+
+### Added
+- **FastAPI 版 REST 服务**（M9-20）：`api_fastapi.py` + `omnimem[api]` extra；复用 Auth/AdminAuth/RateLimiter 中间件，自动 OpenAPI 文档（/docs）；原 http.server 实现保留
+- **LoRA 最小训练循环**（M8-15）：`internalize/train_loop.py`（HF Trainer + peft），bnb 可用时自动 QLoRA 4bit，`OMNIMEM_REAL_TRAIN=1` 门控；已在 RX 7900 XTX（ROCm）实跑 Qwen2.5-7B bf16 LoRA（峰值 14.5G/24G）
+- **适配器推理侧集成**（M8-16）：shade 切换 hook、`active_adapter.json` 落盘、`get_inference_directive()`；`shade_switch` 返回值携带 `inference` 加载指令
+- **抽取评测 hybrid 模式**（M5-2）：`run_extraction_eval.py --mode hybrid`；A/B 结果 hybrid F1 79.5% vs rule 64.34%
+- **CI 增强**（M9-21）：ubuntu/windows/macos 三平台矩阵、ruff 全量阻断、mypy 信息性检查、coverage 45% 棘轮门禁
+- **配置项注册**：`use_unified_index`/`extraction_mode` 补入配置 schema 单一来源
+
+### Fixed
+- **BM25 死锁（P0）**：`add()` 持锁调用后台重建再抢同一把不可重入锁导致必死锁 → `threading.RLock`
+- **Windows SQLite 句柄泄漏**：`L3PersistentCache`/`MultiLevelCache` 新增 `close()`；benchmark FeedbackCollector 补关闭
+- **测试挂死根治**：conftest 禁用 ChromaDB/posthog 遥测 + HF 离线模式（弱网下 socket 无限阻塞）
+- **Python 3.10 兼容**：`concurrent.futures.TimeoutError` 捕获（3.11 前非内建别名）；`_shared_executor` 兼容 re-export 恢复
+- **F821 注解缺口**：forgetting_core 缺 sqlite3 导入、hybrid_orchestrator 缺 ThreadPoolExecutor 导入
+
+### Changed
+- **hybrid_orchestrator 拆分**（M6-9 收尾）：fusion.py/cache.py/index_admin.py Mixin 拆分，主文件 429 行
+- **ruff 全量清零**：134 → 0
+- **LoRATrainer 摘除 experimental 标注**（7B GPU 验收通过后转正）
+- 删除误置于 core/ 的重复测试文件 test_engram_bridge.py
+
 ## [1.1.0] - 2026-07-26
 
 ### Added
