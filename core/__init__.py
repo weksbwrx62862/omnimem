@@ -14,8 +14,13 @@ from omnimem.core.engram_bridge import SharedMemorySync as SharedMemorySync
 from omnimem.core.engram_bridge import create_engram_bridge as create_engram_bridge
 from omnimem.core.engram_bridge import create_memory_federation as create_memory_federation
 from omnimem.core.engram_bridge import create_shared_memory_sync as create_shared_memory_sync
-from omnimem.core.plur_client import PlurClient as PlurClient
-from omnimem.core.plur_client import create_plur_client as create_plur_client
+# Plur 客户端依赖可选的 aiohttp（联邦为实验特性），缺失时降级不阻断核心 import
+try:
+    from omnimem.core.plur_client import PlurClient as PlurClient
+    from omnimem.core.plur_client import create_plur_client as create_plur_client
+except ImportError:
+    PlurClient = None  # type: ignore
+    create_plur_client = None  # type: ignore
 from omnimem.core.plur_config import PlurConfig as PlurConfig
 from omnimem.core.plur_config import get_config as get_config
 from omnimem.core.soul import SoulSystem as SoulSystem

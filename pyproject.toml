@@ -67,6 +67,9 @@ mcp = [
 langchain = [
     "langchain>=0.1.0",
 ]
+plur = [
+    "aiohttp>=3.9.0",
+]
 vector = [
     "chromadb>=0.4.0,<0.8.0",
     "sentence-transformers>=2.2.0",
@@ -86,7 +89,7 @@ dev = [
     "pre-commit>=3.0.0",
 ]
 all = [
-    "omnimem[crypto,lora,mcp,langchain,nlp,vector,dev]",
+    "omnimem[crypto,lora,mcp,langchain,nlp,vector,plur,dev]",
 ]
 
 [project.urls]
