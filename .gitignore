@@ -93,7 +93,10 @@ ANALYSIS_REPORT*.md
 
 # Temporary fix scripts
 # ★ 修复：原 _*.py 误伤 __init__.py（包入口从未入库），改为单下划线前缀
+# ★ 修复2：再排除真实源文件 _config.py / _compat.py（误伤致 clone 后 import 崩溃）
 _[!_]*.py
+!config/_config.py
+!handlers/_compat.py
 fix_*.py
 nul
 
