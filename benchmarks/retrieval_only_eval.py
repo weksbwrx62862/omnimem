@@ -22,17 +22,15 @@
 from __future__ import annotations
 
 import argparse
-from datetime import datetime
 import gc
 import json
 import logging
 import os
 import re
-import shutil
 import sys
-import tempfile
 import time
 from collections import defaultdict
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -45,16 +43,15 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from omnimem.retrieval.bm25 import BM25Retriever
 from omnimem.retrieval.vector import VectorRetriever
-from omnimem.retrieval.rrf import RRFFusion
-from benchmarks.longmemeval_adapter import OmniMemMemoryProvider, _PREFERENCE_KEYWORDS
+
+from benchmarks.longmemeval_adapter import _PREFERENCE_KEYWORDS, OmniMemMemoryProvider
 from benchmarks.run_longmemeval import (
-    evaluate_retrieval_quality,
-    build_answer_turn_contents,
+    _check_llm_available,
     _generate_answer_with_llm,
     _judge_answer_with_llm,
-    _check_llm_available,
+    build_answer_turn_contents,
+    evaluate_retrieval_quality,
 )
-
 
 # ── Chain-of-Note 阅读策略 ──
 
@@ -118,11 +115,7 @@ def _generate_answer_with_con(
     # Step 1: 对每条 context 做笔记
     notes = []
     for i, ctx in enumerate(contexts[:max_notes]):
-        note_prompt = (
-            f"Question: {query}\n\n"
-            f"Passage [{i+1}]: {ctx[:800]}\n\n"
-            f"Note:"
-        )
+        note_prompt = f"Question: {query}\n\n" f"Passage [{i+1}]: {ctx[:800]}\n\n" f"Note:"
         try:
             resp = client.chat.completions.create(
                 model=model,
@@ -147,10 +140,7 @@ def _generate_answer_with_con(
 
     # Step 2: 基于笔记生成答案
     notes_text = "\n".join(notes)
-    answer_prompt = (
-        f"Notes from chat history:\n{notes_text}\n\n"
-        f"Question: {query}\nAnswer:"
-    )
+    answer_prompt = f"Notes from chat history:\n{notes_text}\n\n" f"Question: {query}\nAnswer:"
     try:
         resp = client.chat.completions.create(
             model=model,
@@ -166,6 +156,7 @@ def _generate_answer_with_con(
     except Exception as e:
         logger.warning("CoN 最终答案生成失败: %s", e)
         return _generate_answer_with_llm(query, contexts[:20], api_key, base_url, model=model)
+
 
 # ── 原子事实提取 ──
 
@@ -231,6 +222,7 @@ def _extract_facts_inline(
         raw = resp.choices[0].message.content.strip()
         # 尝试解析 JSON 数组
         import json as _json
+
         # 处理可能的 markdown 代码块包裹
         if raw.startswith("```"):
             raw = raw.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
@@ -253,9 +245,21 @@ logging.basicConfig(
 logger = logging.getLogger("retrieval_eval")
 
 # 降低噪音
-for _n in ("omnimem", "jieba", "filelock", "sentence_transformers", "chromadb",
-           "huggingface_hub", "transformers", "urllib3", "httpcore", "httpx",
-           "filelock", "torch", "tiktoken"):
+for _n in (
+    "omnimem",
+    "jieba",
+    "filelock",
+    "sentence_transformers",
+    "chromadb",
+    "huggingface_hub",
+    "transformers",
+    "urllib3",
+    "httpcore",
+    "httpx",
+    "filelock",
+    "torch",
+    "tiktoken",
+):
     logging.getLogger(_n).setLevel(logging.WARNING)
 
 # 强制 CPU + 中国镜像
@@ -283,10 +287,7 @@ def _build_documents(
         answer_indices = []
         filler_indices = []
         for idx, sid in enumerate(session_ids):
-            is_answer = (
-                sid in answer_session_ids
-                or any(aid in sid for aid in answer_session_ids)
-            )
+            is_answer = sid in answer_session_ids or any(aid in sid for aid in answer_session_ids)
             if is_answer:
                 answer_indices.append(idx)
             else:
@@ -298,9 +299,7 @@ def _build_documents(
 
     documents = []
 
-    for sess_idx, (sess_id, sess_turns) in enumerate(
-        zip(session_ids, sessions)
-    ):
+    for sess_idx, (sess_id, sess_turns) in enumerate(zip(session_ids, sessions)):
         for turn_idx, turn in enumerate(sess_turns):
             role = turn.get("role", "user")
             content = turn.get("content", "").strip()
@@ -316,24 +315,25 @@ def _build_documents(
                 segments = [content]
 
             # 偏好增强索引
-            is_preference = (
-                role == "user"
-                and any(kw in content.lower() for kw in _PREFERENCE_KEYWORDS)
+            is_preference = role == "user" and any(
+                kw in content.lower() for kw in _PREFERENCE_KEYWORDS
             )
 
             for seg_idx, segment in enumerate(segments):
                 if preference_boost and is_preference:
                     segment = f"[prefer like enjoy] {segment}"
 
-                documents.append({
-                    "content": segment,
-                    "role": role,
-                    "session_id": sess_id,
-                    "turn_index": turn_idx,
-                    "has_answer": turn.get("has_answer", False),
-                    "segment_index": seg_idx if len(segments) > 1 else None,
-                    "is_preference": is_preference,
-                })
+                documents.append(
+                    {
+                        "content": segment,
+                        "role": role,
+                        "session_id": sess_id,
+                        "turn_index": turn_idx,
+                        "has_answer": turn.get("has_answer", False),
+                        "segment_index": seg_idx if len(segments) > 1 else None,
+                        "is_preference": is_preference,
+                    }
+                )
 
     return documents
 
@@ -342,19 +342,33 @@ def _build_documents(
 
 # 日期/数字模式（用于时序查询检测）
 _DATE_PATTERN = re.compile(
-    r'\b(january|february|march|april|may|june|july|august|september|october|november|december'
-    r'|\d{4}|\d{1,2}(st|nd|rd|th))\b',
+    r"\b(january|february|march|april|may|june|july|august|september|october|november|december"
+    r"|\d{4}|\d{1,2}(st|nd|rd|th))\b",
     re.IGNORECASE,
 )
 
 # 偏好类信号词
 _PREFERENCE_SIGNALS = (
-    "recommend", "suggest", "prefer", "enjoy", "like", "favorite", "favourite", "best",
+    "recommend",
+    "suggest",
+    "prefer",
+    "enjoy",
+    "like",
+    "favorite",
+    "favourite",
+    "best",
 )
 
 # 时序/精确匹配类信号词
 _TEMPORAL_SIGNALS = (
-    "how many", "when", "what date", "how long", "last", "first", "before", "after",
+    "how many",
+    "when",
+    "what date",
+    "how long",
+    "last",
+    "first",
+    "before",
+    "after",
 )
 
 
@@ -377,11 +391,11 @@ def _detect_query_type(query: str) -> str:
 def _get_dynamic_weights(query_type: str) -> tuple[float, float]:
     """根据查询类型返回 (bm25_weight, vector_weight)。"""
     if query_type == "preference":
-        return 1.0, 3.0   # 偏好类：向量主导
+        return 1.0, 3.0  # 偏好类：向量主导
     elif query_type == "temporal":
-        return 5.0, 0.5   # 时序类：BM25 主导
+        return 5.0, 0.5  # 时序类：BM25 主导
     else:
-        return 5.0, 1.0   # 默认：BM25 主导
+        return 5.0, 1.0  # 默认：BM25 主导
 
 
 def _query_type_short(qtype: str) -> str:
@@ -394,6 +408,7 @@ def _query_type_short(qtype: str) -> str:
 
 
 # ── RRF 融合 ──
+
 
 def _rrf_fuse(
     bm25_results: list[dict],
@@ -421,7 +436,7 @@ def _rrf_fuse(
         bm25_weight, vector_weight = _get_dynamic_weights(query_type)
 
     score_map: dict[str, float] = {}  # memory_id → RRF 分数
-    doc_map: dict[str, dict] = {}     # memory_id → 文档信息
+    doc_map: dict[str, dict] = {}  # memory_id → 文档信息
 
     # BM25 通道
     for rank, r in enumerate(bm25_results, start=1):
@@ -457,9 +472,7 @@ def _compute_ranking_metrics(
     top_ks: tuple[int, ...] = (5, 10, 20, 50),
 ) -> dict[str, Any]:
     """计算排名相关指标：Top-K 命中率、MRR、答案首次出现位置。"""
-    answer_session_contents, answer_turn_contents, answer_texts = (
-        build_answer_turn_contents(entry)
-    )
+    answer_session_contents, answer_turn_contents, answer_texts = build_answer_turn_contents(entry)
 
     if not answer_texts:
         return {"skipped": True, "reason": "no_answer_turns"}
@@ -503,8 +516,16 @@ def _compute_ranking_metrics(
 
 # 拒绝类问题指示词
 _REFUSAL_INDICATORS = (
-    "不知道", "无法", "不能", "没有", "不确定",
-    "don't know", "cannot", "unable", "not sure", "no information",
+    "不知道",
+    "无法",
+    "不能",
+    "没有",
+    "不确定",
+    "don't know",
+    "cannot",
+    "unable",
+    "not sure",
+    "no information",
 )
 
 
@@ -532,6 +553,7 @@ def _keyword_judge(prediction: str, gold_answer: str, is_abstention: bool) -> bo
 
 
 # ── ChromaDB collection 重置（OOM 修复） ──
+
 
 def _reset_vector_collection(vector_retriever: VectorRetriever) -> None:
     """重置 ChromaDB collection：delete + recreate，只清数据不释放连接。
@@ -567,9 +589,14 @@ def _reset_vector_collection(vector_retriever: VectorRetriever) -> None:
 
 def main():
     parser = argparse.ArgumentParser(description="轻量检索质量评测（BM25 + 向量 + RRF 融合）")
-    parser.add_argument("--data", type=str,
-                        default=str(PROJECT_ROOT / "benchmarks" / "LongMemEval" / "data" / "longmemeval_s_cleaned.json"),
-                        help="评测数据路径")
+    parser.add_argument(
+        "--data",
+        type=str,
+        default=str(
+            PROJECT_ROOT / "benchmarks" / "LongMemEval" / "data" / "longmemeval_s_cleaned.json"
+        ),
+        help="评测数据路径",
+    )
     parser.add_argument("--limit", type=int, default=10, help="每种类型取几题")
     parser.add_argument("--max-sessions", type=int, default=10, help="每题最多取几个 session")
     parser.add_argument("--top-k", type=int, default=100, help="检索 top_k")
@@ -584,29 +611,67 @@ def main():
     parser.add_argument("--pref-boost", action="store_true", default=False, help="偏好增强索引")
     parser.add_argument("--no-pref-boost", action="store_true", help="禁用偏好增强索引")
     # ── 新增参数 ──
-    parser.add_argument("--mode", type=str, default="retrieval",
-                        choices=["retrieval", "gen", "full"],
-                        help="评测模式: retrieval=仅检索指标, gen=检索+LLM生成, full=检索+生成+Judge判分")
-    parser.add_argument("--dynamic-weight", action="store_true", default=False,
-                        help="启用动态权重路由（根据查询类型自动调整 BM25/向量权重）")
-    parser.add_argument("--output", type=str, default=str(PROJECT_ROOT / "benchmarks" / "results"),
-                        help="结果 JSON 输出目录")
-    parser.add_argument("--llm-base-url", type=str, default="",
-                        help="LLM API base URL（gen/full 模式使用）")
-    parser.add_argument("--gen-model", type=str, default="gpt-4o-mini",
-                        help="LLM 生成模型名称（gen/full 模式使用）")
-    parser.add_argument("--chain-of-note", action="store_true", default=False,
-                        help="启用 Chain-of-Note 阅读策略：先对每条 context 做笔记，再基于笔记生成答案")
-    parser.add_argument("--con-max-notes", type=int, default=30,
-                        help="Chain-of-Note 最多对前 N 条 context 做笔记（控制 API 调用成本，默认 30）")
-    parser.add_argument("--gen-context-size", type=int, default=20,
-                        help="传给 LLM 生成的 context 条数（默认 20，top_k=200 时建议增大到 50）")
-    parser.add_argument("--judge-model", type=str, default="deepseek-chat",
-                        help="LLM Judge 模型名称（full 模式使用，默认 deepseek-chat）")
-    parser.add_argument("--fact-extract", action="store_true", default=False,
-                        help="启用 LLM 原子事实提取：ingest 时从对话中提取结构化事实独立存储")
-    parser.add_argument("--fact-extract-model", type=str, default="deepseek-chat",
-                        help="事实提取 LLM 模型名称（默认 deepseek-chat）")
+    parser.add_argument(
+        "--mode",
+        type=str,
+        default="retrieval",
+        choices=["retrieval", "gen", "full"],
+        help="评测模式: retrieval=仅检索指标, gen=检索+LLM生成, full=检索+生成+Judge判分",
+    )
+    parser.add_argument(
+        "--dynamic-weight",
+        action="store_true",
+        default=False,
+        help="启用动态权重路由（根据查询类型自动调整 BM25/向量权重）",
+    )
+    parser.add_argument(
+        "--output",
+        type=str,
+        default=str(PROJECT_ROOT / "benchmarks" / "results"),
+        help="结果 JSON 输出目录",
+    )
+    parser.add_argument(
+        "--llm-base-url", type=str, default="", help="LLM API base URL（gen/full 模式使用）"
+    )
+    parser.add_argument(
+        "--gen-model", type=str, default="gpt-4o-mini", help="LLM 生成模型名称（gen/full 模式使用）"
+    )
+    parser.add_argument(
+        "--chain-of-note",
+        action="store_true",
+        default=False,
+        help="启用 Chain-of-Note 阅读策略：先对每条 context 做笔记，再基于笔记生成答案",
+    )
+    parser.add_argument(
+        "--con-max-notes",
+        type=int,
+        default=30,
+        help="Chain-of-Note 最多对前 N 条 context 做笔记（控制 API 调用成本，默认 30）",
+    )
+    parser.add_argument(
+        "--gen-context-size",
+        type=int,
+        default=20,
+        help="传给 LLM 生成的 context 条数（默认 20，top_k=200 时建议增大到 50）",
+    )
+    parser.add_argument(
+        "--judge-model",
+        type=str,
+        default="deepseek-chat",
+        help="LLM Judge 模型名称（full 模式使用，默认 deepseek-chat）",
+    )
+    parser.add_argument(
+        "--fact-extract",
+        action="store_true",
+        default=False,
+        help="启用 LLM 原子事实提取：ingest 时从对话中提取结构化事实独立存储",
+    )
+    parser.add_argument(
+        "--fact-extract-model",
+        type=str,
+        default="deepseek-chat",
+        help="事实提取 LLM 模型名称（默认 deepseek-chat）",
+    )
     args = parser.parse_args()
 
     if args.no_split:
@@ -642,16 +707,25 @@ def main():
 
     selected = []
     for qtype, items in sorted(by_type.items()):
-        start = getattr(args, 'offset', 0)
+        start = getattr(args, "offset", 0)
         end = start + args.limit
         selected.extend(items[start:end])
 
     mode_str = "BM25+Vector" if args.vector else "BM25-only"
     dyn_str = "ON" if args.dynamic_weight else "OFF"
-    logger.info("评测 %d 题 (mode=%s, retrieval=%s, top_k=%d, max_sessions=%d, "
-                "bm25_w=%.1f, vec_w=%.1f, rrf_k=%d, dynamic_weight=%s)",
-                len(selected), args.mode, mode_str, args.top_k, args.max_sessions,
-                args.bm25_weight, args.vector_weight, args.rrf_k, dyn_str)
+    logger.info(
+        "评测 %d 题 (mode=%s, retrieval=%s, top_k=%d, max_sessions=%d, "
+        "bm25_w=%.1f, vec_w=%.1f, rrf_k=%d, dynamic_weight=%s)",
+        len(selected),
+        args.mode,
+        mode_str,
+        args.top_k,
+        args.max_sessions,
+        args.bm25_weight,
+        args.vector_weight,
+        args.rrf_k,
+        dyn_str,
+    )
 
     results = []
     t0 = time.time()
@@ -664,6 +738,7 @@ def main():
         os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
         try:
             from sentence_transformers import SentenceTransformer
+
             _global_embedder = SentenceTransformer("all-MiniLM-L6-v2", device="cpu")
             logger.info("嵌入模型加载完成: all-MiniLM-L6-v2 (384维)")
         except Exception as e:
@@ -680,8 +755,10 @@ def main():
 
             # 构建文档集合
             documents = _build_documents(
-                item, max_sessions=args.max_sessions,
-                enable_split=args.split, preference_boost=args.pref_boost,
+                item,
+                max_sessions=args.max_sessions,
+                enable_split=args.split,
+                preference_boost=args.pref_boost,
             )
 
             # 事实提取：对每个文档的 content 提取原子事实，展开为独立文档
@@ -691,19 +768,23 @@ def main():
                     content = doc["content"]
                     if len(content) > 20:
                         facts = _extract_facts_inline(
-                            content, api_key, base_url,
+                            content,
+                            api_key,
+                            base_url,
                             model=args.fact_extract_model,
                         )
                         for fact_content in facts:
-                            expanded_docs.append({
-                                "content": fact_content,
-                                "role": doc["role"],
-                                "session_id": doc["session_id"],
-                                "turn_index": doc["turn_index"],
-                                "has_answer": doc.get("has_answer", False),
-                                "segment_index": doc.get("segment_index"),
-                                "is_preference": doc.get("is_preference", False),
-                            })
+                            expanded_docs.append(
+                                {
+                                    "content": fact_content,
+                                    "role": doc["role"],
+                                    "session_id": doc["session_id"],
+                                    "turn_index": doc["turn_index"],
+                                    "has_answer": doc.get("has_answer", False),
+                                    "segment_index": doc.get("segment_index"),
+                                    "is_preference": doc.get("is_preference", False),
+                                }
+                            )
                     else:
                         expanded_docs.append(doc)
                 documents = expanded_docs
@@ -712,11 +793,15 @@ def main():
             bm25 = BM25Retriever(buffer_size=len(documents) + 10)
             for doc_idx, doc in enumerate(documents):
                 doc_id = f"doc_{doc_idx}"
-                bm25.add(doc["content"], doc_id, {
-                    "role": doc["role"],
-                    "session_id": doc["session_id"],
-                    "has_answer": doc.get("has_answer", False),
-                })
+                bm25.add(
+                    doc["content"],
+                    doc_id,
+                    {
+                        "role": doc["role"],
+                        "session_id": doc["session_id"],
+                        "has_answer": doc.get("has_answer", False),
+                    },
+                )
             bm25.flush()
 
             # BM25 检索
@@ -728,28 +813,35 @@ def main():
                 # 编码所有文档
                 doc_texts = [doc["content"] for doc in documents]
                 doc_embeddings = _global_embedder.encode(
-                    doc_texts, batch_size=64, show_progress_bar=False,
-                    convert_to_numpy=True, normalize_embeddings=True,
+                    doc_texts,
+                    batch_size=64,
+                    show_progress_bar=False,
+                    convert_to_numpy=True,
+                    normalize_embeddings=True,
                 )
                 # 编码查询
                 query_embedding = _global_embedder.encode(
-                    [question], show_progress_bar=False,
-                    convert_to_numpy=True, normalize_embeddings=True,
+                    [question],
+                    show_progress_bar=False,
+                    convert_to_numpy=True,
+                    normalize_embeddings=True,
                 )[0]
                 # cosine similarity（已归一化，直接点积）
                 scores = doc_embeddings @ query_embedding
                 # 取 top_k
-                top_indices = np.argsort(scores)[::-1][:args.top_k]
+                top_indices = np.argsort(scores)[::-1][: args.top_k]
                 for rank, idx in enumerate(top_indices):
                     if scores[idx] < 0.01:  # 最低阈值
                         continue
-                    vec_results.append({
-                        "memory_id": f"doc_{idx}",
-                        "content": documents[idx]["content"],
-                        "role": documents[idx]["role"],
-                        "session_id": documents[idx]["session_id"],
-                        "score": float(scores[idx]),
-                    })
+                    vec_results.append(
+                        {
+                            "memory_id": f"doc_{idx}",
+                            "content": documents[idx]["content"],
+                            "role": documents[idx]["role"],
+                            "session_id": documents[idx]["session_id"],
+                            "score": float(scores[idx]),
+                        }
+                    )
                 # 释放嵌入矩阵
                 del doc_embeddings, query_embedding, scores
 
@@ -757,7 +849,8 @@ def main():
             query_type = "default"
             if _global_embedder is not None and vec_results:
                 retrieved, query_type = _rrf_fuse(
-                    bm25_results, vec_results,
+                    bm25_results,
+                    vec_results,
                     bm25_weight=args.bm25_weight,
                     vector_weight=args.vector_weight,
                     rrf_k=args.rrf_k,
@@ -793,17 +886,23 @@ def main():
 
             # ── gen/full 模式：LLM 生成答案 ──
             if args.mode in ("gen", "full") and llm_available:
-                contexts = [r.get("content", "") for r in retrieved[:args.gen_context_size]]
+                contexts = [r.get("content", "") for r in retrieved[: args.gen_context_size]]
                 if contexts:
                     if args.chain_of_note:
                         prediction = _generate_answer_with_con(
-                            question, contexts, api_key, base_url,
+                            question,
+                            contexts,
+                            api_key,
+                            base_url,
                             model=args.gen_model,
                             max_notes=args.con_max_notes,
                         )
                     else:
                         prediction = _generate_answer_with_llm(
-                            question, contexts, api_key, base_url,
+                            question,
+                            contexts,
+                            api_key,
+                            base_url,
                             model=args.gen_model,
                         )
                     result_record["prediction"] = prediction[:500]
@@ -814,9 +913,13 @@ def main():
                         if llm_available:
                             try:
                                 is_correct = _judge_answer_with_llm(
-                                    question, answer, prediction,
-                                    qtype, is_abstention,
-                                    api_key, base_url,
+                                    question,
+                                    answer,
+                                    prediction,
+                                    qtype,
+                                    is_abstention,
+                                    api_key,
+                                    base_url,
                                     model=args.judge_model,
                                 )
                                 judge_type = "LLM"
@@ -882,7 +985,9 @@ def _print_summary(results: list[dict], args, elapsed: float) -> None:
     total = len(evaluable)
 
     # 排名指标
-    rank_evaluable = [r for r in evaluable if not r.get("skipped") and r.get("first_rank") is not None]
+    rank_evaluable = [
+        r for r in evaluable if not r.get("skipped") and r.get("first_rank") is not None
+    ]
     mrrs = [r["mrr"] for r in rank_evaluable]
     avg_mrr = sum(mrrs) / len(mrrs) if mrrs else 0
     ranks = [r["first_rank"] for r in rank_evaluable]
@@ -904,8 +1009,12 @@ def _print_summary(results: list[dict], args, elapsed: float) -> None:
     fact_str = f"ON(model={args.fact_extract_model})" if args.fact_extract else "OFF"
     ctx_str = f"ctx={args.gen_context_size}"
     print("\n" + "=" * 78)
-    print(f"检索质量评测结果 ({total} 题, {elapsed:.1f}s, 模式={args.mode}, 检索={mode_str}, 动态权重={dyn_str})")
-    print(f"  BM25权重={args.bm25_weight}, 向量权重={args.vector_weight}, RRF k={args.rrf_k}, top_k={args.top_k}")
+    print(
+        f"检索质量评测结果 ({total} 题, {elapsed:.1f}s, 模式={args.mode}, 检索={mode_str}, 动态权重={dyn_str})"
+    )
+    print(
+        f"  BM25权重={args.bm25_weight}, 向量权重={args.vector_weight}, RRF k={args.rrf_k}, top_k={args.top_k}"
+    )
     print(f"  Chain-of-Note={con_str}, {ctx_str}, gen_model={args.gen_model}")
     judge_str = args.judge_model if args.mode == "full" else "N/A"
     print(f"  Judge: {judge_str}")
@@ -940,7 +1049,7 @@ def _print_summary(results: list[dict], args, elapsed: float) -> None:
                 print(f"  QA 准确率: {correct}/{len(judged)} = {accuracy:.1%}")
 
                 # 分维度准确率
-                print(f"\n  ── 分维度 QA 准确率 ──")
+                print("\n  ── 分维度 QA 准确率 ──")
                 print(f"  {'类型':<28} {'准确率':>8} {'正确/总数':>10}")
                 print(f"  {'-'*28} {'-'*8} {'-'*10}")
                 for qtype in sorted(by_type):
@@ -952,7 +1061,7 @@ def _print_summary(results: list[dict], args, elapsed: float) -> None:
                     print(f"  {qtype:<28} {acc:>7.1%} {corr}/{len(items)}")
 
     # 分维度
-    print(f"\n  ── 分维度排名指标 ──")
+    print("\n  ── 分维度排名指标 ──")
     print(f"  {'类型':<28} {'MRR':>6} {'Top-5':>7} {'Top-10':>7} {'Top-20':>7} {'中位排名':>8}")
     print(f"  {'-'*28} {'-'*6} {'-'*7} {'-'*7} {'-'*7} {'-'*8}")
 
@@ -985,7 +1094,7 @@ def _print_summary(results: list[dict], args, elapsed: float) -> None:
         type_counts = defaultdict(int)
         for r in results:
             type_counts[r.get("query_type", "default")] += 1
-        print(f"\n  ── 查询类型分布（动态权重路由） ──")
+        print("\n  ── 查询类型分布（动态权重路由） ──")
         for qt in ("preference", "temporal", "default"):
             cnt = type_counts.get(qt, 0)
             if cnt > 0:
@@ -993,7 +1102,7 @@ def _print_summary(results: list[dict], args, elapsed: float) -> None:
                 print(f"  {qt:<12} {cnt:>4} 题  (bm25_w={w_bm25}, vec_w={w_vec})")
 
     # 排名分布
-    print(f"\n  ── 答案排名分布 ──")
+    print("\n  ── 答案排名分布 ──")
     if ranks:
         buckets = [(1, 3), (4, 5), (6, 10), (11, 20), (21, 50), (51, 100)]
         for lo, hi in buckets:
@@ -1010,7 +1119,7 @@ def _print_summary(results: list[dict], args, elapsed: float) -> None:
     print(f"  Context 条数: {args.gen_context_size}")
     print(f"  Top-K: {args.top_k}")
     print(f"  Judge 模型: {args.judge_model if args.mode == 'full' else 'N/A'}")
-    print(f"  嵌入模型: all-MiniLM-L6-v2 (384维, CPU)")
+    print("  嵌入模型: all-MiniLM-L6-v2 (384维, CPU)")
 
 
 def _save_results_json(results: list[dict], args, elapsed: float) -> None:

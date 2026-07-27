@@ -19,6 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 # ─── 日志捕获器 ───────────────────────────────────────────────
 
+
 class LogCapture(logging.Handler):
     """捕获指定 logger 的日志记录，供后续断言。"""
 
@@ -64,12 +65,12 @@ def format_summary(label: str, cap: LogCapture) -> str:
 
 # ─── 测试用例 ────────────────────────────────────────────────
 
+
 def test_temporal_kg_refcount():
     """测试 TemporalKnowledgeGraph 引用计数日志。"""
     from governance.temporal_kg import (
         TemporalKnowledgeGraph,
         _shared_connections,
-        _connection_refcounts,
     )
 
     cap = LogCapture("governance.temporal_kg")
@@ -95,7 +96,7 @@ def test_temporal_kg_refcount():
         assert msgs, "场景2失败: 未找到'复用共享连接'日志"
         assert cap.find("引用计数=2"), "场景2失败: 未找到'引用计数=2'"
         assert id(tkg2._conn) == conn1_id, "场景2失败: 第二实例未复用同一连接"
-        print(f"  ✅ 场景2: 第二实例创建 → 复用共享连接, 引用计数=2")
+        print("  ✅ 场景2: 第二实例创建 → 复用共享连接, 引用计数=2")
         passed += 1
 
         # ── 场景 3: 非最后实例关闭 → 应输出 "非最后实例关闭" + "剩余引用=1"
@@ -113,7 +114,7 @@ def test_temporal_kg_refcount():
             failed += 1
             cap.close()
             return passed, failed
-        print(f"  ✅ 场景3: 非最后实例关闭 → 保留连接, 剩余引用=1, tkg1连接存活")
+        print("  ✅ 场景3: 非最后实例关闭 → 保留连接, 剩余引用=1, tkg1连接存活")
         passed += 1
 
         # ── 场景 4: 查询验证 → tkg1 应正常工作
@@ -130,9 +131,10 @@ def test_temporal_kg_refcount():
         tkg1.close()
         msgs = cap.find("最后一个实例关闭")
         assert msgs, "场景5失败: 未找到'最后一个实例关闭'日志"
-        assert str(data_dir / "temporal_kg.db") not in _shared_connections, \
-            "场景5失败: 共享连接缓存未清理"
-        print(f"  ✅ 场景5: 最后实例关闭 → 真正关闭连接, 缓存已清理")
+        assert (
+            str(data_dir / "temporal_kg.db") not in _shared_connections
+        ), "场景5失败: 共享连接缓存未清理"
+        print("  ✅ 场景5: 最后实例关闭 → 真正关闭连接, 缓存已清理")
         passed += 1
 
         # ── 场景 6: 关闭后重建 → 应输出 "新建连接"（非复用）
@@ -142,7 +144,7 @@ def test_temporal_kg_refcount():
         assert msgs, "场景6失败: 未找到'新建连接'日志"
         assert cap.find("引用计数=1"), "场景6失败: 未找到'引用计数=1'"
         tkg3.close()
-        print(f"  ✅ 场景6: 关闭后重建 → 新建连接, 引用计数=1")
+        print("  ✅ 场景6: 关闭后重建 → 新建连接, 引用计数=1")
         passed += 1
 
         # ── 场景 7: 多实例并发存活 + 逐个关闭
@@ -154,7 +156,7 @@ def test_temporal_kg_refcount():
         assert len(new_msgs) == 1, f"场景7失败: 新建连接数={len(new_msgs)}, 期望=1"
         assert len(reuse_msgs) == 3, f"场景7失败: 复用连接数={len(reuse_msgs)}, 期望=3"
         assert cap.find("引用计数=4"), "场景7失败: 未找到'引用计数=4'"
-        print(f"  ✅ 场景7a: 4个实例 → 1新建+3复用, 引用计数=4")
+        print("  ✅ 场景7a: 4个实例 → 1新建+3复用, 引用计数=4")
         passed += 1
 
         # 逐个关闭，前3个应 "非最后"，最后1个应 "最后"
@@ -165,7 +167,7 @@ def test_temporal_kg_refcount():
         last = cap.find("最后一个实例关闭")
         assert len(non_last) == 3, f"场景7失败: 非最后关闭数={len(non_last)}, 期望=3"
         assert len(last) == 1, f"场景7失败: 最后关闭数={len(last)}, 期望=1"
-        print(f"  ✅ 场景7b: 逐个关闭 → 3个非最后+1个最后")
+        print("  ✅ 场景7b: 逐个关闭 → 3个非最后+1个最后")
         passed += 1
 
     cap.close()
@@ -176,7 +178,6 @@ def test_forgetting_refcount():
     """测试 ForgettingCurve 引用计数日志。"""
     from governance.forgetting import (
         ForgettingCurve,
-        _connection_refcounts,
     )
 
     cap = LogCapture("governance.forgetting")
@@ -201,7 +202,7 @@ def test_forgetting_refcount():
         msgs = cap.find("复用共享连接")
         assert msgs, "场景2失败: 未找到'复用共享连接'日志"
         assert cap.find("引用计数=2"), "场景2失败: 未找到'引用计数=2'"
-        print(f"  ✅ 场景2: 第二实例创建 → 复用共享连接, 引用计数=2")
+        print("  ✅ 场景2: 第二实例创建 → 复用共享连接, 引用计数=2")
         passed += 1
 
         # ── 场景 3: 写入 + 查询验证
@@ -222,7 +223,7 @@ def test_forgetting_refcount():
         assert fc1._conn is not None, "场景4失败: fc1 连接被意外关闭"
         stage = fc1.get_stage("mem-001")
         assert stage == "active", f"场景4失败: fc1 查询异常, stage={stage}"
-        print(f"  ✅ 场景4: 非最后实例关闭 → 保留连接, 剩余引用=1, fc1查询正常")
+        print("  ✅ 场景4: 非最后实例关闭 → 保留连接, 剩余引用=1, fc1查询正常")
         passed += 1
 
         # ── 场景 5: 最后实例关闭 → 应输出 "最后一个实例关闭"
@@ -230,7 +231,7 @@ def test_forgetting_refcount():
         fc1.close()
         msgs = cap.find("最后一个实例关闭")
         assert msgs, "场景5失败: 未找到'最后一个实例关闭'日志"
-        print(f"  ✅ 场景5: 最后实例关闭 → 真正关闭连接")
+        print("  ✅ 场景5: 最后实例关闭 → 真正关闭连接")
         passed += 1
 
         # ── 场景 6: 关闭后重建 → 应输出 "新建连接"
@@ -240,7 +241,7 @@ def test_forgetting_refcount():
         assert msgs, "场景6失败: 未找到'新建连接'日志"
         assert cap.find("引用计数=1"), "场景6失败: 未找到'引用计数=1'"
         fc3.close()
-        print(f"  ✅ 场景6: 关闭后重建 → 新建连接, 引用计数=1")
+        print("  ✅ 场景6: 关闭后重建 → 新建连接, 引用计数=1")
         passed += 1
 
     cap.close()
@@ -251,8 +252,6 @@ def test_ensure_conn_alive_logging():
     """测试 _ensure_conn_alive 的日志输出。"""
     from governance.temporal_kg import (
         TemporalKnowledgeGraph,
-        _shared_connections,
-        _connection_refcounts,
     )
 
     cap = LogCapture("governance.temporal_kg")
@@ -276,7 +275,7 @@ def test_ensure_conn_alive_logging():
         # 验证重建后查询正常
         results = tkg.query_current("Bob", "likes")
         assert len(results) == 1, f"场景1失败: 重建后查询结果数={len(results)}"
-        print(f"  ✅ 场景1: conn=None → 输出'连接为 None', 重建后查询正常")
+        print("  ✅ 场景1: conn=None → 输出'连接为 None', 重建后查询正常")
         passed += 1
 
         # ── 场景 2: 手动关闭连接 → 应输出 "连接丢失"
@@ -289,7 +288,7 @@ def test_ensure_conn_alive_logging():
         # 验证重建后查询正常
         results = tkg.query_current("Bob", "likes")
         assert len(results) == 1, f"场景2失败: 重建后查询结果数={len(results)}"
-        print(f"  ✅ 场景2: 连接被外部关闭 → 输出'连接丢失', 重建后查询正常")
+        print("  ✅ 场景2: 连接被外部关闭 → 输出'连接丢失', 重建后查询正常")
         passed += 1
 
         tkg.close()
@@ -316,7 +315,7 @@ def test_meta_store_fts5_logging():
         # 检查日志包含降级说明
         downgrade_msgs = cap.find("日志级别已从 warning 降为 debug")
         assert downgrade_msgs, "未找到'日志级别已从 warning 降为 debug'说明"
-        print(f"  ✅ MetaStore FTS5: 日志在 DEBUG 级别输出，包含降级说明")
+        print("  ✅ MetaStore FTS5: 日志在 DEBUG 级别输出，包含降级说明")
         passed += 1
         ms.close()
 
@@ -325,6 +324,7 @@ def test_meta_store_fts5_logging():
 
 
 # ─── 主流程 ──────────────────────────────────────────────────
+
 
 def main():
     total_passed = 0

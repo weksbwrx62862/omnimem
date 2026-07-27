@@ -21,9 +21,8 @@ import math
 import os
 import sqlite3
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from typing import Optional, Any
-from pathlib import Path
+from datetime import datetime
+from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -31,16 +30,18 @@ logger = logging.getLogger(__name__)
 @dataclass
 class Relationship:
     """记忆关系"""
+
     source_id: str
     target_id: str
-    relation_type: str      # semantic, co_access, content_ref
-    strength: float         # 关系强度 (0-1)
+    relation_type: str  # semantic, co_access, content_ref
+    strength: float  # 关系强度 (0-1)
     created_at: datetime = field(default_factory=datetime.now)
 
 
 @dataclass
 class GraphStats:
     """图统计信息"""
+
     total_nodes: int
     total_edges: int
     avg_degree: float
@@ -63,9 +64,7 @@ class KnowledgeGraphEnhancer:
         db_path: Optional[str] = None,
         embedding_path: Optional[str] = None,
     ):
-        self._db_path = db_path or os.path.expanduser(
-            "~/.hermes/omnimem/deep/knowledge_graph.db"
-        )
+        self._db_path = db_path or os.path.expanduser("~/.hermes/omnimem/deep/knowledge_graph.db")
         self._embedding_path = embedding_path or os.path.expanduser(
             "~/.hermes/omnimem/retrieval/embedding_cache.json"
         )
@@ -82,7 +81,8 @@ class KnowledgeGraphEnhancer:
         os.makedirs(os.path.dirname(self._db_path), exist_ok=True)
 
         conn = sqlite3.connect(self._db_path)
-        conn.execute("""
+        conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS relationships (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 source_id TEXT NOT NULL,
@@ -92,13 +92,18 @@ class KnowledgeGraphEnhancer:
                 created_at TEXT NOT NULL,
                 UNIQUE(source_id, target_id, relation_type)
             )
-        """)
-        conn.execute("""
+        """
+        )
+        conn.execute(
+            """
             CREATE INDEX IF NOT EXISTS idx_rel_source ON relationships(source_id)
-        """)
-        conn.execute("""
+        """
+        )
+        conn.execute(
+            """
             CREATE INDEX IF NOT EXISTS idx_rel_target ON relationships(target_id)
-        """)
+        """
+        )
         conn.commit()
         conn.close()
 
@@ -123,13 +128,15 @@ class KnowledgeGraphEnhancer:
                 "SELECT source_id, target_id, relation_type, strength, created_at FROM relationships"
             ).fetchall()
             for src, tgt, rel_type, strength, created_at in rows:
-                self._relationships.append(Relationship(
-                    source_id=src,
-                    target_id=tgt,
-                    relation_type=rel_type,
-                    strength=strength,
-                    created_at=datetime.fromisoformat(created_at),
-                ))
+                self._relationships.append(
+                    Relationship(
+                        source_id=src,
+                        target_id=tgt,
+                        relation_type=rel_type,
+                        strength=strength,
+                        created_at=datetime.fromisoformat(created_at),
+                    )
+                )
             conn.close()
             logger.info("Loaded %d relationships", len(self._relationships))
         except Exception as e:
@@ -220,9 +227,7 @@ class KnowledgeGraphEnhancer:
             新发现的关系列表
         """
         # 从遗忘曲线数据库获取访问日志
-        forgetting_db = os.path.expanduser(
-            "~/.hermes/omnimem/governance/forgetting.db"
-        )
+        forgetting_db = os.path.expanduser("~/.hermes/omnimem/governance/forgetting.db")
 
         if not os.path.exists(forgetting_db):
             return []
@@ -237,6 +242,7 @@ class KnowledgeGraphEnhancer:
 
             # 按时间窗口分组（同一小时内访问的记忆）
             from collections import defaultdict
+
             time_windows: dict[str, list[str]] = defaultdict(list)
 
             for memory_id, accessed_at in rows:
@@ -293,8 +299,13 @@ class KnowledgeGraphEnhancer:
                     """INSERT OR REPLACE INTO relationships
                        (source_id, target_id, relation_type, strength, created_at)
                        VALUES (?, ?, ?, ?, ?)""",
-                    (rel.source_id, rel.target_id, rel.relation_type,
-                     rel.strength, rel.created_at.isoformat())
+                    (
+                        rel.source_id,
+                        rel.target_id,
+                        rel.relation_type,
+                        rel.strength,
+                        rel.created_at.isoformat(),
+                    ),
                 )
                 saved += 1
             except Exception as e:
@@ -321,22 +332,19 @@ class KnowledgeGraphEnhancer:
         rows = conn.execute(
             """SELECT target_id, relation_type, strength
                FROM relationships WHERE source_id = ?""",
-            (memory_id,)
+            (memory_id,),
         ).fetchall()
 
         # 作为目标
         rows += conn.execute(
             """SELECT source_id, relation_type, strength
                FROM relationships WHERE target_id = ?""",
-            (memory_id,)
+            (memory_id,),
         ).fetchall()
 
         conn.close()
 
-        return [
-            {"related_id": r[0], "type": r[1], "strength": r[2]}
-            for r in rows
-        ]
+        return [{"related_id": r[0], "type": r[1], "strength": r[2]} for r in rows]
 
     def get_graph_stats(self) -> GraphStats:
         """获取图统计信息"""

@@ -8,19 +8,50 @@ from __future__ import annotations
 import json
 import logging
 import re
-from datetime import datetime, timezone
 from typing import Any
 
 logger = logging.getLogger(__name__)
 
 # ★ 时序关键词：检测查询是否包含时间相关语义，优先使用时序图谱
 _TEMPORAL_KEYWORDS = (
-    "现在", "之前", "之后", "上个月", "下个月", "去年", "今年", "目前",
-    "当前", "最近", "以前", "后来", "后来呢", "什么时候", "什么时候开始",
-    "什么时候结束", "什么时候换", "什么时候改", "变化", "变了", "换了",
-    "更新了", "升级了", "改成了", "变成了", "之前是", "原来是", "以前是",
-    "last", "now", "before", "after", "previously", "currently",
-    "used to", "changed", "updated", "replaced",
+    "现在",
+    "之前",
+    "之后",
+    "上个月",
+    "下个月",
+    "去年",
+    "今年",
+    "目前",
+    "当前",
+    "最近",
+    "以前",
+    "后来",
+    "后来呢",
+    "什么时候",
+    "什么时候开始",
+    "什么时候结束",
+    "什么时候换",
+    "什么时候改",
+    "变化",
+    "变了",
+    "换了",
+    "更新了",
+    "升级了",
+    "改成了",
+    "变成了",
+    "之前是",
+    "原来是",
+    "以前是",
+    "last",
+    "now",
+    "before",
+    "after",
+    "previously",
+    "currently",
+    "used to",
+    "changed",
+    "updated",
+    "replaced",
 )
 
 # ★ R26优化：提取公共正则常量，避免4处硬编码重复
@@ -92,22 +123,27 @@ def handle_recall(provider: Any, args: dict[str, Any]) -> str:
     max_tokens = args.get("max_tokens", 1500)
     user_id = args.get("user_id", "default")
     enable_trace = args.get("enable_trace", False)  # ★ 新增：是否记录检索轨迹
-    
+
     if hasattr(provider, "_rbac") and not provider._rbac.check_permission(user_id, "read"):
-        return json.dumps({"status": "blocked", "reason": f"User '{user_id}' lacks 'read' permission"})
+        return json.dumps(
+            {"status": "blocked", "reason": f"User '{user_id}' lacks 'read' permission"}
+        )
 
     # ★ R27优化：预提取查询关键词，避免同一函数内4次重复正则匹配与CJK切分
     _query_keywords = _extract_query_keywords(query)
 
     # ★ OPT: 检索超时保护 — ThreadPoolExecutor 替代直接调用
     recall_timeout = provider._config.get("recall_timeout_ms", 5000) / 1000.0
-    from concurrent.futures import ThreadPoolExecutor
     import time as _time
+    from concurrent.futures import ThreadPoolExecutor
+
     _recall_start = _time.monotonic()
     with ThreadPoolExecutor(max_workers=1) as executor:
         future = executor.submit(
-            provider._retriever.search, query,
-            max_tokens=max_tokens, mode=mode,
+            provider._retriever.search,
+            query,
+            max_tokens=max_tokens,
+            mode=mode,
             enable_trace=enable_trace,  # ★ 新增：传递 enable_trace
         )
         try:
@@ -162,28 +198,26 @@ def handle_recall(provider: Any, args: dict[str, Any]) -> str:
     if provider._knowledge_graph:
         try:
             # Graph RAG: 生成子图上下文文本（可读性强于原始三元组）
-            graph_rag_ctx = provider._knowledge_graph.graph_rag_search(
-                query, max_depth=2
-            )
+            graph_rag_ctx = provider._knowledge_graph.graph_rag_search(query, max_depth=2)
             if graph_rag_ctx:
-                results.append({
-                    "content": graph_rag_ctx,
-                    "type": "graph_rag",
-                    "confidence": 0.6,
-                    "score": 0.5,
-                    "_source": "graph_rag",
-                })
-        except (RuntimeError, ValueError, AttributeError) as e:
+                results.append(
+                    {
+                        "content": graph_rag_ctx,
+                        "type": "graph_rag",
+                        "confidence": 0.6,
+                        "score": 0.5,
+                        "_source": "graph_rag",
+                    }
+                )
+        except (RuntimeError, ValueError, AttributeError):
             # Fallback: 原始三元组搜索
             try:
-                graph_results = provider._knowledge_graph.graph_search(
-                    query, max_depth=2, limit=10
-                )
+                graph_results = provider._knowledge_graph.graph_search(query, max_depth=2, limit=10)
                 if graph_results:
                     for gr in graph_results[:5]:
-                        gr["content"] = (
-                            f"{gr.get('subject', '')} {gr.get('predicate', '')} {gr.get('object', '')}"
-                        )
+                        gr[
+                            "content"
+                        ] = f"{gr.get('subject', '')} {gr.get('predicate', '')} {gr.get('object', '')}"
                         gr["type"] = "graph_triple"
                         gr["confidence"] = gr.get("confidence", 0.5)
                     results.extend(graph_results[:5])
@@ -195,19 +229,20 @@ def handle_recall(provider: Any, args: dict[str, Any]) -> str:
     if _has_temporal_intent and hasattr(provider, "_temporal_kg") and provider._temporal_kg:
         try:
             from omnimem.deep.knowledge_graph import extract_entities as _kg_extract_entities
+
             query_entities = _kg_extract_entities(query)
             if query_entities:
-                temporal_ctx = provider._temporal_kg.temporal_rag_context(
-                    query_entities
-                )
+                temporal_ctx = provider._temporal_kg.temporal_rag_context(query_entities)
                 if temporal_ctx:
-                    results.append({
-                        "content": temporal_ctx,
-                        "type": "temporal_kg",
-                        "confidence": 0.7,
-                        "score": 0.55,
-                        "_source": "temporal_kg",
-                    })
+                    results.append(
+                        {
+                            "content": temporal_ctx,
+                            "type": "temporal_kg",
+                            "confidence": 0.7,
+                            "score": 0.55,
+                            "_source": "temporal_kg",
+                        }
+                    )
         except (RuntimeError, ValueError, AttributeError, ImportError) as e:
             logger.warning("OmniMem temporal KG recall failed: %s", e)
 
@@ -314,13 +349,13 @@ def handle_recall(provider: Any, args: dict[str, Any]) -> str:
                 except Exception as e:
                     logger.warning("OmniMem store fallback failed: %s", e)
     if not results:
-            return json.dumps(
-                {
-                    "status": "no_results",
-                    "query": query,
-                    "message": "No relevant memories found.",
-                }
-            )
+        return json.dumps(
+            {
+                "status": "no_results",
+                "query": query,
+                "message": "No relevant memories found.",
+            }
+        )
 
     # ★ 经 ContextManager 精炼 — 精简摘要 + 保留原文供 detail 拉取
     refined = provider._context_manager.refine_recall_results(results, max_tokens=max_tokens)
@@ -334,8 +369,10 @@ def handle_recall(provider: Any, args: dict[str, Any]) -> str:
     quality_data = None
     if enable_trace and hasattr(provider, "_quality_evaluator") and provider._quality_evaluator:
         try:
-            from omnimem.retrieval.quality_eval import RetrievalQualityEvaluator
             from dataclasses import asdict
+
+            from omnimem.retrieval.quality_eval import RetrievalQualityEvaluator
+
             relevant_ids = RetrievalQualityEvaluator.infer_relevant_ids(results)
             metrics = provider._quality_evaluator.evaluate(
                 query=query,
