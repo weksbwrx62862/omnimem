@@ -20,9 +20,8 @@ import logging
 import math
 import os
 import random
-from dataclasses import dataclass, field
-from typing import Optional, Any
-from pathlib import Path
+from dataclasses import dataclass
+from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +29,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class Cluster:
     """聚类簇"""
+
     cluster_id: int
     center: list[float]
     members: list[str]
@@ -40,6 +40,7 @@ class Cluster:
 @dataclass
 class ClusteringResult:
     """聚类结果"""
+
     clusters: list[Cluster]
     outliers: list[str]
     silhouette_score: float
@@ -100,7 +101,9 @@ class SemanticClusterer:
         self._load_embeddings()
 
         if len(self._embeddings) < k:
-            return ClusteringResult(clusters=[], outliers=[], silhouette_score=0.0, total_memories=0)
+            return ClusteringResult(
+                clusters=[], outliers=[], silhouette_score=0.0, total_memories=0
+            )
 
         # 准备数据
         memory_ids = list(self._embeddings.keys())
@@ -155,18 +158,19 @@ class SemanticClusterer:
 
                 # 计算平均距离
                 distances = [
-                    self._euclidean_distance(vectors[idx], center)
-                    for idx in cluster_indices
+                    self._euclidean_distance(vectors[idx], center) for idx in cluster_indices
                 ]
                 avg_dist = sum(distances) / len(distances)
 
-                result_clusters.append(Cluster(
-                    cluster_id=i,
-                    center=center,
-                    members=members,
-                    size=len(members),
-                    avg_distance=avg_dist,
-                ))
+                result_clusters.append(
+                    Cluster(
+                        cluster_id=i,
+                        center=center,
+                        members=members,
+                        size=len(members),
+                        avg_distance=avg_dist,
+                    )
+                )
 
         # 计算轮廓系数
         silhouette = self._calculate_silhouette(vectors, clusters, k)
@@ -195,7 +199,9 @@ class SemanticClusterer:
         self._load_embeddings()
 
         if not self._embeddings:
-            return ClusteringResult(clusters=[], outliers=[], silhouette_score=0.0, total_memories=0)
+            return ClusteringResult(
+                clusters=[], outliers=[], silhouette_score=0.0, total_memories=0
+            )
 
         # 准备数据
         memory_ids = list(self._embeddings.keys())
@@ -269,19 +275,18 @@ class SemanticClusterer:
             center = [c / len(indices) for c in center]
 
             # 计算平均距离
-            distances = [
-                self._euclidean_distance(vectors[idx], center)
-                for idx in indices
-            ]
+            distances = [self._euclidean_distance(vectors[idx], center) for idx in indices]
             avg_dist = sum(distances) / len(distances)
 
-            result_clusters.append(Cluster(
-                cluster_id=cluster_id,
-                center=center,
-                members=members,
-                size=len(members),
-                avg_distance=avg_dist,
-            ))
+            result_clusters.append(
+                Cluster(
+                    cluster_id=cluster_id,
+                    center=center,
+                    members=members,
+                    size=len(members),
+                    avg_distance=avg_dist,
+                )
+            )
 
         return ClusteringResult(
             clusters=result_clusters,
@@ -293,7 +298,7 @@ class SemanticClusterer:
     def _euclidean_distance(self, vec1: list[float], vec2: list[float]) -> float:
         """计算欧氏距离"""
         if len(vec1) != len(vec2):
-            return float('inf')
+            return float("inf")
 
         return math.sqrt(sum((a - b) ** 2 for a, b in zip(vec1, vec2)))
 
@@ -327,20 +332,24 @@ class SemanticClusterer:
             # a(i): 点 i 到同簇其他点的平均距离
             same_cluster = [j for j in clusters[labels[i]] if j != i]
             if same_cluster:
-                a_i = sum(self._euclidean_distance(vectors[i], vectors[j]) for j in same_cluster) / len(same_cluster)
+                a_i = sum(
+                    self._euclidean_distance(vectors[i], vectors[j]) for j in same_cluster
+                ) / len(same_cluster)
             else:
                 a_i = 0
 
             # b(i): 点 i 到最近其他簇的平均距离
-            b_i = float('inf')
+            b_i = float("inf")
             for cluster_idx in range(k):
                 if cluster_idx != labels[i]:
                     other_cluster = clusters[cluster_idx]
                     if other_cluster:
-                        avg_dist = sum(self._euclidean_distance(vectors[i], vectors[j]) for j in other_cluster) / len(other_cluster)
+                        avg_dist = sum(
+                            self._euclidean_distance(vectors[i], vectors[j]) for j in other_cluster
+                        ) / len(other_cluster)
                         b_i = min(b_i, avg_dist)
 
-            if b_i == float('inf'):
+            if b_i == float("inf"):
                 b_i = 0
 
             # 轮廓系数

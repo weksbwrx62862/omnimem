@@ -2,13 +2,10 @@ import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock
 
-import pytest
-
 from omnimem.deep.reflect import (
     Disposition,
     ReflectEngine,
     ReflectResult,
-    ReflectionContext,
     _apply_disposition,
 )
 
@@ -59,7 +56,9 @@ class TestApplyDisposition:
 class TestReflectEngine:
     def setup_method(self):
         self.tmpdir = tempfile.mkdtemp()
-        self.mock_llm_fn = MagicMock(return_value="\u3010\u89c2\u5bdf\u3011\n\u6d4b\u8bd5\u89c2\u5bdf\n\n\u3010\u5fc3\u667a\u6a21\u578b\u3011\n\u6d4b\u8bd5\u6a21\u578b\n\n\u3010\u7f6e\u4fe1\u5ea6\u3011\n0.8")
+        self.mock_llm_fn = MagicMock(
+            return_value="\u3010\u89c2\u5bdf\u3011\n\u6d4b\u8bd5\u89c2\u5bdf\n\n\u3010\u5fc3\u667a\u6a21\u578b\u3011\n\u6d4b\u8bd5\u6a21\u578b\n\n\u3010\u7f6e\u4fe1\u5ea6\u3011\n0.8"
+        )
         self.engine = ReflectEngine(
             data_dir=Path(self.tmpdir),
             llm_fn=self.mock_llm_fn,
