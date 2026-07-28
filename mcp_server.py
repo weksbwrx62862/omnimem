@@ -74,16 +74,26 @@ class OmniMemMCPServer:
                 "name": "omni_memorize",
                 "description": (
                     "Store a memory in OmniMem. Use for important facts, decisions, "
-                    "corrections, user preferences, or any information worth recalling "
-                    "in future sessions. Specify the type (fact/preference/correction/"
-                    "skill/procedural) and confidence level (1-5)."
+                    "corrections, user preferences, agent actions, reasoning chains, "
+                    "or any information worth recalling in future sessions. "
+                    "Specify the type (fact/preference/correction/skill/procedural/"
+                    "event/action/reasoning) and confidence level (1-5). "
+                    "BEST PRACTICE (validated): store ONE fact per call as a single "
+                    "self-contained sentence; include a UNIQUE, project-specific term "
+                    "and DISTINCT keywords so it is retrievable without colliding with "
+                    "unrelated memories. Split multi-fact content into separate calls."
                 ),
                 "inputSchema": {
                     "type": "object",
                     "properties": {
                         "content": {
                             "type": "string",
-                            "description": "The memory content to store",
+                            "description": (
+                                "The memory content to store. Prefer a SINGLE complete "
+                                "sentence carrying ONE fact, with a unique/project-specific "
+                                "term and distinct keywords (avoids fragmentation and "
+                                "cross-topic collision)."
+                            ),
                         },
                         "memory_type": {
                             "type": "string",

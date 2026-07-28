@@ -29,14 +29,24 @@ def get_tool_schemas() -> list[dict[str, Any]]:
                 "Specify the type (fact/preference/correction/skill/procedural/"
                 "event/action/reasoning) and confidence level (1-5). "
                 "ACTION: agent tool calls, decisions, operations. "
-                "REASONING: lessons learned, debugging insights, pitfalls."
+                "REASONING: lessons learned, debugging insights, pitfalls. "
+                "BEST PRACTICE (validated): store ONE fact per call as a single "
+                "self-contained sentence; include a UNIQUE, project-specific term "
+                "(e.g. the project/component name) and DISTINCT keywords so it is "
+                "retrievable without colliding with unrelated memories. "
+                "Split multi-fact content into separate calls."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "content": {
                         "type": "string",
-                        "description": "The memory content to store",
+                        "description": (
+                            "The memory content to store. Prefer a SINGLE complete "
+                            "sentence carrying ONE fact, with a unique/project-specific "
+                            "term and distinct keywords (avoids fragmentation and "
+                            "cross-topic collision)."
+                        ),
                     },
                     "memory_type": {
                         "type": "string",
@@ -51,7 +61,11 @@ def get_tool_schemas() -> list[dict[str, Any]]:
                             "reasoning",
                         ],
                         "default": "fact",
-                        "description": "Type of memory",
+                        "description": (
+                            "Type of memory. correction/procedural/skill are kept "
+                            "whole (steps & causal order preserved); fact/event are "
+                            "atomized into separate memories."
+                        ),
                     },
                     "confidence": {
                         "type": "integer",
