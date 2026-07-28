@@ -15,10 +15,11 @@ class FusionMixin:
 
     # reasoning/action 类型的记忆包含高价值信息但关键词密度低，
     # 需要提高权重避免被 fact/preference 等高频词类型淹没。
+    # correction 不再加权: 其关键词天然密集(命令/路径/工具名), 1.1x 会让单条
+    # 纠正记忆压制同项目更精确的 fact(R4 RUSTFLAGS / R5 Zig交叉编译 / R6 cmake x3)
     _TYPE_BOOST: dict[str, float] = {
         "reasoning": 1.3,
         "action": 1.3,
-        "correction": 1.1,
     }
 
     # ★ 缺陷3: 偏好意图信号词 — 查询本身关于偏好时不过滤偏好记忆
