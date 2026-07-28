@@ -610,6 +610,15 @@ class RecallService:
             filtered.append(r)
         return filtered
 
+    def _is_forgotten(self, memory_id: str) -> bool:
+        """生命周期检查: forgotten 记忆不得经兜底路径复活(R5-Q9 旧污染泄漏)。"""
+        if not memory_id or self.deps.forgetting is None:
+            return False
+        try:
+            return self.deps.forgetting.get_stage(memory_id) == "forgotten"
+        except Exception:
+            return False
+
     def _fallback_if_few(
         self,
         results: list[dict[str, Any]],
@@ -627,7 +636,7 @@ class RecallService:
             fts_results = self.deps.store.search_by_content(query, limit=10)
             for sf in fts_results:
                 sf_mid = sf.get("memory_id", "")
-                if sf_mid not in existing_ids:
+                if sf_mid not in existing_ids and not self._is_forgotten(sf_mid):
                     sf["_source"] = "store_fts_fallback"
                     sf["score"] = sf.get("score", 0) or 0.2
                     results.append(sf)
@@ -643,7 +652,7 @@ class RecallService:
                 store_all = self.deps.store.search(limit=50)
                 for sf in store_all:
                     sf_mid = sf.get("memory_id", "")
-                    if sf_mid in existing_ids:
+                    if sf_mid in existing_ids or self._is_forgotten(sf_mid):
                         continue
                     sf_content = sf.get("content", "").lower()
                     keyword_hits = sum(1 for kw in query_keywords if kw in sf_content)
@@ -969,7 +978,7 @@ class RecallService:
             fts_results = await asyncio.to_thread(self.deps.store.search_by_content, query, limit=10)
             for sf in fts_results:
                 sf_mid = sf.get("memory_id", "")
-                if sf_mid not in existing_ids:
+                if sf_mid not in existing_ids and not self._is_forgotten(sf_mid):
                     sf["_source"] = "store_fts_fallback"
                     sf["score"] = sf.get("score", 0) or 0.2
                     results.append(sf)
@@ -984,7 +993,7 @@ class RecallService:
                 store_all = await asyncio.to_thread(self.deps.store.search, limit=50)
                 for sf in store_all:
                     sf_mid = sf.get("memory_id", "")
-                    if sf_mid in existing_ids:
+                    if sf_mid in existing_ids or self._is_forgotten(sf_mid):
                         continue
                     sf_content = sf.get("content", "").lower()
                     keyword_hits = sum(1 for kw in query_keywords if kw in sf_content)
