@@ -19,7 +19,6 @@ from pathlib import Path
 
 import faiss
 import numpy as np
-
 from omnimem.retrieval.vector_store import VectorStore, _CachedEmbeddingFunction
 
 logger = logging.getLogger(__name__)

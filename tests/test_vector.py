@@ -12,7 +12,6 @@ from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
-
 from omnimem.retrieval.vector import VectorRetriever
 from omnimem.retrieval.vector_store import ChromaDBStore, VectorStore
 

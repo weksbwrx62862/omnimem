@@ -10,7 +10,6 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-
 from omnimem.embedding import create_embedding_provider
 from omnimem.embedding.base import EmbeddingProvider
 from omnimem.retrieval.base import BaseRetriever, RetrievalResult

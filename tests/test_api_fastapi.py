@@ -8,7 +8,6 @@ fastapi = pytest.importorskip("fastapi")
 from unittest.mock import MagicMock  # noqa: E402
 
 from fastapi.testclient import TestClient  # noqa: E402
-
 from omnimem.api_fastapi import create_app  # noqa: E402
 
 

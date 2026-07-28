@@ -201,7 +201,6 @@ def create_app(
 def run_api(host: str = "127.0.0.1", port: int = 8765, storage_dir: str | None = None, config: dict | None = None):
     """启动 FastAPI 版 REST 服务（默认仅绑定 127.0.0.1,fail-closed 与 rest_api.run_api 一致）。"""
     import uvicorn
-
     from omnimem.sdk import OmniMemSDK
 
     sdk = OmniMemSDK(storage_dir=storage_dir, config=config)

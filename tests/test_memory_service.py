@@ -13,7 +13,6 @@ from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
-
 from omnimem.core.saga import SagaCoordinator
 from omnimem.services.memory_service import MemoryService
 

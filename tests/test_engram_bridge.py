@@ -5,7 +5,6 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 
 import pytest
-
 from omnimem.core.engram_bridge import (
     Engram,
     EngramBridge,

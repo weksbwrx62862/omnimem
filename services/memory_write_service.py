@@ -180,9 +180,9 @@ class MemoryWriteService:
         # ★ 原子事实提取：从 content 中提取多条独立事实
         #   过程性/因果性类型不拆句: 步骤顺序与因果链是其核心价值,
         #   拆分会产生失序/断因果的碎片(6条写入膨胀为17条, 见第2轮准确性测试)
-        _NO_SPLIT_TYPES = {"correction", "procedural", "skill", "workflow", "reasoning"}
+        _no_split_types = {"correction", "procedural", "skill", "workflow", "reasoning"}
         _mem_type_early = args.get("memory_type", "fact")
-        if content and len(content) > 20 and _mem_type_early not in _NO_SPLIT_TYPES:
+        if content and len(content) > 20 and _mem_type_early not in _no_split_types:
             facts = self._get_fact_extractor().extract_facts(content) if _FactExtractor else []
             if len(facts) > 1:
                 # 多条原子事实：逐条独立写入，各自走完整流程

@@ -10,7 +10,6 @@ from types import ModuleType
 from unittest.mock import MagicMock
 
 import pytest
-
 from omnimem.utils.event_publisher import (
     NoOpPublisher,
     PluginOrchestratorPublisher,

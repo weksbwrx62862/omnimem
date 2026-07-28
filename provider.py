@@ -21,7 +21,6 @@ import logging
 from typing import Any
 
 from agent.memory_provider import MemoryProvider
-
 from omnimem.compat.provider_proxy import ProviderProxyMixin
 from omnimem.core.provider_initializer import ProviderInitializerMixin
 from omnimem.core.provider_lifecycle import ProviderLifecycleMixin

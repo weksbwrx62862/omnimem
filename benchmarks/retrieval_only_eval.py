@@ -41,6 +41,9 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from omnimem.retrieval.bm25 import BM25Retriever
+from omnimem.retrieval.vector import VectorRetriever
+
 from benchmarks.longmemeval_adapter import _PREFERENCE_KEYWORDS, OmniMemMemoryProvider
 from benchmarks.run_longmemeval import (
     _check_llm_available,
@@ -49,8 +52,6 @@ from benchmarks.run_longmemeval import (
     build_answer_turn_contents,
     evaluate_retrieval_quality,
 )
-from omnimem.retrieval.bm25 import BM25Retriever
-from omnimem.retrieval.vector import VectorRetriever
 
 # ── Chain-of-Note 阅读策略 ──
 

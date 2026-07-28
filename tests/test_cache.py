@@ -8,7 +8,6 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-
 from omnimem.utils.cache import (
     L1LRUCache,
     L2RedisCache,

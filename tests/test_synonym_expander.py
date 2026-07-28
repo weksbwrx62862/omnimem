@@ -6,7 +6,6 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from omnimem.retrieval.synonym_expander import SynonymExpander
 
 
