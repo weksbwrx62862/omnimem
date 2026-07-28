@@ -960,6 +960,18 @@ class RecallService:
                 if entry.get("archived"):
                     r["score"] = r.get("score", 0) * 0.3
                     r["sealed"] = True
+                # ★ 与同步版一致: forgetting_state 为权威生命周期状态
+                #   (R7-Q2: hermes 异步路径缺此分支致 forgotten 记忆泄漏)
+                elif self.deps.forgetting is not None:
+                    try:
+                        _stage = self.deps.forgetting.get_stage(mid)
+                    except Exception:
+                        _stage = "active"
+                    if _stage == "forgotten":
+                        continue
+                    if _stage == "archived":
+                        r["score"] = r.get("score", 0) * 0.3
+                        r["sealed"] = True
             valid_results.append(r)
         return valid_results
 
