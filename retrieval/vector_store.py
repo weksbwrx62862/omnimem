@@ -382,10 +382,16 @@ class _CachedEmbeddingFunction:
             model_path = self._model_path or self._model_name
             _emit(f"[OmniMem] 正在加载嵌入模型: {model_path} ...")
             t0 = time.time()
+            # ★ 设备自动检测: bge-m3 等大模型在 CPU 上编码会超时触发熔断
             try:
-                self._model = SentenceTransformer(model_path, device='cpu')
+                import torch
+                _device = "cuda" if torch.cuda.is_available() else "cpu"
+            except Exception:
+                _device = "cpu"
+            try:
+                self._model = SentenceTransformer(model_path, device=_device)
                 elapsed = time.time() - t0
-                _emit(f"[OmniMem] 嵌入模型加载完成 ({model_path}, {elapsed:.1f}s, CPU)")
+                _emit(f"[OmniMem] 嵌入模型加载完成 ({model_path}, {elapsed:.1f}s, {_device.upper()})")
             except Exception as e:
                 _emit(f"[OmniMem] ⚠ 嵌入模型加载失败: {e}")
                 raise

@@ -20,7 +20,7 @@ class SentenceTransformersProvider(EmbeddingProvider):
         self,
         model_name: str = "all-MiniLM-L6-v2",
         model_path: str = "",
-        device: str = "cpu",
+        device: str = "auto",
         max_cache: int = 1000,
     ):
         self._model_name = model_name
@@ -61,8 +61,15 @@ class SentenceTransformersProvider(EmbeddingProvider):
                 os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
 
             model_path = self._model_path or self._model_name
-            logger.info("Loading sentence-transformers model: %s", model_path)
-            self._model = SentenceTransformer(model_path, device=self._device)
+            device = self._device
+            if device == "auto":
+                try:
+                    import torch
+                    device = "cuda" if torch.cuda.is_available() else "cpu"
+                except Exception:
+                    device = "cpu"
+            logger.info("Loading sentence-transformers model: %s (device=%s)", model_path, device)
+            self._model = SentenceTransformer(model_path, device=device)
         return self._model
 
     def embed(self, texts: list[str]) -> list[list[float]]:
