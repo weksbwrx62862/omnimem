@@ -182,3 +182,31 @@ class TestLifecycleSharedHelper:
         fb_async = inspect.getsource(RecallService._async_fallback_if_few)
         assert "_admit_fts_fallback" in fb_async and "_admit_store_fallback" in fb_async
 
+class TestRecallExplain:
+    """项A: refine_recall_results 的 explain opt-in 与 _explain 内容。"""
+
+    def test_build_explain_collects_present_fields(self) -> None:
+        from omnimem.context.manager import ContextManager
+
+        r = {
+            "score": 0.15, "_source": "fusion", "rrf_score": 0.09,
+            "type_boost": 1.3, "boost_capped": True, "decay_factor": None,
+        }
+        ex = ContextManager._build_explain(r)
+        assert ex["final_score"] == 0.15
+        assert ex["source"] == "fusion"
+        assert ex["rrf_score"] == 0.09
+        assert ex["type_boost"] == 1.3
+        assert ex["boost_capped"] is True
+        assert "decay_factor" not in ex  # None 值不收集
+
+    def test_explain_flag_controls_field(self) -> None:
+        raw = [{"content": "orion 用 Rust", "type": "fact", "memory_id": "m1",
+                "score": 0.2, "_source": "fusion", "rrf_score": 0.1}]
+        from omnimem.context.manager import ContextManager
+
+        base = ContextManager().refine_recall_results(raw)
+        assert all("_explain" not in it for it in base)
+        with_ex = ContextManager().refine_recall_results(raw, explain=True)
+        assert with_ex and "_explain" in with_ex[0]
+        assert with_ex[0]["_explain"]["source"] == "fusion"
