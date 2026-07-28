@@ -287,8 +287,13 @@ class GovernanceService:
     def handle(self, args: dict[str, Any]) -> str:
         """处理 omni_govern 工具调用，返回 JSON 字符串。"""
         action = args["action"]
-        target = args.get("target", "") or args.get("target_id", "")
         params = args.get("params", {})
+        # ★ target 归一化: target/target_id/memory_id 三种等价写法(args 或 params 层)均接受,
+        #   否则 memory_id 调用被静默丢弃, archive 等动作会对空串操作并返回假成功
+        target = (
+            args.get("target", "") or args.get("target_id", "") or args.get("memory_id", "")
+            or params.get("target", "") or params.get("target_id", "") or params.get("memory_id", "")
+        )
 
         combined = {k: v for k, v in args.items() if k not in ("params", "action")}
         combined.update(params)
@@ -513,7 +518,11 @@ class GovernanceService:
 
     def _action_archive(self, params: dict[str, Any]) -> str:
         """封存记忆。"""
-        target = params.get("target", "")
+        # ★ 参数兼容: memory_id 是文档化的调用习惯, 与 target 等价;
+        #   空 target 曾静默"归档空串"并返回 sealed(假成功), 现显式报错
+        target = params.get("target", "") or params.get("memory_id", "")
+        if not target:
+            return json.dumps({"status": "error", "error": "archive requires target/memory_id"})
         dry_run = params.get("dry_run", False)
         if dry_run:
             return json.dumps(

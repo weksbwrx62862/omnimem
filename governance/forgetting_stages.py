@@ -118,11 +118,22 @@ class _ForgettingStages:
             if current == "archived":
                 new_stage = "forgotten"
             self._set_stage(memory_id, new_stage)
+            # ★ 治理操作低频且必须立即持久化(批量缓冲会因进程退出丢失)
+            try:
+                self._store.commit()
+                self._pending_writes = 0
+            except Exception as e:
+                logger.warning("Archive commit failed: %s", e)
 
     def reactivate(self, memory_id: str) -> None:
         """将记忆重新激活（恢复到 active）。"""
         with self._lock:
             self._set_stage(memory_id, "active")
+            try:
+                self._store.commit()
+                self._pending_writes = 0
+            except Exception as e:
+                logger.warning("Reactivate commit failed: %s", e)
             # 更新最后访问时间
             now = datetime.now(timezone.utc).isoformat()
             assert self._conn is not None

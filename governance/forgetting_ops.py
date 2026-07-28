@@ -272,9 +272,9 @@ class _ForgettingOps:
     def _maybe_commit(self) -> None:
         """到达阈值时提交。"""
         if self._pending_writes >= self._BATCH_THRESHOLD:
-            self._ensure_conn_alive()
-            assert self._conn is not None
-            self._conn.commit()
+            # ★ 修复: _ensure_conn_alive 从未在本类定义(M6-8 重构遗留),
+            #   连接生命周期由 GovernanceStore 管理, 直接提交即可
+            self._store.commit()
             self._pending_writes = 0
 
     def _get_index_conn(self) -> "sqlite3.Connection | None":

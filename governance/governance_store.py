@@ -68,14 +68,10 @@ class GovernanceStore:
         self._write_conn.execute(f"PRAGMA busy_timeout={_BUSY_TIMEOUT_MS}")
         self._write_conn.row_factory = sqlite3.Row
 
-        # 只读连接（WAL 模式下读不阻塞写）
-        self._read_conn = sqlite3.connect(
-            f"file:{self._db_path}?mode=ro",
-            uri=True,
-            check_same_thread=False,
-            timeout=_BUSY_TIMEOUT_MS / 1000,
-        )
-        self._read_conn.row_factory = sqlite3.Row
+        # ★ 读连接复用写连接：SMB/网络盘上 WAL 的共享内存(-shm)协商失效,
+        #   任何第二个连接(含 mode=ro)都会令写连接永久 "database is locked"。
+        #   治理操作低频, 单连接 + write_lock 串行化足够, 无读写分离收益。
+        self._read_conn = self._write_conn
 
         self._create_all_tables()
 
@@ -308,12 +304,11 @@ class GovernanceStore:
         with self._write_lock:
             self._commit()
             self._closed = True
-            if self._read_conn:
-                self._read_conn.close()
-                self._read_conn = None
+            # ★ 单连接模式: _read_conn 与 _write_conn 为同一对象, 只关一次
             if self._write_conn:
                 self._write_conn.close()
-                self._write_conn = None
+            self._read_conn = None
+            self._write_conn = None
         logger.info("GovernanceStore 已关闭")
 
 
