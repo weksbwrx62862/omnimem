@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import atexit
+import functools
 import json
 import logging
 import re
@@ -237,7 +238,9 @@ class RecallService:
             results = self._filter_by_type(results, type_filter)
 
         # ContextManager 精炼
-        refined = self.deps.context_manager.refine_recall_results(results, max_tokens=max_tokens)
+        refined = self.deps.context_manager.refine_recall_results(
+            results, max_tokens=max_tokens, explain=args.get("explain", False)
+        )
 
         # 提取检索轨迹
         trace_data = None
@@ -379,7 +382,10 @@ class RecallService:
             }
 
         refined = await asyncio.to_thread(
-            self.deps.context_manager.refine_recall_results, results, max_tokens=max_tokens
+            functools.partial(
+                self.deps.context_manager.refine_recall_results,
+                results, max_tokens=max_tokens, explain=args.get("explain", False),
+            )
         )
 
         trace_data = None

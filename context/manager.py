@@ -769,10 +769,29 @@ class ContextManager:
             parts.append(f"- [{item.memory_type}] {item.summary}")
         return "\n".join(parts)
 
+    @staticmethod
+    def _build_explain(r: dict[str, Any]) -> dict[str, Any]:
+        """汇总一条结果的评分链路为可解释字典(仅收集实际出现的字段)。"""
+        fields = (
+            "rrf_score", "additive_score", "type_boost", "updated_boost",
+            "entity_boost", "boost_capped", "rerank_score", "_priming_boost",
+            "_temporal_weight", "_temporal_reranked", "decay_factor", "_channels",
+        )
+        ex: dict[str, Any] = {
+            "final_score": r.get("score"),
+            "source": r.get("_source", ""),
+        }
+        for f in fields:
+            if f in r and r[f] is not None:
+                ex[f.lstrip("_")] = r[f]
+        return ex
+
     def refine_recall_results(
         self,
         raw_results: list[dict[str, Any]],
         max_tokens: int = 1500,
+        *,
+        explain: bool = False,
     ) -> list[dict[str, Any]]:
         """将 omni_recall 的原始检索结果精炼后返回。
 
@@ -834,6 +853,8 @@ class ContextManager:
                     "_source": r.get("_source", ""),
                 }
             )
+            if explain:
+                refined[-1]["_explain"] = self._build_explain(r)
 
         return refined
 
