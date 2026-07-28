@@ -21,6 +21,12 @@ class FusionMixin:
         "correction": 1.1,
     }
 
+    # ★ 缺陷3: 偏好意图信号词 — 查询本身关于偏好时不过滤偏好记忆
+    _PREF_INTENT_WORDS: tuple[str, ...] = (
+        "偏好", "喜欢", "习惯", "倾向", "偏爱", "爱好", "口味", "常用",
+        "prefer", "like", "favorite", "favourite", "enjoy", "habit", "taste",
+    )
+
     def fuse_and_filter(
         self,
         query: str,
@@ -114,6 +120,20 @@ class FusionMixin:
         if not result_lists:
             return []
 
+        # ★ 缺陷2修复: 绝对语义相关性地板 —— 向量最高余弦低于下限且无 BM25 词法命中时,
+        #   判定为"无相关结果"直接返回空集, 避免对完全无关查询硬塞最近邻噪声。
+        min_rel = getattr(self, "_min_relevance_score", 0.0)
+        vec_hits = channel_results.get("vector", [])
+        # 仅当向量通道确实参与且有结果时才应用语义地板;
+        # 纯 BM25/自定义通道无法判定语义相似度, 不门控以免误清空。
+        if min_rel > 0.0 and vec_hits:
+            max_vec = max((float(r.get("score", 0.0)) for r in vec_hits), default=0.0)
+            has_lexical = self._has_meaningful_lexical_hit(
+                query, channel_results.get("bm25") or []
+            )
+            if max_vec < min_rel and not has_lexical:
+                return []
+
         fused = self._facade._rrf.merge(
             result_lists,
             min_rrf=adaptive_min_rrf,
@@ -130,12 +150,87 @@ class FusionMixin:
         if is_garbage and fused:
             fused = []
 
+        # ★ 缺陷3修复: 偏好记忆查询相关性门控
+        if getattr(self, "_preference_gate_enabled", True):
+            fused = self._gate_preferences(query, fused)
+
         if self._facade._reranker and len(fused) > 3:
             # ★ 先截断到 rerank 候选数，避免对 100+ 条做 Cross-Encoder 推理
             _rerank_candidates = min(30, len(fused))
             fused = self._facade._reranker.rerank(query, fused[:_rerank_candidates], top_k=top_k)
 
         return trim_to_budget(fused, max_tokens)
+
+    @staticmethod
+    def _has_meaningful_lexical_hit(
+        query: str, bm25_results: list[dict[str, Any]]
+    ) -> bool:
+        """BM25 命中仅在与查询存在非噪声实词重叠时才算词法证据。
+
+        避免"相关/使用"这类噪声词的弱命中豁免语义地板 —— 例如查询
+        "完全不相关的查询xyz"被切出"相关"后与任意含"相关"的记忆
+        弱匹配(score≈0.01), 不应视为有效词法命中。
+        """
+        if not bm25_results:
+            return False
+        try:
+            from omnimem.retrieval.bm25 import (
+                _MINIMAL_ZH_STOPWORDS,
+                _NOISE_WORDS,
+                _tokenize,
+            )
+        except Exception:
+            return True  # 无法分词时保守放行, 维持原行为
+        stop = _NOISE_WORDS | _MINIMAL_ZH_STOPWORDS
+        q_tokens = {t for t in _tokenize(query) if len(t) >= 2 and t not in stop}
+        if not q_tokens:
+            return False
+        for r in bm25_results[:5]:
+            c_tokens = set(_tokenize(r.get("content", "") or ""))
+            if q_tokens & c_tokens:
+                return True
+        return False
+
+    def _gate_preferences(
+        self, query: str, results: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        """偏好类记忆易泛化匹配任意查询, 仅在查询确与其相关时保留。
+
+        保留条件(满足其一):
+          1. 查询本身是偏好意图(含"偏好/喜欢/prefer"等信号词);
+          2. 偏好内容与查询存在实词(非停用词)重叠。
+        否则过滤该泛化偏好, 避免污染无关查询结果(零结果/召回噪声)。
+        """
+        if not results:
+            return results
+        if not any(r.get("type") in ("preference", "preferences") for r in results):
+            return results
+
+        ql = query.lower()
+        if any(sig in query or sig in ql for sig in self._PREF_INTENT_WORDS):
+            return results
+
+        try:
+            from omnimem.retrieval.bm25 import (
+                _MINIMAL_ZH_STOPWORDS,
+                _NOISE_WORDS,
+                _tokenize,
+            )
+        except Exception:
+            return results  # 无法分词则保持原行为
+        stop = _NOISE_WORDS | _MINIMAL_ZH_STOPWORDS
+        q_tokens = {t for t in _tokenize(query) if len(t) >= 2 and t not in stop}
+
+        gated: list[dict[str, Any]] = []
+        for r in results:
+            if r.get("type") in ("preference", "preferences"):
+                c_tokens = set(_tokenize(r.get("content", "") or ""))
+                if q_tokens & c_tokens:
+                    gated.append(r)
+                # 否则: 丢弃与查询无实词重叠的泛化偏好
+            else:
+                gated.append(r)
+        return gated
 
     def additive_fuse(
         self,

@@ -97,6 +97,10 @@ _CONFIG_SCHEMA = {
     # Task 3: 检索参数可配置化
     "rrf_k": {"type": int, "min": 1, "max": 1000, "default": 60},
     "rrf_min_score": {"type": float, "min": 0.0, "max": 1.0, "default": 0.035},
+    # ★ 缺陷2: 绝对语义相关性地板(向量余弦下限), 低于且无词法命中→零结果; 0 表示关闭
+    "min_relevance_score": {"type": float, "min": 0.0, "max": 1.0, "default": 0.35},
+    # ★ 缺陷3: 偏好记忆查询相关性门控开关
+    "preference_relevance_gate": {"type": bool, "default": True},
     "circuit_breaker_threshold": {"type": int, "min": 1, "max": 100, "default": 3},
     "circuit_breaker_cooldown_seconds": {"type": (int, float), "min": 1, "max": 3600, "default": 60},
     "max_sync_turn_entries": {"type": int, "min": 10, "max": 100000, "default": 1000},
@@ -110,6 +114,8 @@ _CONFIG_SCHEMA = {
         "default": "sentence_transformers",
     },
     "embedding.model_name": {"type": str, "default": "all-MiniLM-L6-v2"},
+    # 本地嵌入模型目录(优先于 model_name); 换 bge-m3 等本地模型时指向模型目录
+    "embedding_model_path": {"type": str, "default": ""},
     "embedding.api_key": {"type": str, "default": ""},
     "embedding.base_url": {"type": str, "default": ""},
     "vector_store.provider": {

@@ -57,6 +57,9 @@ class HybridOrchestrator(FusionMixin, QueryCacheMixin, IndexAdminMixin):
         self._entity_boost_weight = float(config.get("entity_boost_weight", 1.5)) if config else 1.5
         # ★ 偏好查询改写：对包含偏好信号词的查询追加偏好同义词
         self._preference_rewrite_enabled = bool(config.get("preference_rewrite_enabled", True)) if config else True
+        # ★ 缺陷2/3: 相关性地板 + 偏好门控
+        self._min_relevance_score = float(config.get("min_relevance_score", 0.35)) if config else 0.35
+        self._preference_gate_enabled = bool(config.get("preference_relevance_gate", True)) if config else True
 
     def _create_executor(self) -> ThreadPoolExecutor:
         """获取检索线程池（★ P2: 全进程共享，max_workers 可通过配置调整）。"""

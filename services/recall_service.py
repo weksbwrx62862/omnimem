@@ -548,6 +548,18 @@ class RecallService:
                 if entry.get("archived"):
                     r["score"] = r.get("score", 0) * 0.3
                     r["sealed"] = True
+                # ★ store 条目不含 archived 字段, 权威生命周期状态在 forgetting_state:
+                #   forgotten 直接剔除; archived 降权+封存标记
+                elif self.deps.forgetting is not None:
+                    try:
+                        _stage = self.deps.forgetting.get_stage(mid)
+                    except Exception:
+                        _stage = "active"
+                    if _stage == "forgotten":
+                        continue
+                    if _stage == "archived":
+                        r["score"] = r.get("score", 0) * 0.3
+                        r["sealed"] = True
             valid_results.append(r)
         return valid_results
 
@@ -572,6 +584,21 @@ class RecallService:
             if source == "temporal_kg":
                 filtered.append(r)
                 continue
+            # ★ 联想扩散结果绕过融合层语义地板, 须与查询有关键词重叠才保留
+            #   (与 graph_triple 同等要求, 防止无关查询经实体扩散捞回弱邻居)
+            if source == "association":
+                content = r.get("content", "").lower()
+                if query_keywords and any(kw in content for kw in query_keywords):
+                    filtered.append(r)
+                continue
+            # ★ 缺陷3修复: 偏好类记忆查询相关性门控 —— 覆盖主检索之外的增强路径
+            #   (联想扩散/图谱/兜底). 泛化偏好与查询无关键词重叠时一律过滤,
+            #   避免"用户偏好使用中文进行交互"这类记忆污染无关查询。
+            if r.get("type") in ("preference", "preferences"):
+                content = r.get("content", "").lower()
+                has_overlap = bool(query_keywords) and any(kw in content for kw in query_keywords)
+                if not has_overlap:
+                    continue
             if score < 0.025:
                 if query_keywords:
                     content = r.get("content", "").lower()
