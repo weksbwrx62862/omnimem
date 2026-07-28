@@ -378,7 +378,9 @@ class VectorRetriever:
                     if sim < threshold:
                         continue
                     entry["score"] = sim
-                    if "memory_id" not in entry and doc_id:
+                    # ★ metadata 中 memory_id 可能为空串(而非缺失), 同样回填 doc_id
+                    #   否则归档过滤/API 引用因空 id 失效
+                    if not entry.get("memory_id") and doc_id:
                         entry["memory_id"] = doc_id
                     output.append(entry)
 
@@ -678,6 +680,12 @@ class VectorRetriever:
                 else:
                     for sep in ["。", "！", "？", ".", "!", "?"]:
                         sep_pos = text.rfind(sep, start + chunk_size // 2, end)
+                        # ★ ASCII 句点仅在后跟非 token 字符时才算句末
+                        #   (保护 deploy.yml / ./manage.py / ../path / 3.12)
+                        if sep == "." and sep_pos > start:
+                            nxt = text[sep_pos + 1] if sep_pos + 1 < len(text) else " "
+                            if nxt.isalnum() or nxt in "/\\.":
+                                sep_pos = -1
                         if sep_pos > start:
                             best_end = sep_pos + 1
                             break

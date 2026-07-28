@@ -189,7 +189,7 @@ class ContextManager:
         # ★ R19修复Minor-2: 先将真实换行符替换为空格，避免路径中\n被还原后导致split截断
         #   如 "C:\new\test" 中 \n 被还原为换行后，split 会在冒号后截断 summary
         content_for_split = content.replace("\n", " ").replace("\r", " ").replace("\t", " ")
-        sentences = re.split(r"[。！？.!?]", content_for_split)
+        sentences = re.split(r"\.(?![A-Za-z0-9/\\.])|[。！？!?]", content_for_split)
         for s in sentences:
             s = s.strip()
             if 5 <= len(s) <= max_chars:
@@ -200,11 +200,10 @@ class ContextManager:
         clean_content = content.replace("\n", " ").replace("\r", " ").replace("\t", " ")
         truncated = clean_content[:max_chars]
         # 找最后一个句子结束符
+        # ★ 截断符不含 ASCII ./, — 避免在 3.12 / deploy.yml 等 token 中间截断
         last_punct = max(
             truncated.rfind("。"),
             truncated.rfind("，"),
-            truncated.rfind("."),
-            truncated.rfind(","),
             truncated.rfind(" "),
         )
         if last_punct > max_chars // 2:
@@ -239,7 +238,7 @@ class ContextManager:
 
         # 提取关键句子：含信号词的句子优先
         content_for_split = content.replace("\n", " ").replace("\r", " ")
-        sentences = re.split(r"[。！？.!?]", content_for_split)
+        sentences = re.split(r"\.(?![A-Za-z0-9/\\.])|[。！？!?]", content_for_split)
 
         # 信号词权重
         signal_words = [
@@ -828,6 +827,11 @@ class ContextManager:
                     "_group_start": r.get("_group_start", False),
                     "_group_size": r.get("_group_size", 0),
                     "_conflict": r.get("_conflict"),
+                    # ★ 生命周期/评分字段透传: sealed(封存降权标记)/score/_source
+                    #   缺失会让调用方无法区分封存记忆与活跃记忆
+                    "sealed": r.get("sealed", False),
+                    "score": r.get("score"),
+                    "_source": r.get("_source", ""),
                 }
             )
 

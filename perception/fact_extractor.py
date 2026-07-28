@@ -162,6 +162,6 @@ class AtomicFactExtractor:
                 logger.warning("回退事实提取失败: %s", e)
 
         # 最终回退：按句子分割
-        sentences = re.split(r'[。！？.!?;\n]', content)
+        sentences = re.split(r'\.(?![A-Za-z0-9/\\.])|[。！？!?;\n]', content)
         facts = [s.strip() for s in sentences if len(s.strip()) >= 10]
         return facts if facts else [content[:100]]

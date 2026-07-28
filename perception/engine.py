@@ -370,7 +370,7 @@ class PerceptionEngine:
                     return f"{label}: {extracted}" if label else extracted
 
         # 策略2: 提取含信号词的句子
-        sentences = re.split(r"[。！？.!?;\n]", text)
+        sentences = re.split(r"\.(?![A-Za-z0-9/\\.])|[。！？!?;\n]", text)
         for s in sentences:
             s = s.strip()
             if len(s) < 5 or len(s) > 100:
@@ -416,7 +416,7 @@ class PerceptionEngine:
         用于 on_session_end 时从完整对话中提取遗漏的记忆。
         """
         memories = []
-        sentences = re.split(r"[。！？.!?\n]", content)
+        sentences = re.split(r"\.(?![A-Za-z0-9/\\.])|[。！？!?\n]", content)
 
         for s in sentences:
             s = s.strip()
