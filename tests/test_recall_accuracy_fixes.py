@@ -44,6 +44,18 @@ class TestSentenceSplitProtectsDots:
         assert any("deploy.yml" in f for f in facts), facts
 
 
+class TestSentenceSplitDotSequence:
+    """第2轮: 点序列(go test ./... / 省略号)不作句末切分。"""
+
+    def _fallback(self, content: str) -> list[str]:
+        return AtomicFactExtractor()._extract_with_fallback(content)
+
+    def test_go_test_ellipsis_path_not_split(self) -> None:
+        content = "在 Windows git-bash 中运行 Go 测试时必须用 go test ./... 而非 make test。因为 make 在 MSYS 下路径转换会出错。"
+        facts = self._fallback(content)
+        assert any("go test ./..." in f for f in facts), facts
+
+
 class TestPreferenceGate:
     """缺陷3: 偏好记忆查询相关性门控。"""
 

@@ -189,7 +189,7 @@ class ContextManager:
         # ★ R19修复Minor-2: 先将真实换行符替换为空格，避免路径中\n被还原后导致split截断
         #   如 "C:\new\test" 中 \n 被还原为换行后，split 会在冒号后截断 summary
         content_for_split = content.replace("\n", " ").replace("\r", " ").replace("\t", " ")
-        sentences = re.split(r"\.(?![A-Za-z0-9/\\.])|[。！？!?]", content_for_split)
+        sentences = re.split(r"(?<!\.)\.(?![A-Za-z0-9/\\.])|[。！？!?]", content_for_split)
         for s in sentences:
             s = s.strip()
             if 5 <= len(s) <= max_chars:
@@ -238,7 +238,7 @@ class ContextManager:
 
         # 提取关键句子：含信号词的句子优先
         content_for_split = content.replace("\n", " ").replace("\r", " ")
-        sentences = re.split(r"\.(?![A-Za-z0-9/\\.])|[。！？!?]", content_for_split)
+        sentences = re.split(r"(?<!\.)\.(?![A-Za-z0-9/\\.])|[。！？!?]", content_for_split)
 
         # 信号词权重
         signal_words = [

@@ -684,7 +684,9 @@ class VectorRetriever:
                         #   (保护 deploy.yml / ./manage.py / ../path / 3.12)
                         if sep == "." and sep_pos > start:
                             nxt = text[sep_pos + 1] if sep_pos + 1 < len(text) else " "
-                            if nxt.isalnum() or nxt in "/\\.":
+                            prev = text[sep_pos - 1] if sep_pos > 0 else " "
+                            # prev=='.' : 点序列(./... 或省略号)结尾不作句末
+                            if nxt.isalnum() or nxt in "/\\." or prev == ".":
                                 sep_pos = -1
                         if sep_pos > start:
                             best_end = sep_pos + 1
