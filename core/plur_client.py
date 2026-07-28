@@ -1,22 +1,18 @@
-"""
-Plur API 客户端
+"""Plur API 客户端。
+
+.. deprecated::
+    Plur 联邦为实验特性, 未在主链路(sdk/provider/services)使用。
+    保留供未来多实例场景显式导入; 已从 omnimem.core 包入口移除自动导出。
 """
 
 import asyncio
 import logging
-import os
-
-# 添加路径
-import sys
 from datetime import datetime
 from typing import Any
 
 import aiohttp
-
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-
-from engram_bridge import Engram
-from plur_config import get_config
+from omnimem.core.engram_bridge import Engram
+from omnimem.core.plur_config import get_config
 
 logger = logging.getLogger(__name__)
 

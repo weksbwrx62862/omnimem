@@ -1,5 +1,9 @@
 """分布式同步协调模块。
 
+.. deprecated::
+    DistributedSyncCoordinator 未在主链路使用(facade 直接用 SyncEngine)。
+    保留供未来多实例编排; 已从 omnimem.governance 包入口移除自动导出。
+
 将向量时钟与分布式同步逻辑从业务模块中独立出来，为多实例 OmniMem 提供：
   - VectorClock: 逻辑时钟、因果比较、冲突检测
   - DistributedSyncCoordinator: 协调文件锁、变更日志、向量时钟的高层组件

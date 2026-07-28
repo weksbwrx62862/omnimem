@@ -3,10 +3,6 @@
 from omnimem.governance.conflict import ConflictResolver as ConflictResolver
 from omnimem.governance.conflict import ConflictResult as ConflictResult
 from omnimem.governance.decay import TemporalDecay as TemporalDecay
-from omnimem.governance.distributed_sync import (
-    DistributedSyncCoordinator as DistributedSyncCoordinator,
-)
-from omnimem.governance.distributed_sync import VectorClock as VectorClock
 from omnimem.governance.forgetting import ForgettingCurve as ForgettingCurve
 from omnimem.governance.privacy import PrivacyManager as PrivacyManager
 from omnimem.governance.provenance import ProvenanceTracker as ProvenanceTracker
@@ -18,3 +14,4 @@ from omnimem.governance.temporal_kg import TemporalKnowledgeGraph as TemporalKno
 from omnimem.governance.temporal_kg import TemporalTriple as TemporalTriple
 from omnimem.governance.triple_extractor import TripleExtractor as TripleExtractor
 from omnimem.governance.triple_extractor import get_triple_extractor as get_triple_extractor
+from omnimem.governance.vector_clock import VectorClock as VectorClock
