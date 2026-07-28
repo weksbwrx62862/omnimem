@@ -112,7 +112,14 @@ class FileLockProvider(LockProvider):
 
     def release(self) -> None:
         if not self._has_fcntl:
-            self._fallback_lock.release()
+            # ★ 降级线程锁 release 非幂等: 未持锁/重复释放会 RuntimeError。
+            #   仅在确有持锁计数时释放(Windows 无 fcntl 单机路径)。
+            if self._lock_count > 0:
+                try:
+                    self._fallback_lock.release()
+                except RuntimeError:
+                    pass
+                self._lock_count -= 1
             return
         if self._fd is not None:
             try:
