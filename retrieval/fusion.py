@@ -321,9 +321,14 @@ class FusionMixin:
             extracted = extractor.extract(query, max_entities=5)
             query_entities = {e.lower() for e in extracted}
 
+        # ★ 偏好意图查询跳过类型加权: RRF 排名分已压扁语义差距, boost 会让
+        #   reasoning/action 翻转压过语义上远更相关的 preference(R7 后续实证)
+        _pref_intent = bool(query) and any(
+            w in query for w in getattr(cls, "_PREF_INTENT_WORDS", ())
+        )
         for r in results:
             mem_type = r.get("type", "")
-            boost = cls._TYPE_BOOST.get(mem_type, 1.0)
+            boost = 1.0 if _pref_intent else cls._TYPE_BOOST.get(mem_type, 1.0)
             if boost > 1.0:
                 current_score = r.get("score", r.get("rrf_score", 0))
                 r["score"] = round(current_score * boost, 5)

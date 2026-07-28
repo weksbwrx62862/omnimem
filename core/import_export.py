@@ -26,7 +26,19 @@ def _get_export_key(encryption_key: str | None = None) -> bytes | None:
     key = encryption_key or os.environ.get("OMNIMEM_EXPORT_KEY", "")
     if not key:
         return None
-    return key.encode("utf-8")
+    raw = key.encode("utf-8")
+    # 已是合法 Fernet key(32字节 url-safe base64)则原样使用, 保持旧文件兼容
+    try:
+        from cryptography.fernet import Fernet
+
+        Fernet(raw)
+        return raw
+    except (ValueError, ImportError):
+        pass
+    # ★ 任意口令经 PBKDF2-HMAC-SHA256 派生(固定盐保证导出/导入两侧派生一致);
+    #   此前非 base64 口令直接传给 Fernet 会抛 ValueError 崩溃
+    derived = hashlib.pbkdf2_hmac("sha256", raw, b"omnimem-export-v2", 600_000)
+    return base64.urlsafe_b64encode(derived)
 
 
 def _encrypt_payload(payload: dict[str, Any], key: bytes) -> tuple[str, str]:

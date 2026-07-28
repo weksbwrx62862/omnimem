@@ -84,3 +84,43 @@ class TestPreferenceGate:
 
     def test_empty_results(self) -> None:
         assert self.gate("anything", []) == []
+
+class TestPrefIntentSkipsTypeBoost:
+    """偏好意图查询跳过类型加权: boost 不得让 reasoning 翻转压过 preference。"""
+
+    def test_pref_intent_no_boost(self) -> None:
+        results = [
+            {"type": "preference", "score": 0.0902, "content": "用户偏好使用 Neovim"},
+            {"type": "reasoning", "score": 0.0888, "content": "选择 Kotlin 因为协程"},
+        ]
+        out = FusionMixin.apply_type_boost([dict(r) for r in results], query="用户喜欢什么编辑器")
+        out.sort(key=lambda r: r.get("score", 0), reverse=True)
+        assert out[0]["type"] == "preference", out
+
+    def test_normal_query_boost_kept(self) -> None:
+        results = [{"type": "reasoning", "score": 0.05, "content": "x"}]
+        out = FusionMixin.apply_type_boost([dict(r) for r in results], query="部署流程")
+        assert out[0].get("type_boost") == 1.3, out
+
+
+class TestExportKeyDerivation:
+    """export_key 任意口令经 PBKDF2 派生, 不再因非 base64 口令崩溃。"""
+
+    def test_passphrase_derived(self) -> None:
+        from cryptography.fernet import Fernet
+
+        from omnimem.core.import_export import _get_export_key
+
+        key = _get_export_key("simple-passphrase-123")
+        assert key is not None
+        Fernet(key)  # 不抛 = 合法 Fernet key
+        assert key == _get_export_key("simple-passphrase-123")  # 派生确定性
+
+    def test_fernet_key_passthrough(self) -> None:
+        from cryptography.fernet import Fernet
+
+        from omnimem.core.import_export import _get_export_key
+
+        raw = Fernet.generate_key().decode()
+        assert _get_export_key(raw) == raw.encode()
+
