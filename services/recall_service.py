@@ -537,31 +537,42 @@ class RecallService:
         return results
 
     def _validate_store_entries(self, results: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        """过滤索引残留，封存记忆降权保留。"""
+        """过滤索引残留，封存记忆降权保留(判定逻辑见 _apply_lifecycle)。"""
         valid_results = []
         for r in results:
+            # ★ 主路径结果补默认来源标记(联想/兜底等增强路径各自带标)
+            r.setdefault("_source", "fusion")
             mid = r.get("memory_id", "")
             if mid:
                 entry = self.deps.store.get(mid)
-                if not entry:
+                if not self._apply_lifecycle(r, mid, entry):
                     continue
-                if entry.get("archived"):
-                    r["score"] = r.get("score", 0) * 0.3
-                    r["sealed"] = True
-                # ★ store 条目不含 archived 字段, 权威生命周期状态在 forgetting_state:
-                #   forgotten 直接剔除; archived 降权+封存标记
-                elif self.deps.forgetting is not None:
-                    try:
-                        _stage = self.deps.forgetting.get_stage(mid)
-                    except Exception:
-                        _stage = "active"
-                    if _stage == "forgotten":
-                        continue
-                    if _stage == "archived":
-                        r["score"] = r.get("score", 0) * 0.3
-                        r["sealed"] = True
             valid_results.append(r)
         return valid_results
+
+    def _apply_lifecycle(self, r: dict[str, Any], mid: str, entry: Any) -> bool:
+        """生命周期判定唯一实现(同步/异步 validate 共享, 防双实现漂移): 返回是否保留。
+
+        entry 缺失(索引残留)剔除; forgotten 剔除; archived 降权 0.3x + sealed 标记。
+        """
+        if not entry:
+            return False
+        if entry.get("archived"):
+            r["score"] = r.get("score", 0) * 0.3
+            r["sealed"] = True
+            return True
+        # store 条目不含 archived 字段时, 权威生命周期状态在 forgetting_state
+        if self.deps.forgetting is not None:
+            try:
+                _stage = self.deps.forgetting.get_stage(mid)
+            except Exception:
+                _stage = "active"
+            if _stage == "forgotten":
+                return False
+            if _stage == "archived":
+                r["score"] = r.get("score", 0) * 0.3
+                r["sealed"] = True
+        return True
 
     def _filter_by_relevance(
         self, results: list[dict[str, Any]], query_keywords: set[str]
@@ -619,13 +630,37 @@ class RecallService:
         except Exception:
             return False
 
+    def _admit_fts_fallback(self, sf: dict[str, Any], existing_ids: set[str]) -> bool:
+        """FTS 兜底准入判定唯一实现(同步/异步共享): 去重+forgotten 拦截+打标。"""
+        sf_mid = sf.get("memory_id", "")
+        if sf_mid in existing_ids or self._is_forgotten(sf_mid):
+            return False
+        sf["_source"] = "store_fts_fallback"
+        sf["score"] = sf.get("score", 0) or 0.2
+        return True
+
+    def _admit_store_fallback(
+        self, sf: dict[str, Any], existing_ids: set[str], query_keywords: set[str]
+    ) -> bool:
+        """store 全量扫描兜底准入判定唯一实现: 须关键词命中且非 forgotten。"""
+        sf_mid = sf.get("memory_id", "")
+        if sf_mid in existing_ids or self._is_forgotten(sf_mid):
+            return False
+        sf_content = sf.get("content", "").lower()
+        keyword_hits = sum(1 for kw in query_keywords if kw in sf_content)
+        if keyword_hits < 1:
+            return False
+        sf["_source"] = "store_fallback"
+        sf["score"] = min(0.15 + keyword_hits * 0.05, 0.35)
+        return True
+
     def _fallback_if_few(
         self,
         results: list[dict[str, Any]],
         query: str,
         query_keywords: set[str],
     ) -> list[dict[str, Any]]:
-        """结果不足时 fallback 到 store 关键词匹配。"""
+        """结果不足时 fallback 到 store 关键词匹配(准入判定见 _admit_*)。"""
         if len(results) >= 5 or not query_keywords:
             return results
 
@@ -635,12 +670,9 @@ class RecallService:
         try:
             fts_results = self.deps.store.search_by_content(query, limit=10)
             for sf in fts_results:
-                sf_mid = sf.get("memory_id", "")
-                if sf_mid not in existing_ids and not self._is_forgotten(sf_mid):
-                    sf["_source"] = "store_fts_fallback"
-                    sf["score"] = sf.get("score", 0) or 0.2
+                if self._admit_fts_fallback(sf, existing_ids):
                     results.append(sf)
-                    existing_ids.add(sf_mid)
+                    existing_ids.add(sf.get("memory_id", ""))
                     if len(results) >= 5:
                         return results
         except Exception as e:
@@ -651,16 +683,9 @@ class RecallService:
             try:
                 store_all = self.deps.store.search(limit=50)
                 for sf in store_all:
-                    sf_mid = sf.get("memory_id", "")
-                    if sf_mid in existing_ids or self._is_forgotten(sf_mid):
-                        continue
-                    sf_content = sf.get("content", "").lower()
-                    keyword_hits = sum(1 for kw in query_keywords if kw in sf_content)
-                    if keyword_hits >= 1:
-                        sf["_source"] = "store_fallback"
-                        sf["score"] = min(0.15 + keyword_hits * 0.05, 0.35)
+                    if self._admit_store_fallback(sf, existing_ids, query_keywords):
                         results.append(sf)
-                        existing_ids.add(sf_mid)
+                        existing_ids.add(sf.get("memory_id", ""))
                         if len(results) >= 5:
                             break
             except Exception as e:
@@ -949,29 +974,15 @@ class RecallService:
     async def _async_validate_store_entries(
         self, results: list[dict[str, Any]]
     ) -> list[dict[str, Any]]:
-        """异步主存储验证。"""
+        """异步主存储验证(判定逻辑与同步版共享 _apply_lifecycle, 杜绝漂移)。"""
         valid_results = []
         for r in results:
+            r.setdefault("_source", "fusion")
             mid = r.get("memory_id", "")
             if mid:
                 entry = await asyncio.to_thread(self.deps.store.get, mid)
-                if not entry:
+                if not self._apply_lifecycle(r, mid, entry):
                     continue
-                if entry.get("archived"):
-                    r["score"] = r.get("score", 0) * 0.3
-                    r["sealed"] = True
-                # ★ 与同步版一致: forgetting_state 为权威生命周期状态
-                #   (R7-Q2: hermes 异步路径缺此分支致 forgotten 记忆泄漏)
-                elif self.deps.forgetting is not None:
-                    try:
-                        _stage = self.deps.forgetting.get_stage(mid)
-                    except Exception:
-                        _stage = "active"
-                    if _stage == "forgotten":
-                        continue
-                    if _stage == "archived":
-                        r["score"] = r.get("score", 0) * 0.3
-                        r["sealed"] = True
             valid_results.append(r)
         return valid_results
 
@@ -989,12 +1000,9 @@ class RecallService:
         try:
             fts_results = await asyncio.to_thread(self.deps.store.search_by_content, query, limit=10)
             for sf in fts_results:
-                sf_mid = sf.get("memory_id", "")
-                if sf_mid not in existing_ids and not self._is_forgotten(sf_mid):
-                    sf["_source"] = "store_fts_fallback"
-                    sf["score"] = sf.get("score", 0) or 0.2
+                if self._admit_fts_fallback(sf, existing_ids):
                     results.append(sf)
-                    existing_ids.add(sf_mid)
+                    existing_ids.add(sf.get("memory_id", ""))
                     if len(results) >= 5:
                         return results
         except Exception as e:
@@ -1004,16 +1012,9 @@ class RecallService:
             try:
                 store_all = await asyncio.to_thread(self.deps.store.search, limit=50)
                 for sf in store_all:
-                    sf_mid = sf.get("memory_id", "")
-                    if sf_mid in existing_ids or self._is_forgotten(sf_mid):
-                        continue
-                    sf_content = sf.get("content", "").lower()
-                    keyword_hits = sum(1 for kw in query_keywords if kw in sf_content)
-                    if keyword_hits >= 1:
-                        sf["_source"] = "store_fallback"
-                        sf["score"] = min(0.15 + keyword_hits * 0.05, 0.35)
+                    if self._admit_store_fallback(sf, existing_ids, query_keywords):
                         results.append(sf)
-                        existing_ids.add(sf_mid)
+                        existing_ids.add(sf.get("memory_id", ""))
                         if len(results) >= 5:
                             break
             except Exception as e:

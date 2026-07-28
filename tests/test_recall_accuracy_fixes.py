@@ -108,7 +108,6 @@ class TestExportKeyDerivation:
 
     def test_passphrase_derived(self) -> None:
         from cryptography.fernet import Fernet
-
         from omnimem.core.import_export import _get_export_key
 
         key = _get_export_key("simple-passphrase-123")
@@ -118,9 +117,68 @@ class TestExportKeyDerivation:
 
     def test_fernet_key_passthrough(self) -> None:
         from cryptography.fernet import Fernet
-
         from omnimem.core.import_export import _get_export_key
 
         raw = Fernet.generate_key().decode()
         assert _get_export_key(raw) == raw.encode()
+
+class TestBoostGapGuard:
+    """分差护栏: type_boost 只做平票裁决, 预分差 >10% 禁止翻转。"""
+
+    def test_large_gap_no_flip(self) -> None:
+        rs = [
+            {"type": "fact", "score": 0.0902, "content": "a"},
+            {"type": "reasoning", "score": 0.0726, "content": "b"},
+        ]
+        out = FusionMixin.apply_type_boost([dict(r) for r in rs], query="部署流程")
+        assert out[0]["type"] == "fact", out
+        assert out[1].get("boost_capped") is True, out
+
+    def test_small_gap_boost_wins(self) -> None:
+        rs = [
+            {"type": "fact", "score": 0.0750, "content": "a"},
+            {"type": "reasoning", "score": 0.0740, "content": "b"},
+        ]
+        out = FusionMixin.apply_type_boost([dict(r) for r in rs], query="部署流程")
+        assert out[0]["type"] == "reasoning", out
+
+
+class TestLifecycleSharedHelper:
+    """_apply_lifecycle 为同步/异步 validate 唯一判定实现(防双实现漂移)。"""
+
+    def _svc(self, stage: str):
+        from types import SimpleNamespace
+
+        from omnimem.services.recall_service import RecallService
+
+        svc = RecallService.__new__(RecallService)
+        forgetting = SimpleNamespace(get_stage=lambda mid: stage)
+        svc.deps = SimpleNamespace(store=None, forgetting=forgetting)
+        return svc
+
+    def test_forgotten_dropped(self) -> None:
+        svc = self._svc("forgotten")
+        r = {"score": 1.0}
+        assert svc._apply_lifecycle(r, "m1", {"content": "x"}) is False
+
+    def test_archived_sealed_downweight(self) -> None:
+        svc = self._svc("archived")
+        r = {"score": 1.0}
+        assert svc._apply_lifecycle(r, "m1", {"content": "x"}) is True
+        assert r["sealed"] is True and r["score"] == 0.3
+
+    def test_missing_entry_dropped(self) -> None:
+        svc = self._svc("active")
+        assert svc._apply_lifecycle({"score": 1.0}, "m1", None) is False
+
+    def test_async_reuses_shared_helper(self) -> None:
+        # 结构性断言: 异步 validate 源码必须调用共享 _apply_lifecycle
+        import inspect
+
+        from omnimem.services.recall_service import RecallService
+
+        async_src = inspect.getsource(RecallService._async_validate_store_entries)
+        assert "_apply_lifecycle" in async_src
+        fb_async = inspect.getsource(RecallService._async_fallback_if_few)
+        assert "_admit_fts_fallback" in fb_async and "_admit_store_fallback" in fb_async
 

@@ -326,6 +326,12 @@ class FusionMixin:
         _pref_intent = bool(query) and any(
             w in query for w in getattr(cls, "_PREF_INTENT_WORDS", ())
         )
+        # ★ 分差护栏: 记录加权前分数 — boost 只做同档次平票裁决,
+        #   预提升分差 >10% 时禁止翻转(根治 correction/reasoning 抢位家族:
+        #   RRF 排名分压扁语义差距后, 乘性加权会让弱相关结果翻越强相关结果)
+        _pre_scores = [
+            float(r.get("score", r.get("rrf_score", 0)) or 0) for r in results
+        ]
         for r in results:
             mem_type = r.get("type", "")
             boost = 1.0 if _pref_intent else cls._TYPE_BOOST.get(mem_type, 1.0)
@@ -348,6 +354,20 @@ class FusionMixin:
                     current_score = r.get("score", r.get("rrf_score", 0))
                     r["score"] = round(current_score * entity_boost_weight, 5)
                     r["entity_boost"] = entity_boost_weight
+        # ★ 分差护栏执行: 被加权项不得翻越预分差 >10% 的更强结果
+        _gap_guard = 1.10
+        for i, r in enumerate(results):
+            if not (r.get("type_boost") or r.get("updated_boost") or r.get("entity_boost")):
+                continue
+            ceiling = None
+            for j, other in enumerate(results):
+                if j == i or _pre_scores[j] <= _pre_scores[i] * _gap_guard:
+                    continue
+                other_final = float(other.get("score", other.get("rrf_score", 0)) or 0)
+                ceiling = other_final if ceiling is None else min(ceiling, other_final)
+            if ceiling is not None and float(r.get("score", 0) or 0) >= ceiling:
+                r["score"] = round(ceiling * 0.999, 5)
+                r["boost_capped"] = True
         return sorted(results, key=lambda x: x.get("score", 0), reverse=True)
 
     def supplement_low_recall_types(
