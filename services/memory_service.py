@@ -60,6 +60,7 @@ class MemoryService:
         vc: str = "",
         entities: list[str] | None = None,
         stored_at: str = "",
+        project: str = "",
     ) -> tuple[str, SagaResult]:
         """编排写入一条记忆到所有后端。
 
@@ -98,6 +99,7 @@ class MemoryService:
                     vc=vc,
                     original_content=content,
                     entities=entities or [],
+                    project=project,
                 )
                 return memory_id
 
@@ -136,6 +138,7 @@ class MemoryService:
                     scope=scope,
                     stored_at=stored_at,
                     provenance=json.dumps(provenance, ensure_ascii=False) if provenance else "",
+                    project=project,
                 )
 
             def _compensate_index() -> None:
@@ -168,6 +171,7 @@ class MemoryService:
                 "room": room,
                 "stored_at": stored_at,
                 "entities": entities or [],
+                "project": project,
             }
 
             def _retriever_add() -> None:

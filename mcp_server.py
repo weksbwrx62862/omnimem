@@ -127,6 +127,14 @@ class OmniMemMCPServer:
                             "enum": ["public", "team", "personal", "secret"],
                             "default": "personal",
                         },
+                        "project": {
+                            "type": "string",
+                            "description": (
+                                "Optional project/namespace tag. When set, deep 'llm' "
+                                "recall only supplements memories from the SAME project, "
+                                "preventing cross-project confusion on generic queries."
+                            ),
+                        },
                     },
                     "required": ["content"],
                 },
@@ -158,6 +166,13 @@ class OmniMemMCPServer:
                             "type": "integer",
                             "default": 1500,
                             "description": "Maximum tokens in results",
+                        },
+                        "project": {
+                            "type": "string",
+                            "description": (
+                                "Optional project/namespace tag. In 'llm' mode, restricts "
+                                "the store-supplement channel to the SAME project."
+                            ),
                         },
                     },
                     "required": ["query"],

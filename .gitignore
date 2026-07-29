@@ -107,3 +107,10 @@ nul
 # Benchmark sub-repos (separate git repositories)
 benchmarks/LongMemEval/
 benchmarks/STATE-Bench/
+
+# ★ bge-m3 多语言嵌入模型(pytorch_model.bin 2.27GB, 超 GitHub 100MB 单文件限制)
+# 属大体积二进制资源, 不入版本控制; 本地部署时单独下载到此目录
+models/embedding-bge-m3/
+
+# 基准测试输出产物(非代码, 体积可观)
+benchmarks/results/

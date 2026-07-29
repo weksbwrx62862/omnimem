@@ -94,6 +94,24 @@ def _extract_query_keywords(query: str) -> set[str]:
     return keywords
 
 
+def _project_matches(entry: dict[str, Any], query_project: str, strict: bool = False) -> bool:
+    """项目命名空间匹配判定(召回硬隔离)。
+
+    - query_project 为空: 不过滤(未指定项目的查询看到全部);
+    - entry.project == query_project: 同项目, 保留;
+    - entry.project 为空(未标记):
+        * strict=False(默认/向后兼容): 视为全局记忆, 保留;
+        * strict=True: 也排除(严格隔离, 指定项目时仅同名 project 可见);
+    - entry.project 非空且不等: 属于其他项目, 排除。
+    """
+    if not query_project:
+        return True
+    entry_project = (entry.get("project", "") or "").strip()
+    if not entry_project:
+        return not strict
+    return entry_project == query_project
+
+
 class RecallService:
     """记忆召回服务实现。"""
 
@@ -115,6 +133,8 @@ class RecallService:
             return {"status": "blocked", "reason": f"User '{user_id}' lacks 'read' permission"}
 
         _query_keywords = _extract_query_keywords(query)
+        # ★ 项目命名空间: 贯穿主召回/兜底/补充全链路做硬隔离
+        _project = (args.get("project", "") or "").strip()
 
         recall_timeout = self.deps.config.get("recall_timeout_ms", 5000) / 1000.0
         top_k = args.get("top_k", 40)
@@ -192,7 +212,9 @@ class RecallService:
 
         # llm 模式补充通道
         if mode == "llm":
-            results = self._apply_llm_store_supplement(results, query, _query_keywords)
+            results = self._apply_llm_store_supplement(
+                results, query, _query_keywords, project=_project,
+            )
 
         # 图谱检索通道
         results = self._apply_graph_channel(results, query)
@@ -204,14 +226,17 @@ class RecallService:
         results = self.deps.temporal_decay.apply(results) if self.deps.temporal_decay else results
         results = self.deps.privacy.filter(results, session_id=self.deps.session_id) if self.deps.privacy else results
 
-        # 主存储验证与过滤
-        results = self._validate_store_entries(results)
+        # 主存储验证与过滤(含项目硬隔离)
+        results = self._validate_store_entries(results, project=_project)
+
+        # ★ 增强通道分数锚定: 防图谱/时序/联想裸分抢占直接命中的 Top-1
+        results = self._rescale_enhancement_scores(results)
 
         # 最低相关性过滤
         results = self._filter_by_relevance(results, _query_keywords)
 
         # 结果不足 fallback
-        results = self._fallback_if_few(results, query, _query_keywords)
+        results = self._fallback_if_few(results, query, _query_keywords, project=_project)
 
         if not results:
             return {
@@ -296,6 +321,8 @@ class RecallService:
             return {"status": "blocked", "reason": f"User '{user_id}' lacks 'read' permission"}
 
         _query_keywords = _extract_query_keywords(query)
+        # ★ 项目命名空间(异步路径, 与同步一致)
+        _project = (args.get("project", "") or "").strip()
 
         recall_timeout = self.deps.config.get("recall_timeout_ms", 5000) / 1000.0
         _recall_start = _time.monotonic()
@@ -323,7 +350,9 @@ class RecallService:
         record_recall_duration(_recall_latency_ms / 1000.0)
 
         if mode == "llm":
-            results = await self._async_apply_llm_store_supplement(results, query, _query_keywords)
+            results = await self._async_apply_llm_store_supplement(
+                results, query, _query_keywords, project=_project,
+            )
 
         graph_results, temporal_results = await asyncio.gather(
             self._async_graph_search(query),
@@ -337,9 +366,11 @@ class RecallService:
         if self.deps.privacy:
             results = await asyncio.to_thread(self.deps.privacy.filter, results, session_id=self.deps.session_id)
 
-        results = await self._async_validate_store_entries(results)
+        results = await self._async_validate_store_entries(results, project=_project)
+        # ★ 增强通道分数锚定(与同步一致)
+        results = self._rescale_enhancement_scores(results)
         results = self._filter_by_relevance(results, _query_keywords)
-        results = await self._async_fallback_if_few(results, query, _query_keywords)
+        results = await self._async_fallback_if_few(results, query, _query_keywords, project=_project)
 
         # ★ 自动联想扩散（异步路径）
         _should_spread = (
@@ -450,8 +481,13 @@ class RecallService:
         results: list[dict[str, Any]],
         query: str,
         query_keywords: set[str],
+        project: str = "",
     ) -> list[dict[str, Any]]:
-        """llm 模式下从 store 补充关键词相关结果。"""
+        """llm 模式下从 store 补充关键词相关结果。
+
+        ★ 项目硬隔离: 若调用方指定 project, 仅补充同 project 或未标记(全局)
+        的记忆; 其他项目的记忆被排除, 根治跨项目泛化混淆。
+        """
         try:
             expanded_queries = [query]
             for key, synonyms in _SYNONYM_MAP.items():
@@ -470,6 +506,8 @@ class RecallService:
                 if mid in seen:
                     continue
                 seen.add(mid)
+                if not _project_matches(sr, project, self._is_project_strict()):
+                    continue
                 sr_content = sr.get("content", "").lower()
                 if query_keywords:
                     overlap_count = sum(1 for kw in query_keywords if kw in sr_content)
@@ -542,7 +580,9 @@ class RecallService:
             logger.warning("OmniMem temporal KG recall failed: %s", e)
         return results
 
-    def _validate_store_entries(self, results: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    def _validate_store_entries(
+        self, results: list[dict[str, Any]], project: str = ""
+    ) -> list[dict[str, Any]]:
         """过滤索引残留，封存记忆降权保留(判定逻辑见 _apply_lifecycle)。"""
         valid_results = []
         for r in results:
@@ -551,19 +591,86 @@ class RecallService:
             mid = r.get("memory_id", "")
             if mid:
                 entry = self.deps.store.get(mid)
-                if not self._apply_lifecycle(r, mid, entry):
+                if not self._apply_lifecycle(r, mid, entry, project):
                     continue
             valid_results.append(r)
         return valid_results
 
-    def _apply_lifecycle(self, r: dict[str, Any], mid: str, entry: Any) -> bool:
+    # 增强通道(图谱/时序/联想)标识: 这些结果在 recall 后直接追加,
+    # 携带裸分(0.5~0.55), 与 RRF 主路径分(~0.05)不同量级。
+    _ENHANCEMENT_SOURCES: frozenset[str] = frozenset(
+        {"graph_rag", "graph_triple", "temporal_kg", "association"}
+    )
+
+    @classmethod
+    def _is_enhancement(cls, r: dict[str, Any]) -> bool:
+        return (
+            r.get("_source") in cls._ENHANCEMENT_SOURCES
+            or r.get("type") in cls._ENHANCEMENT_SOURCES
+        )
+
+    def _rescale_enhancement_scores(
+        self, results: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        """将增强通道分数锚定到主路径 Top-1 之下, 修复尺度错配导致的抢位。
+
+        背景: 图谱/时序/联想结果携带 0.5~0.55 裸分, 而 RRF 主检索 rank-1 仅 ~0.05
+        (未启用 reranker 时), 导致增强通道在按 score 排序时压过直接语义命中(R11 #4/#5)。
+
+        策略: 以主路径(_source=='fusion')的最高分为锚, 将增强通道封顶在 anchor*0.95
+        之下——直接命中稳坐 Top-1, 增强结果作为紧随其后的补充; 若主路径无强结果
+        (稀疏/空), 保留增强原分, 不破坏"结果不足时联想填补"的能力。
+        """
+        anchor = max(
+            (
+                float(r.get("score", 0) or 0)
+                for r in results
+                if r.get("_source") == "fusion" and not self._is_enhancement(r)
+            ),
+            default=0.0,
+        )
+        if anchor <= 0:
+            return results
+        cap = anchor * 0.95
+        for r in results:
+            if self._is_enhancement(r) and float(r.get("score", 0) or 0) > cap:
+                r["score"] = round(cap, 5)
+        return results
+
+    def _is_project_strict(self) -> bool:
+        """读取项目召回严格隔离开关(空标签是否也排除)。"""
+        _cfg = getattr(self.deps, "config", None)
+        if _cfg is None:
+            return False
+        try:
+            return bool(_cfg.get("project_recall_strict", False))
+        except Exception:
+            return False
+
+    def _apply_lifecycle(
+        self, r: dict[str, Any], mid: str, entry: Any, project: str = ""
+    ) -> bool:
         """生命周期判定唯一实现(同步/异步 validate 共享, 防双实现漂移): 返回是否保留。
 
-        entry 缺失(索引残留)剔除; forgotten 剔除; archived 降权 0.3x + sealed 标记。
+        entry 缺失(索引残留)剔除; 跨项目(project 不匹配)剔除; forgotten 剔除;
+        archived 按 archive_recall_policy:
+          - downweight(默认): 降权 0.3x + sealed 标记(数据可见但排序靠后)
+          - exclude: 彻底排除(九轮测试实锤: 封存记忆残留持续污染稀疏库召回)
         """
         if not entry:
             return False
+        # ★ 项目硬隔离: 主召回路径(vector+BM25 融合/联想/图谱)统一在此过滤,
+        #   查询指定 project 时排除其他项目记忆(strict 开启时未标记条目也排除)。
+        if not _project_matches(entry, project, self._is_project_strict()):
+            return False
+        _cfg = getattr(self.deps, "config", None)
+        _exclude_archived = (
+            _cfg.get("archive_recall_policy", "downweight") == "exclude"
+            if _cfg is not None else False
+        )
         if entry.get("archived"):
+            if _exclude_archived:
+                return False
             r["score"] = r.get("score", 0) * 0.3
             r["sealed"] = True
             return True
@@ -576,6 +683,8 @@ class RecallService:
             if _stage == "forgotten":
                 return False
             if _stage == "archived":
+                if _exclude_archived:
+                    return False
                 r["score"] = r.get("score", 0) * 0.3
                 r["sealed"] = True
         return True
@@ -627,30 +736,42 @@ class RecallService:
             filtered.append(r)
         return filtered
 
-    def _is_forgotten(self, memory_id: str) -> bool:
-        """生命周期检查: forgotten 记忆不得经兜底路径复活(R5-Q9 旧污染泄漏)。"""
+    def _is_inactive(self, memory_id: str) -> bool:
+        """生命周期检查: forgotten/archived 记忆不得经兜底路径复活(R5-Q9 旧污染泄漏)。
+
+        主召回路径对 archived 降权保留(见 _apply_lifecycle), 但兜底路径是
+        "结果不足"时的救援通道, 若放行 archived 会以 0.2-0.35 兜底分全权重
+        复活封存记忆, 在负对照/稀疏查询中污染结果(八轮测试实锤缺陷)。
+        """
         if not memory_id or self.deps.forgetting is None:
             return False
         try:
-            return self.deps.forgetting.get_stage(memory_id) == "forgotten"
+            return self.deps.forgetting.get_stage(memory_id) in ("archived", "forgotten")
         except Exception:
             return False
 
-    def _admit_fts_fallback(self, sf: dict[str, Any], existing_ids: set[str]) -> bool:
-        """FTS 兜底准入判定唯一实现(同步/异步共享): 去重+forgotten 拦截+打标。"""
+    def _admit_fts_fallback(
+        self, sf: dict[str, Any], existing_ids: set[str], project: str = ""
+    ) -> bool:
+        """FTS 兜底准入判定唯一实现(同步/异步共享): 去重+跨项目+archived/forgotten 拦截+打标。"""
         sf_mid = sf.get("memory_id", "")
-        if sf_mid in existing_ids or self._is_forgotten(sf_mid):
+        if sf_mid in existing_ids or self._is_inactive(sf_mid):
+            return False
+        if not _project_matches(sf, project, self._is_project_strict()):
             return False
         sf["_source"] = "store_fts_fallback"
         sf["score"] = sf.get("score", 0) or 0.2
         return True
 
     def _admit_store_fallback(
-        self, sf: dict[str, Any], existing_ids: set[str], query_keywords: set[str]
+        self, sf: dict[str, Any], existing_ids: set[str], query_keywords: set[str],
+        project: str = "",
     ) -> bool:
-        """store 全量扫描兜底准入判定唯一实现: 须关键词命中且非 forgotten。"""
+        """store 全量扫描兜底准入判定唯一实现: 须关键词命中、同项目且非 archived/forgotten。"""
         sf_mid = sf.get("memory_id", "")
-        if sf_mid in existing_ids or self._is_forgotten(sf_mid):
+        if sf_mid in existing_ids or self._is_inactive(sf_mid):
+            return False
+        if not _project_matches(sf, project, self._is_project_strict()):
             return False
         sf_content = sf.get("content", "").lower()
         keyword_hits = sum(1 for kw in query_keywords if kw in sf_content)
@@ -665,6 +786,7 @@ class RecallService:
         results: list[dict[str, Any]],
         query: str,
         query_keywords: set[str],
+        project: str = "",
     ) -> list[dict[str, Any]]:
         """结果不足时 fallback 到 store 关键词匹配(准入判定见 _admit_*)。"""
         if len(results) >= 5 or not query_keywords:
@@ -676,7 +798,7 @@ class RecallService:
         try:
             fts_results = self.deps.store.search_by_content(query, limit=10)
             for sf in fts_results:
-                if self._admit_fts_fallback(sf, existing_ids):
+                if self._admit_fts_fallback(sf, existing_ids, project):
                     results.append(sf)
                     existing_ids.add(sf.get("memory_id", ""))
                     if len(results) >= 5:
@@ -689,7 +811,7 @@ class RecallService:
             try:
                 store_all = self.deps.store.search(limit=50)
                 for sf in store_all:
-                    if self._admit_store_fallback(sf, existing_ids, query_keywords):
+                    if self._admit_store_fallback(sf, existing_ids, query_keywords, project):
                         results.append(sf)
                         existing_ids.add(sf.get("memory_id", ""))
                         if len(results) >= 5:
@@ -875,8 +997,9 @@ class RecallService:
         results: list[dict[str, Any]],
         query: str,
         query_keywords: set[str],
+        project: str = "",
     ) -> list[dict[str, Any]]:
-        """异步 llm 模式 store 补充。"""
+        """异步 llm 模式 store 补充(项目隔离语义与同步版共享 _project_matches)。"""
         try:
             expanded_queries = [query]
             for key, synonyms in _SYNONYM_MAP.items():
@@ -902,6 +1025,8 @@ class RecallService:
                 if mid in seen:
                     continue
                 seen.add(mid)
+                if not _project_matches(sr, project, self._is_project_strict()):
+                    continue
                 sr_content = sr.get("content", "").lower()
                 if query_keywords:
                     overlap_count = sum(1 for kw in query_keywords if kw in sr_content)
@@ -978,7 +1103,7 @@ class RecallService:
         return temporal_results
 
     async def _async_validate_store_entries(
-        self, results: list[dict[str, Any]]
+        self, results: list[dict[str, Any]], project: str = ""
     ) -> list[dict[str, Any]]:
         """异步主存储验证(判定逻辑与同步版共享 _apply_lifecycle, 杜绝漂移)。"""
         valid_results = []
@@ -987,7 +1112,7 @@ class RecallService:
             mid = r.get("memory_id", "")
             if mid:
                 entry = await asyncio.to_thread(self.deps.store.get, mid)
-                if not self._apply_lifecycle(r, mid, entry):
+                if not self._apply_lifecycle(r, mid, entry, project):
                     continue
             valid_results.append(r)
         return valid_results
@@ -997,6 +1122,7 @@ class RecallService:
         results: list[dict[str, Any]],
         query: str,
         query_keywords: set[str],
+        project: str = "",
     ) -> list[dict[str, Any]]:
         """异步结果不足 fallback。"""
         if len(results) >= 5 or not query_keywords:
@@ -1006,7 +1132,7 @@ class RecallService:
         try:
             fts_results = await asyncio.to_thread(self.deps.store.search_by_content, query, limit=10)
             for sf in fts_results:
-                if self._admit_fts_fallback(sf, existing_ids):
+                if self._admit_fts_fallback(sf, existing_ids, project):
                     results.append(sf)
                     existing_ids.add(sf.get("memory_id", ""))
                     if len(results) >= 5:
@@ -1018,7 +1144,7 @@ class RecallService:
             try:
                 store_all = await asyncio.to_thread(self.deps.store.search, limit=50)
                 for sf in store_all:
-                    if self._admit_store_fallback(sf, existing_ids, query_keywords):
+                    if self._admit_store_fallback(sf, existing_ids, query_keywords, project):
                         results.append(sf)
                         existing_ids.add(sf.get("memory_id", ""))
                         if len(results) >= 5:

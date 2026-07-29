@@ -58,6 +58,7 @@ class MetaStore:
         "memory_id", "wing", "hall", "room", "type", "confidence",
         "privacy", "stored_at", "summary", "content_preview",
         "drawer_path", "vc", "created_at", "conflicting_with", "conflict_type",
+        "project",
     }
 
     def __init__(self, db_dir: Path):
@@ -125,12 +126,20 @@ class MetaStore:
                 self._conn.execute(f"ALTER TABLE memories ADD COLUMN {col} TEXT")
                 logger.info("MetaStore migrated: added %s column", col)
 
+        # ★ 项目命名空间列（LLM 补充通道按 project 硬隔离，防跨项目混淆）
+        try:
+            self._conn.execute("SELECT project FROM memories LIMIT 1")
+        except sqlite3.OperationalError:
+            self._conn.execute("ALTER TABLE memories ADD COLUMN project TEXT DEFAULT ''")
+            logger.info("MetaStore migrated: added project column")
+
         # 单列索引
         self._conn.execute("CREATE INDEX IF NOT EXISTS idx_mem_type ON memories(type)")
         self._conn.execute("CREATE INDEX IF NOT EXISTS idx_mem_wing ON memories(wing)")
         self._conn.execute("CREATE INDEX IF NOT EXISTS idx_mem_privacy ON memories(privacy)")
         self._conn.execute("CREATE INDEX IF NOT EXISTS idx_mem_stored_at ON memories(stored_at)")
         self._conn.execute("CREATE INDEX IF NOT EXISTS idx_mem_room ON memories(room)")
+        self._conn.execute("CREATE INDEX IF NOT EXISTS idx_mem_project ON memories(project)")
 
         # 尝试创建 FTS5 虚拟表（全文搜索）
         try:
@@ -574,6 +583,13 @@ class AsyncMetaStore:
             except Exception:
                 await self._conn.execute(f"ALTER TABLE memories ADD COLUMN {col} TEXT")
                 logger.info("AsyncMetaStore migrated: added %s column", col)
+
+        # ★ 项目命名空间列（与同步 MetaStore 对齐）
+        try:
+            await self._conn.execute("SELECT project FROM memories LIMIT 1")
+        except Exception:
+            await self._conn.execute("ALTER TABLE memories ADD COLUMN project TEXT DEFAULT ''")
+            logger.info("AsyncMetaStore migrated: added project column")
 
         for col in ("type", "wing", "privacy", "stored_at", "room"):
             await self._conn.execute(

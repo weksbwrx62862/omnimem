@@ -84,7 +84,8 @@ class ThreeLevelIndex:
                     scope TEXT DEFAULT 'personal',
                     stored_at TEXT,
                     provenance TEXT,
-                    metadata TEXT
+                    metadata TEXT,
+                    project TEXT DEFAULT ''
                 )
             """,
             migrations=[],
@@ -106,6 +107,7 @@ class ThreeLevelIndex:
             ("conflict_type", "TEXT"),
             ("is_updated", "INTEGER DEFAULT 0"),
             ("is_superseded", "INTEGER DEFAULT 0"),
+            ("project", "TEXT DEFAULT ''"),
         ]
         for col_name, col_def in _migrate_columns:
             try:
@@ -176,6 +178,7 @@ class ThreeLevelIndex:
         stored_at: str = "",
         provenance: str = "",
         metadata: str = "",
+        project: str = "",
     ) -> None:
         """添加一条索引记录。"""
         assert self._conn is not None
@@ -186,8 +189,8 @@ class ThreeLevelIndex:
                 self._conn.execute,
                 """INSERT OR REPLACE INTO memory_index
                    (memory_id, wing, hall, room, content, summary, type,
-                    confidence, privacy, scope, stored_at, provenance, metadata)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    confidence, privacy, scope, stored_at, provenance, metadata, project)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     memory_id,
                     wing,
@@ -202,6 +205,7 @@ class ThreeLevelIndex:
                     stored_at,
                     provenance,
                     metadata,
+                    project,
                 ),
             )
             self._maybe_commit()
@@ -307,7 +311,7 @@ class ThreeLevelIndex:
     def search_l1(self, wing: str = "", type: str = "", limit: int = 50) -> list[dict[str, Any]]:
         """L1 摘要索引：返回摘要记录（含 content 用于 warm_up）。"""
         assert self._conn is not None
-        query = "SELECT memory_id, wing, hall, room, summary, type, confidence, privacy, stored_at, content, conflicting_with, conflict_type FROM memory_index WHERE 1=1"
+        query = "SELECT memory_id, wing, hall, room, summary, type, confidence, privacy, stored_at, content, conflicting_with, conflict_type, project FROM memory_index WHERE 1=1"
         params = []
         if wing:
             query += " AND wing = ?"
@@ -333,6 +337,7 @@ class ThreeLevelIndex:
                     "content": r[9] if len(r) > 9 else "",
                     "conflicting_with": r[10] if len(r) > 10 else "",
                     "conflict_type": r[11] if len(r) > 11 else "",
+                    "project": r[12] if len(r) > 12 else "",
                 }
                 for r in rows
             ]

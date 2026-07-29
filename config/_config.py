@@ -57,6 +57,10 @@ _CONFIG_SCHEMA = {
     # ★ OPT: 检索超时降级 — recall 整体超时 + 策略切换
     "recall_timeout_ms": {"type": int, "min": 100, "max": 30000, "default": 5000},
     "recall_strategy": {"type": str, "choices": ["hybrid", "keyword", "embedding"], "default": "hybrid"},
+    # archived 记忆召回策略: downweight=降权保留(sealed), exclude=彻底排除
+    "archive_recall_policy": {"type": str, "choices": ["downweight", "exclude"], "default": "downweight"},
+    # 项目召回严格隔离: True 时指定 project 查询仅返回同名 project 记忆(空标签也排除)
+    "project_recall_strict": {"type": bool, "default": False},
     # ★ OPT: Pipeline 调度器 — L2/L3 自动触发
     "pipeline_every_n_conversations": {"type": int, "min": 1, "max": 100, "default": 5},
     "pipeline_enable_warmup": {"type": bool, "default": True},

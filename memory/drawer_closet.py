@@ -233,6 +233,8 @@ class DrawerClosetStore:
 
         # secret 级不在 MetaStore 中保留明文 content_preview，避免通过 FTS 泄露
         meta_content_preview = "" if privacy == "secret" else content[:500]
+        # ★ 项目命名空间：从 kwargs 提取 project，落 MetaStore 以支持按项目硬隔离检索
+        project = kwargs.get("project", "") or ""
         meta_fields = {
             "memory_id": memory_id,
             "wing": wing,
@@ -246,6 +248,7 @@ class DrawerClosetStore:
             "content_preview": meta_content_preview,
             "drawer_path": str(drawer_path),
             "vc": vc,
+            "project": project,
         }
 
         def _write_meta() -> None:

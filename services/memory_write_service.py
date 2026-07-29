@@ -210,6 +210,8 @@ class MemoryWriteService:
         confidence = args.get("confidence", 3)
         scope = args.get("scope", "personal")
         privacy = args.get("privacy", "personal")
+        # ★ 项目命名空间：可选，用于 LLM 补充通道按项目硬隔离(防跨项目混淆)
+        project = (args.get("project", "") or "").strip()
 
         # ★ R25修复BUG-1：直接从 privacy 映射到 wing
         wing = self.deps.wing_room.resolve_wing_from_privacy(privacy, memory_type)
@@ -409,6 +411,7 @@ class MemoryWriteService:
             vc=vc,
             entities=_extract_entities_for_storage(content),
             stored_at=now,
+            project=project,
         )
 
         if not saga_result.success:
