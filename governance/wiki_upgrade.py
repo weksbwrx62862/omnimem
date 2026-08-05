@@ -12,11 +12,10 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import re
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -54,11 +53,11 @@ _UPGRADE_PROMPT = """你是一个知识整理专家。下面是一条来自 Omni
 def _slugify(text: str) -> str:
     """将中文/英文标题转为 URL-safe 的 slug。"""
     # 移除特殊字符，保留中英文和数字
-    clean = re.sub(r'[^\w\u4e00-\u9fff\s-]', '', text.lower())
+    clean = re.sub(r"[^\w\u4e00-\u9fff\s-]", "", text.lower())
     # 替换空格为连字符
-    clean = re.sub(r'[\s]+', '-', clean)
+    clean = re.sub(r"[\s]+", "-", clean)
     # 去除首尾连字符
-    return clean.strip('-')[:80]
+    return clean.strip("-")[:80]
 
 
 class WikiUpgradePipeline:
@@ -128,14 +127,16 @@ class WikiUpgradePipeline:
 
         # 更新 total pages count
         updated = "\n".join(lines)
-        total_match = re.search(r'Total pages: (\d+)', updated)
+        total_match = re.search(r"Total pages: (\d+)", updated)
         if total_match:
             new_total = int(total_match.group(1)) + 1
-            updated = updated.replace(f'Total pages: {total_match.group(1)}', f'Total pages: {new_total}')
+            updated = updated.replace(
+                f"Total pages: {total_match.group(1)}", f"Total pages: {new_total}"
+            )
 
         # 更新 last updated
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-        updated = re.sub(r'Last updated: \d{4}-\d{2}-\d{2}', f'Last updated: {today}', updated)
+        updated = re.sub(r"Last updated: \d{4}-\d{2}-\d{2}", f"Last updated: {today}", updated)
 
         index_path.write_text(updated, encoding="utf-8")
 
@@ -200,7 +201,10 @@ class WikiUpgradePipeline:
             if json_match:
                 result = json.loads(json_match.group())
             else:
-                return {"status": "error", "reason": f"LLM output not valid JSON: {llm_output[:200]}"}
+                return {
+                    "status": "error",
+                    "reason": f"LLM output not valid JSON: {llm_output[:200]}",
+                }
 
         page_type = result.get("page_type", "concept")
         title = result.get("title", "Untitled")
@@ -237,7 +241,9 @@ class WikiUpgradePipeline:
             "filename": filename,
         }
 
-    def batch_upgrade(self, memory_ids: list[str], contents: dict[str, str]) -> list[dict[str, Any]]:
+    def batch_upgrade(
+        self, memory_ids: list[str], contents: dict[str, str]
+    ) -> list[dict[str, Any]]:
         """批量升级多条记忆到 Wiki。
 
         Args:
