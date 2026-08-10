@@ -38,7 +38,7 @@ classifiers = [
 
 dependencies = [
     "rank-bm25>=0.2.0,<0.3.0",
-    "tiktoken>=0.7.0",
+    "tiktoken>=0.13.0",
     "pyyaml>=6.0",
     "typing-extensions>=4.0.0",
 ]
