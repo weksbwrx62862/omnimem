@@ -35,11 +35,10 @@
 from __future__ import annotations
 
 import logging
-import math
 import sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from omnimem.utils.migration import SchemaMigrator
 from omnimem.governance.fsrs_engine import FSRSEngine, FSRSItem, FSRSParameters, get_fsrs_engine
@@ -74,9 +73,11 @@ class ForgettingCurve:
         self._db_path = self._governance_dir / "forgetting.db"
         self._conn: sqlite3.Connection | None = None
         self._pending_writes = 0
-        self._active_days = getattr(config, 'forgetting_active_days', 7) if config else 7
-        self._consolidating_days = getattr(config, 'forgetting_consolidating_days', 30) if config else 30
-        self._archived_days = getattr(config, 'forgetting_archived_days', 90) if config else 90
+        self._active_days = getattr(config, "forgetting_active_days", 7) if config else 7
+        self._consolidating_days = (
+            getattr(config, "forgetting_consolidating_days", 30) if config else 30
+        )
+        self._archived_days = getattr(config, "forgetting_archived_days", 90) if config else 90
         self._stages: dict[str, tuple[int, int | None]] = {
             "active": (0, self._active_days),
             "consolidating": (self._active_days, self._consolidating_days),
@@ -119,10 +120,7 @@ class ForgettingCurve:
         )
         # ★ 兼容旧表：逐列添加，已有则跳过（查 PRAGMA table_info 避免异常）
         existing_cols = {
-            row[1]
-            for row in self._conn.execute(
-                "PRAGMA table_info(forgetting_state)"
-            ).fetchall()
+            row[1] for row in self._conn.execute("PRAGMA table_info(forgetting_state)").fetchall()
         }
         _new_columns = [
             ("recall_count", "INTEGER DEFAULT 0"),
@@ -136,9 +134,7 @@ class ForgettingCurve:
             if col_name in existing_cols:
                 continue
             # 列名来自硬编码常量，非用户输入，安全使用 f-string
-            self._conn.execute(
-                f"ALTER TABLE forgetting_state ADD COLUMN {col_name} {col_type}"
-            )
+            self._conn.execute(f"ALTER TABLE forgetting_state ADD COLUMN {col_name} {col_type}")
 
         # ★ access_log 表 —— 记录每次检索的时间戳，支持时间窗口查询
         migrator.migrate(
@@ -173,7 +169,9 @@ class ForgettingCurve:
 
     # ── 自适应衰减阈值 ──────────────────────────────────────────────────────
 
-    def _compute_adaptive_stages(self, memory_type: str, recall_count: int) -> dict[str, tuple[int, int | None]]:
+    def _compute_adaptive_stages(
+        self, memory_type: str, recall_count: int
+    ) -> dict[str, tuple[int, int | None]]:
         """基于记忆类型和访问频率计算自适应衰减阶段。
 
         规则：
@@ -212,7 +210,9 @@ class ForgettingCurve:
         final_multiplier = max(multiplier, freq_multiplier)
 
         adaptive_active = max(1, int(base_active * final_multiplier))
-        adaptive_consolidating = max(adaptive_active + 1, int(base_consolidating * final_multiplier))
+        adaptive_consolidating = max(
+            adaptive_active + 1, int(base_consolidating * final_multiplier)
+        )
         adaptive_archived = max(adaptive_consolidating + 1, int(base_archived * final_multiplier))
 
         return {
@@ -222,7 +222,9 @@ class ForgettingCurve:
             "forgotten": (adaptive_archived, None),
         }
 
-    def set_stage_config(self, memory_type: str, active_days: int, consolidating_days: int, archived_days: int) -> None:
+    def set_stage_config(
+        self, memory_type: str, active_days: int, consolidating_days: int, archived_days: int
+    ) -> None:
         """为指定记忆类型设置自定义阶段阈值。
 
         Args:
@@ -231,10 +233,16 @@ class ForgettingCurve:
             consolidating_days: consolidating 阶段天数上限
             archived_days: archived 阶段天数上限
         """
-        if active_days <= 0 or consolidating_days <= active_days or archived_days <= consolidating_days:
+        if (
+            active_days <= 0
+            or consolidating_days <= active_days
+            or archived_days <= consolidating_days
+        ):
             logger.warning(
                 "set_stage_config 参数无效: active=%d, consolidating=%d, archived=%d（需满足 0 < active < consolidating < archived）",
-                active_days, consolidating_days, archived_days,
+                active_days,
+                consolidating_days,
+                archived_days,
             )
             return
         self._stage_config[memory_type] = {
@@ -244,7 +252,10 @@ class ForgettingCurve:
         }
         logger.info(
             "已为记忆类型 '%s' 设置自定义阈值: active=%d, consolidating=%d, archived=%d",
-            memory_type, active_days, consolidating_days, archived_days,
+            memory_type,
+            active_days,
+            consolidating_days,
+            archived_days,
         )
 
     # ── 冷启动 & access_log 清理 ────────────────────────────────────────────
@@ -302,9 +313,7 @@ class ForgettingCurve:
         assert self._conn is not None
         try:
             cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
-            cursor = self._conn.execute(
-                "DELETE FROM access_log WHERE accessed_at < ?", (cutoff,)
-            )
+            cursor = self._conn.execute("DELETE FROM access_log WHERE accessed_at < ?", (cutoff,))
             deleted = cursor.rowcount
             self._conn.commit()
             if deleted > 0:

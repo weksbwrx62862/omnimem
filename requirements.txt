@@ -2,7 +2,7 @@
 # 安装: pip install -r requirements.txt
 
 # 向量数据库
-chromadb>=0.4.0,<0.7.0
+chromadb>=0.4.0,<1.6.0
 
 # BM25 关键词检索
 rank-bm25>=0.2.0,<0.3.0
