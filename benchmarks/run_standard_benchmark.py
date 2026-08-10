@@ -55,8 +55,7 @@ def run_benchmark(
     benchmark_name = benchmark_name.lower().strip()
     if benchmark_name not in _SUPPORTED_BENCHMARKS:
         raise ValueError(
-            f"不支持的基准测试: '{benchmark_name}'，"
-            f"可选: {', '.join(_SUPPORTED_BENCHMARKS)}"
+            f"不支持的基准测试: '{benchmark_name}'，" f"可选: {', '.join(_SUPPORTED_BENCHMARKS)}"
         )
 
     logger.info("开始运行基准测试: %s", benchmark_name)
@@ -321,7 +320,9 @@ def main() -> None:
     )
 
     if len(sys.argv) < 2:
-        print(f"用法: python -m omnimem.benchmarks.run_standard_benchmark <benchmark_name> [dataset_path] [output_path]")
+        print(
+            "用法: python -m omnimem.benchmarks.run_standard_benchmark <benchmark_name> [dataset_path] [output_path]"
+        )
         print(f"支持的基准测试: {', '.join(_SUPPORTED_BENCHMARKS)}, quick")
         sys.exit(1)
 
@@ -329,6 +330,7 @@ def main() -> None:
 
     if benchmark_name == "quick":
         from omnimem.provider import OmniMemProvider
+
         provider = OmniMemProvider()
         provider.initialize(session_id="bench-quick")
         result = run_quick_benchmark(provider)
@@ -339,6 +341,7 @@ def main() -> None:
     output_path = sys.argv[3] if len(sys.argv) > 3 else None
 
     from omnimem.provider import OmniMemProvider
+
     provider = OmniMemProvider()
     provider.initialize(session_id=f"bench-{benchmark_name}")
 
