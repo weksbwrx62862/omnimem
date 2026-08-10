@@ -16,17 +16,16 @@ PerformanceOptimizer — 性能优化模块。
 
 from __future__ import annotations
 
-import json
 import logging
-import os
 import sqlite3
 import time
 from collections import OrderedDict
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Optional, Any, Callable
 from pathlib import Path
+from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +33,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class CacheEntry:
     """缓存条目"""
+
     key: str
     value: Any
     created_at: datetime
@@ -44,6 +44,7 @@ class CacheEntry:
 @dataclass
 class PerformanceStats:
     """性能统计"""
+
     total_calls: int
     cache_hits: int
     cache_misses: int
@@ -206,7 +207,7 @@ class PerformanceOptimizer:
                 f"""SELECT memory_id, recall_count, last_accessed
                     FROM forgetting_state
                     WHERE memory_id IN ({placeholders})""",
-                memory_ids
+                memory_ids,
             ).fetchall()
 
             conn.close()
@@ -216,7 +217,7 @@ class PerformanceOptimizer:
                 # 简化计算
                 if last_accessed:
                     try:
-                        last_dt = datetime.fromisoformat(last_accessed.replace('+00:00', ''))
+                        last_dt = datetime.fromisoformat(last_accessed.replace("+00:00", ""))
                         if last_dt.tzinfo is None:
                             last_dt = last_dt.replace(tzinfo=timezone.utc)
 
@@ -257,10 +258,7 @@ class PerformanceOptimizer:
 
         with ThreadPoolExecutor(max_workers=self._max_workers) as executor:
             # 提交所有任务
-            future_to_id = {
-                executor.submit(evaluate_func, mid): mid
-                for mid in memory_ids
-            }
+            future_to_id = {executor.submit(evaluate_func, mid): mid for mid in memory_ids}
 
             # 收集结果
             for future in as_completed(future_to_id):

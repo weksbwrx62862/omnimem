@@ -115,7 +115,5 @@ class TestShouldStoreExtended(unittest.TestCase):
         self.assertFalse(ok)
 
     def test_dialog_fragment_blocked(self) -> None:
-        ok, reason = SecurityValidator.should_store(
-            "User: hello\nAssistant: hi there"
-        )
+        ok, reason = SecurityValidator.should_store("User: hello\nAssistant: hi there")
         self.assertFalse(ok)
