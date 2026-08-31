@@ -180,7 +180,9 @@ def _generate_mental_model(observations: list[str]) -> str:
 class ConsolidationEngine:
     """Consolidation 管线：事实 → 经验 → 观察 → 心智模型。"""
 
-    def __init__(self, data_dir: Path | None = None, fact_threshold: int = 10, llm_client: Any | None = None):
+    def __init__(
+        self, data_dir: Path | None = None, fact_threshold: int = 10, llm_client: Any | None = None
+    ):
         self._data_dir = data_dir
         self._fact_threshold = fact_threshold
         self._llm_client = llm_client
@@ -352,7 +354,10 @@ class ConsolidationEngine:
         system = "你是一个记忆整合引擎，从多条事实中提炼核心观察。输出必须是连贯的自然语言。"
         try:
             result = self._llm_client.call_sync(
-                prompt=prompt, system=system, max_tokens=400, temperature=0.4,
+                prompt=prompt,
+                system=system,
+                max_tokens=400,
+                temperature=0.4,
             )
             content = result.content if result else None
             if content and content.strip():
@@ -369,7 +374,10 @@ class ConsolidationEngine:
         system = "你是一个深度反思引擎，从观察中提炼抽象规律。输出必须是连贯的自然语言。"
         try:
             result = self._llm_client.call_sync(
-                prompt=prompt, system=system, max_tokens=400, temperature=0.4,
+                prompt=prompt,
+                system=system,
+                max_tokens=400,
+                temperature=0.4,
             )
             content = result.content if result else None
             if content and content.strip():
@@ -485,7 +493,9 @@ class ConsolidationEngine:
                         ),
                     )
                 except Exception as e:
-                    logger.warning("Consolidation persist failed for %s: %s", item.get("item_id"), e)
+                    logger.warning(
+                        "Consolidation persist failed for %s: %s", item.get("item_id"), e
+                    )
             self._conn.commit()
 
     def _query_items(self, stage: str, keyword: str = "", limit: int = 20) -> list[dict[str, Any]]:

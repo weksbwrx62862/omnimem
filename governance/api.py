@@ -10,11 +10,10 @@ MemoryAPI — 记忆系统 REST API 模块。
 
 from __future__ import annotations
 
-import json
 import logging
-from typing import Optional, Any
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +21,7 @@ logger = logging.getLogger(__name__)
 class MemoryAPI:
     """记忆系统 API"""
 
-    def __init__(self, governance_dir: Optional[Path] = None):
+    def __init__(self, governance_dir: Path | None = None):
         from omnimem.governance.forgetting import ForgettingCurve
         from omnimem.governance.visualizer import get_visualizer
 
@@ -119,7 +118,7 @@ class MemoryAPI:
             logger.error("run_archive_cycle failed: %s", e)
             return {"error": str(e)}
 
-    def generate_dashboard(self, output_dir: Optional[str] = None) -> dict[str, Any]:
+    def generate_dashboard(self, output_dir: str | None = None) -> dict[str, Any]:
         """生成仪表盘
 
         Args:
@@ -169,10 +168,10 @@ class MemoryAPI:
 
 
 # 全局实例
-_api: Optional[MemoryAPI] = None
+_api: MemoryAPI | None = None
 
 
-def get_api(governance_dir: Optional[Path] = None) -> MemoryAPI:
+def get_api(governance_dir: Path | None = None) -> MemoryAPI:
     """获取全局 API 实例"""
     global _api
     if _api is None:
@@ -199,7 +198,7 @@ def run_archive_cycle() -> dict[str, Any]:
     return api.run_archive_cycle()
 
 
-def generate_dashboard(output_dir: Optional[str] = None) -> dict[str, Any]:
+def generate_dashboard(output_dir: str | None = None) -> dict[str, Any]:
     """生成仪表盘"""
     api = get_api()
     return api.generate_dashboard(output_dir)
