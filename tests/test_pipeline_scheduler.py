@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import time
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -14,6 +14,7 @@ class TestPipelineScheduler:
     @pytest.fixture
     def scheduler(self):
         from omnimem.core.pipeline_scheduler import PipelineScheduler
+
         config = {
             "persona_trigger_every_n": 3,
             "persona_min_interval_seconds": 1,  # 1秒便于测试
@@ -95,6 +96,7 @@ class TestPipelineScheduler:
     def test_no_bg_executor_graceful(self):
         """没有 bg_executor 时应优雅降级（不崩溃）。"""
         from omnimem.core.pipeline_scheduler import PipelineScheduler
+
         config = {"persona_trigger_every_n": 1, "persona_min_interval_seconds": 0}
         scheduler = PipelineScheduler(config=config, bg_executor=None)
         scheduler._last_persona_time["s1"] = 0

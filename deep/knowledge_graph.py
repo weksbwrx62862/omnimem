@@ -168,24 +168,54 @@ def extract_entities(text: str) -> list[str]:
         "司马欧阳上官皇甫诸葛令狐司徒"
     )
     _concept_words_set = {
-        "问题", "方法", "方案", "结果", "数据", "功能", "配置", "部署",
-        "测试", "需求", "设计", "架构", "实现", "开发", "优化", "模块",
-        "系统", "服务", "接口", "组件", "引擎", "管道", "通道", "版本",
-        "发布", "编辑", "文档", "搜索", "索引", "缓存", "进程", "线程",
+        "问题",
+        "方法",
+        "方案",
+        "结果",
+        "数据",
+        "功能",
+        "配置",
+        "部署",
+        "测试",
+        "需求",
+        "设计",
+        "架构",
+        "实现",
+        "开发",
+        "优化",
+        "模块",
+        "系统",
+        "服务",
+        "接口",
+        "组件",
+        "引擎",
+        "管道",
+        "通道",
+        "版本",
+        "发布",
+        "编辑",
+        "文档",
+        "搜索",
+        "索引",
+        "缓存",
+        "进程",
+        "线程",
     }
     # 扫描所有2-4字中文序列，检测是否为人名
     # 使用滑动窗口，逐字从姓氏位置开始匹配
     chars = list(text)
     seen_names = set()
     # 句子连接词/动词/介词 — 不应出现在人名中
-    _name_break_chars = set("的在了和是就也都很到说要去了不有这那个什么怎么可以需要通过使用进行包括负责参与处理完成检查确认执行部署配置优化升级返回发送接收")
+    _name_break_chars = set(
+        "的在了和是就也都很到说要去了不有这那个什么怎么可以需要通过使用进行包括负责参与处理完成检查确认执行部署配置优化升级返回发送接收"
+    )
     for i in range(len(chars)):
         if chars[i] not in _cn_surnames_ent:
             continue
         for name_len in (3, 2):  # 中文名通常 2-3 字
             if i + name_len > len(chars):
                 continue
-            cand = "".join(chars[i:i + name_len])
+            cand = "".join(chars[i : i + name_len])
             if not re.match(r"^[\u4e00-\u9fff]+$", cand):
                 continue
             # 末尾字符不应是句连接词
@@ -286,6 +316,7 @@ def _extract_triples_llm(text: str) -> list[tuple[str, str, str]]:
     raw = resp.choices[0].message.content or ""
 
     import json
+
     m = re.search(r"\[\s\S]*\]", raw)
     if not m:
         return []
@@ -295,6 +326,8 @@ def _extract_triples_llm(text: str) -> list[tuple[str, str, str]]:
         for item in items
         if item.get("s") and item.get("p") and item.get("o")
     ]
+
+
 def infer_relations(existing_triples: list[dict[str, Any]]) -> list[tuple[str, str, str]]:
     """基于已有三元组推理隐含关系。
 
@@ -809,10 +842,16 @@ class KnowledgeGraph:
         # 生成自然语言上下文
         lines = []
         relation_labels = {
-            "uses": "使用", "belongs_to": "属于", "causes": "导致",
-            "replaces": "替代", "connects_to": "关联到", "contains": "包含",
-            "located_in": "位于", "better_than": "优于",
-            "not_uses": "不使用", "differs_from": "不同于",
+            "uses": "使用",
+            "belongs_to": "属于",
+            "causes": "导致",
+            "replaces": "替代",
+            "connects_to": "关联到",
+            "contains": "包含",
+            "located_in": "位于",
+            "better_than": "优于",
+            "not_uses": "不使用",
+            "differs_from": "不同于",
             "related": "相关于",
         }
         seen_pairs: set[tuple[str, str, str]] = set()
@@ -854,7 +893,6 @@ class KnowledgeGraph:
                 contexts.append(ctx)
 
         return "\n\n".join(contexts)
-
 
     # ─── 实体操作 ─────────────────────────────────────────────
 
@@ -943,9 +981,14 @@ class KnowledgeGraph:
             return ""
 
         relation_labels = {
-            "uses": "开始使用", "belongs_to": "归属", "causes": "引起",
-            "replaces": "取代", "connects_to": "关联到", "contains": "包含",
-            "located_in": "位于", "better_than": "优于",
+            "uses": "开始使用",
+            "belongs_to": "归属",
+            "causes": "引起",
+            "replaces": "取代",
+            "connects_to": "关联到",
+            "contains": "包含",
+            "located_in": "位于",
+            "better_than": "优于",
         }
         lines = [f"[{entity} 时间线]"]
         for t in timeline:
@@ -971,6 +1014,7 @@ class KnowledgeGraph:
             return []
         try:
             from datetime import datetime, timedelta, timezone
+
             since = (datetime.now(timezone.utc) - timedelta(days=since_days)).isoformat()
             rows = self._conn.execute(
                 "SELECT * FROM triples WHERE created_at >= ? "
@@ -1028,7 +1072,9 @@ class KnowledgeGraph:
         try:
             from collections import deque
 
-            visited: dict[str, tuple[Any, ...]] = {start: ()}  # entity -> (prev_entity, triple_dict)
+            visited: dict[str, tuple[Any, ...]] = {
+                start: ()
+            }  # entity -> (prev_entity, triple_dict)
             queue: deque[str] = deque([start])
             depth = 0
 
@@ -1212,14 +1258,37 @@ def _classify_entity_poleo(name: str) -> str:
     优先级: Location/Organization已知 > Person > 后缀匹配Organization > Location > Event > Object
     """
     # ── 已知地名（优先级最高，避免姓氏误判）──
-    known_locations = {"北京", "上海", "深圳", "杭州", "广州", "成都", "浙江", "金华",
-                       "中国", "美国", "日本", "旧金山", "硅谷"}
+    known_locations = {
+        "北京",
+        "上海",
+        "深圳",
+        "杭州",
+        "广州",
+        "成都",
+        "浙江",
+        "金华",
+        "中国",
+        "美国",
+        "日本",
+        "旧金山",
+        "硅谷",
+    }
     if name in known_locations:
         return "location"
 
     # ── 已知组织名（优先级高于人名模式）──
-    known_orgs = {"OpenAI", "Google", "Meta", "Microsoft", "Apple", "Amazon",
-                  "Anthropic", "Nous Research", "Hermes", "GitHub"}
+    known_orgs = {
+        "OpenAI",
+        "Google",
+        "Meta",
+        "Microsoft",
+        "Apple",
+        "Amazon",
+        "Anthropic",
+        "Nous Research",
+        "Hermes",
+        "GitHub",
+    }
     if name in known_orgs:
         return "org"
 
@@ -1235,9 +1304,29 @@ def _classify_entity_poleo(name: str) -> str:
     if len(name) >= 2 and len(name) <= 4 and re.match(r"^[\u4e00-\u9fff]+$", name):
         # 排除明确非人名的概念词
         concept_words = {
-            "问题", "方法", "方案", "结果", "数据", "功能", "配置", "部署",
-            "测试", "需求", "设计", "架构", "实现", "开发", "优化", "模块",
-            "系统", "服务", "接口", "组件", "引擎", "管道", "通道",
+            "问题",
+            "方法",
+            "方案",
+            "结果",
+            "数据",
+            "功能",
+            "配置",
+            "部署",
+            "测试",
+            "需求",
+            "设计",
+            "架构",
+            "实现",
+            "开发",
+            "优化",
+            "模块",
+            "系统",
+            "服务",
+            "接口",
+            "组件",
+            "引擎",
+            "管道",
+            "通道",
         }
         # 姓氏匹配 或 结尾为常见人名后缀
         if name[0] in _cn_surnames and name not in concept_words:
@@ -1320,12 +1409,8 @@ def extract_entities_llm(
         entities = data.get("entities", [])
         triples_data = data.get("triples", [])
 
-        classified_entities = [
-            f"{e.get('type', 'Object')}:{e.get('name', '')}" for e in entities
-        ]
-        llm_triples = [
-            (t[0], t[1], t[2]) for t in triples_data if len(t) >= 3
-        ]
+        classified_entities = [f"{e.get('type', 'Object')}:{e.get('name', '')}" for e in entities]
+        llm_triples = [(t[0], t[1], t[2]) for t in triples_data if len(t) >= 3]
         return classified_entities, llm_triples
     except Exception as e:
         logger.warning("LLM entity extraction failed, fallback regex: %s", e)
