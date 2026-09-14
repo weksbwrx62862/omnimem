@@ -66,8 +66,10 @@ class PipelineScheduler:
         min_interval = self._config.get("persona_min_interval_seconds", 300)
         now = time.time()
 
-        if (self._new_memory_counts[session_key] >= count_trigger
-                and now - self._last_persona_time[session_key] >= min_interval):
+        if (
+            self._new_memory_counts[session_key] >= count_trigger
+            and now - self._last_persona_time[session_key] >= min_interval
+        ):
             self._schedule_l3_persona(session_key)
             self._new_memory_counts[session_key] = 0
             self._last_persona_time[session_key] = now
@@ -79,7 +81,9 @@ class PipelineScheduler:
         """
         delay = self._config.get("pipeline_l2_delay_after_l1_seconds", 90)
         self._set_timer(
-            self._l2_timers, session_key, delay,
+            self._l2_timers,
+            session_key,
+            delay,
             lambda: self._schedule_l2(session_key),
         )
 
@@ -98,7 +102,9 @@ class PipelineScheduler:
         """
         if self._reflect_fn:
             try:
-                self._reflect_fn({"query": "最近的对话场景和模式", "disposition": {"skepticism": 2}})
+                self._reflect_fn(
+                    {"query": "最近的对话场景和模式", "disposition": {"skepticism": 2}}
+                )
                 self._logger.info("L2 scenario induction completed for session %s", session_key)
             except Exception as e:
                 self._logger.warning("L2 scenario induction failed: %s", e)
@@ -119,9 +125,7 @@ class PipelineScheduler:
             except Exception as e:
                 self._logger.warning("L3 persona generation failed: %s", e)
 
-    def _set_timer(
-        self, timers_dict: dict, key: str, delay: float, callback: Callable
-    ) -> None:
+    def _set_timer(self, timers_dict: dict, key: str, delay: float, callback: Callable) -> None:
         """统一的 Timer 设置，带 TTL 保护。"""
         # 取消已有 timer
         old = timers_dict.pop(key, None)
@@ -152,7 +156,8 @@ class PipelineScheduler:
         if count > 0:
             self._logger.info(
                 "Session %s ending with %d unprocessed new memories, scheduling L3",
-                session_key, count,
+                session_key,
+                count,
             )
             self._schedule_l3_persona(session_key)
 

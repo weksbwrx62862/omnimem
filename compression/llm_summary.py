@@ -72,7 +72,9 @@ Respond in JSON format with keys: goal, progress, decisions, key_info, open_issu
 """
 
 
-def llm_summarize(messages: str, llm_call_fn: Callable[[str], str] | None = None) -> StructuredSummary:
+def llm_summarize(
+    messages: str, llm_call_fn: Callable[[str], str] | None = None
+) -> StructuredSummary:
     """使用 LLM 生成结构化摘要。
 
     Args:

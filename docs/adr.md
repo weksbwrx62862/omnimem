@@ -215,18 +215,26 @@ OmniMem 的混合检索引擎需要一个嵌入式向量数据库来存储和检
 # 向量库抽象接口
 class VectorStore(ABC):
     @abstractmethod
-    async def upsert(self, ids: list[str], embeddings: list[list[float]], metadatas: list[dict]): ...
+    async def upsert(
+        self, ids: list[str], embeddings: list[list[float]], metadatas: list[dict]
+    ): ...
     @abstractmethod
-    async def query(self, query_embedding: list[float], n_results: int, where: dict | None = None) -> QueryResult: ...
+    async def query(
+        self, query_embedding: list[float], n_results: int, where: dict | None = None
+    ) -> QueryResult: ...
     @abstractmethod
     async def delete(self, ids: list[str]): ...
+
 
 # ChromaDB 实现（默认）
 class ChromaVectorStore(VectorStore): ...
 
+
 # 可扩展的其他实现
-class QdrantVectorStore(VectorStore): ...   # 高性能场景
-class FAISSVectorStore(VectorStore): ...    # 纯内存场景
+class QdrantVectorStore(VectorStore): ...  # 高性能场景
+
+
+class FAISSVectorStore(VectorStore): ...  # 纯内存场景
 ```
 
 通过 `vector_factory.py` 工厂类根据配置动态实例化。
@@ -501,6 +509,7 @@ class PluginRegistry:
         if plugin_class is None:
             return None
         return plugin_class()
+
 
 # 插件接口
 class InternalizationPlugin(ABC):

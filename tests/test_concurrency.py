@@ -13,7 +13,6 @@ from omnimem.memory.meta_store import MetaStore
 
 
 class TestSQLiteConcurrency(unittest.TestCase):
-
     def test_meta_store_concurrent_writes(self) -> None:
         tmpdir = Path(tempfile.mkdtemp())
         meta = MetaStore(tmpdir / "meta")

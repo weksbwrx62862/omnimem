@@ -31,9 +31,7 @@ class SyncFacade:
         gov_dir = data_dir / "governance"
 
         # Saga 事务协调
-        self._saga = SagaCoordinator(
-            pending_path=gov_dir / "saga_pending.json"
-        )
+        self._saga = SagaCoordinator(pending_path=gov_dir / "saga_pending.json")
         # 后台任务执行器
         self._bg_executor = BackgroundTaskExecutor(max_workers=2)
 

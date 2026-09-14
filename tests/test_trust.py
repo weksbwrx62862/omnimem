@@ -10,7 +10,6 @@ from omnimem.governance.feedback import FeedbackCollector
 
 
 class TestTrustScoring(unittest.TestCase):
-
     def setUp(self) -> None:
         self.tmpdir = tempfile.mkdtemp()
         self.fb = FeedbackCollector(Path(self.tmpdir))
@@ -33,9 +32,7 @@ class TestTrustScoring(unittest.TestCase):
 
     def test_no_clicks_low_trust(self) -> None:
         """有展示但未点击的记忆信任低。"""
-        self.fb.record_shown("q", [
-            {"memory_id": "shown_only", "_source": "vector"}
-        ])
+        self.fb.record_shown("q", [{"memory_id": "shown_only", "_source": "vector"}])
         trust = self.fb.get_memory_trust("shown_only")
         # 展示不增加信任，应保持默认接近0.5
         self.assertLess(trust, 0.55)
