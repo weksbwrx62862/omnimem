@@ -14,8 +14,14 @@ from omnimem.deep.reflect import ReflectEngine
 
 
 class DeepMemoryFacade:
-
-    def __init__(self, data_dir: Path, config: Any, recall_fn: Any, llm_fn: Any = None, llm_client: Any = None):
+    def __init__(
+        self,
+        data_dir: Path,
+        config: Any,
+        recall_fn: Any,
+        llm_fn: Any = None,
+        llm_client: Any = None,
+    ):
         deep_dir = data_dir / "deep"
         self._consolidation = ConsolidationEngine(
             deep_dir,

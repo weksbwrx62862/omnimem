@@ -13,13 +13,12 @@ import tempfile
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from unittest.mock import MagicMock, PropertyMock, patch
+from unittest.mock import MagicMock, patch
 
+from omnimem.config import OmniMemConfig
+from omnimem.memory.drawer_closet import DrawerClosetStore
 from omnimem.provider import OmniMemProvider
 from omnimem.retrieval.engine import HybridRetriever
-from omnimem.memory.drawer_closet import DrawerClosetStore
-from omnimem.config import OmniMemConfig
-
 
 # ──────────────────────────────────────────────
 # Provider: Facade __getattr__/__setattr__ 代理
@@ -162,14 +161,47 @@ class TestFacadeAttrProxy(unittest.TestCase):
         self.assertEqual(provider._turn_count, 0)
 
     def test_facade_attr_map_completeness(self) -> None:
-        expected_storage = {"_soul", "_core_block", "_budget", "_wing_room", "_store", "_index", "_md_store"}
-        expected_retrieval = {"_retriever", "_context_manager", "_perception", "_feedback", "_prefetch_lock", "_reflect_cache", "_prefetch_executor"}
-        expected_governance = {"_conflict_resolver", "_temporal_decay", "_forgetting", "_privacy", "_provenance", "_sync_engine", "_vector_clock", "_auditor", "_audit_logger", "_rbac"}
+        expected_storage = {
+            "_soul",
+            "_core_block",
+            "_budget",
+            "_wing_room",
+            "_store",
+            "_index",
+            "_md_store",
+        }
+        expected_retrieval = {
+            "_retriever",
+            "_context_manager",
+            "_perception",
+            "_feedback",
+            "_prefetch_lock",
+            "_reflect_cache",
+            "_prefetch_executor",
+        }
+        expected_governance = {
+            "_conflict_resolver",
+            "_temporal_decay",
+            "_forgetting",
+            "_privacy",
+            "_provenance",
+            "_sync_engine",
+            "_vector_clock",
+            "_auditor",
+            "_audit_logger",
+            "_rbac",
+        }
         expected_sync = {"_saga", "_bg_executor", "_store_service", "_kv_cache", "_lora_trainer"}
         expected_deep = {"_consolidation", "_knowledge_graph", "_reflect_engine"}
 
         all_mapped = set(OmniMemProvider._FACADE_ATTR_MAP.keys())
-        all_expected = expected_storage | expected_retrieval | expected_governance | expected_sync | expected_deep
+        all_expected = (
+            expected_storage
+            | expected_retrieval
+            | expected_governance
+            | expected_sync
+            | expected_deep
+        )
         self.assertEqual(all_mapped, all_expected)
 
 
@@ -207,7 +239,9 @@ class TestPrefetchThreadPoolReuse(unittest.TestCase):
         mock_deep.knowledge_graph = MagicMock()
 
         mock_config = MagicMock()
-        mock_config.get = lambda k, d=None: {"enable_prefetch": True, "prefetch_timeout": 5}.get(k, d)
+        mock_config.get = lambda k, d=None: {"enable_prefetch": True, "prefetch_timeout": 5}.get(
+            k, d
+        )
 
         object.__setattr__(provider, "_retrieval", mock_retrieval)
         object.__setattr__(provider, "_storage", mock_storage)
@@ -342,7 +376,9 @@ class TestQueryCacheTTLConfigurable(unittest.TestCase):
     """查询缓存 TTL 应可通过构造函数参数配置。"""
 
     def test_default_ttl(self) -> None:
-        self.assertEqual(HybridRetriever(data_dir=Path("/tmp/omnimem_test_ttl1"))._query_cache_ttl, 60.0)
+        self.assertEqual(
+            HybridRetriever(data_dir=Path("/tmp/omnimem_test_ttl1"))._query_cache_ttl, 60.0
+        )
 
     def test_custom_ttl_via_constructor(self) -> None:
         hybrid = HybridRetriever(data_dir=Path("/tmp/omnimem_test_ttl2"), query_cache_ttl=120.0)
@@ -362,8 +398,12 @@ class TestQueryCacheTTLConfigurable(unittest.TestCase):
 
     def test_cache_ttl_used_in_search(self) -> None:
         hybrid = HybridRetriever(data_dir=Path("/tmp/omnimem_test_ttl4"), query_cache_ttl=0.1)
-        hybrid._query_cache["test_key|1500|rag|10"] = ([{"memory_id": "m1", "content": "test", "score": 0.5}], 0.0)
+        hybrid._query_cache["test_key|1500|rag|10"] = (
+            [{"memory_id": "m1", "content": "test", "score": 0.5}],
+            0.0,
+        )
         import time
+
         time.sleep(0.2)
         now = time.time()
         cache_key = "test_key|1500|rag|10"

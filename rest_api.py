@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import json
-from http.server import HTTPServer, BaseHTTPRequestHandler
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Any
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import urlparse
 
 
 class OmniMemAPIHandler(BaseHTTPRequestHandler):
@@ -41,9 +41,26 @@ class OmniMemAPIHandler(BaseHTTPRequestHandler):
         path = parsed.path
 
         if path == "/api/health":
-            self._send_json(200, self._sdk.health_check() if self._sdk else {"status": "not initialized"})
+            self._send_json(
+                200, self._sdk.health_check() if self._sdk else {"status": "not initialized"}
+            )
         elif path == "/api/tools":
-            self._send_json(200, {"tools": ["memorize", "recall", "reflect", "govern", "compact", "detail", "export", "import", "health"]})
+            self._send_json(
+                200,
+                {
+                    "tools": [
+                        "memorize",
+                        "recall",
+                        "reflect",
+                        "govern",
+                        "compact",
+                        "detail",
+                        "export",
+                        "import",
+                        "health",
+                    ]
+                },
+            )
         else:
             self._send_json(404, {"error": f"Not found: {path}"})
 
@@ -85,7 +102,12 @@ class OmniMemAPIHandler(BaseHTTPRequestHandler):
         pass
 
 
-def run_api(host: str = "0.0.0.0", port: int = 8765, storage_dir: str | None = None, config: dict | None = None):
+def run_api(
+    host: str = "0.0.0.0",
+    port: int = 8765,
+    storage_dir: str | None = None,
+    config: dict | None = None,
+):
     from omnimem.sdk import OmniMemSDK
 
     sdk = OmniMemSDK(storage_dir=storage_dir, config=config)

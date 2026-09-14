@@ -17,9 +17,9 @@ import json
 import logging
 import os
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from functools import lru_cache
-from collections.abc import Callable
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -32,13 +32,13 @@ class ContextBudget:
     # 预取阶段最大 token 数（注入到上下文的摘要）
     max_prefetch_tokens: int = 300
     # 每条记忆摘要最大字符数
-    max_summary_chars: int = 60       # L0：符号摘要（prefetch 注入）
+    max_summary_chars: int = 60  # L0：符号摘要（prefetch 注入）
     # L1：结构化概览（recall 返回）
-    max_overview_chars: int = 200     # ★ 新增：L1 概览最大字符数
+    max_overview_chars: int = 200  # ★ 新增：L1 概览最大字符数
     # 预取最多返回多少条
     max_prefetch_items: int = 8
     # 按需拉取（omni_detail）最大字符数
-    max_detail_chars: int = 500       # L2：完整原文（omni_detail 拉取）
+    max_detail_chars: int = 500  # L2：完整原文（omni_detail 拉取）
     # 去重相似度阈值
     dedup_similarity_threshold: float = 0.7
     # ★ OPT: Mermaid 画布 token 预算比例（参考 TencentDB mmdMaxTokenRatio=0.2）
@@ -53,12 +53,12 @@ class ContextBudget:
 class RefinedItem:
     """精炼后的记忆条目。"""
 
-    summary: str          # L0：符号摘要（≤60 字）
+    summary: str  # L0：符号摘要（≤60 字）
     memory_id: str
     memory_type: str
     confidence: float
     source_type: str = ""  # kv_cache / vector / bm25 / graph
-    overview: str = ""     # ★ L1：结构化概览（≤200 字）
+    overview: str = ""  # ★ L1：结构化概览（≤200 字）
     # ★ OPT: 溯源链 node_id，支持从摘要下钻到原文
     trace_node_id: str = ""
     # ★ OPT: 底层原文引用路径
@@ -208,12 +208,12 @@ class ContextManager:
     @staticmethod
     def refine_overview(raw_content: str, max_chars: int = 200) -> str:
         """将原始记忆内容精炼为结构化概览（L1 层）。
-        
+
         内化 OpenViking overview() 的设计：
         - L0 summary: 一句话核心事实（60 字）
         - L1 overview: 结构化概览，保留关键条件和上下文（200 字）
         - L2 full: 完整原文
-        
+
         策略：
         1. 如果内容 ≤ max_chars，直接返回
         2. 提取关键句子（含条件/因果/时序标记的句子）
@@ -222,7 +222,7 @@ class ContextManager:
         content = raw_content.strip()
         if len(content) <= max_chars:
             return content
-        
+
         # 剥离结构化标记
         for pattern, replacement in ContextManager._COMPRESSION_TEMPLATES:
             matched = re.search(pattern, content)
@@ -230,19 +230,36 @@ class ContextManager:
                 compressed = re.sub(pattern, replacement, content, count=1)
                 if len(compressed.strip()) <= max_chars:
                     return compressed.strip()
-        
+
         # 提取关键句子：含信号词的句子优先
         content_for_split = content.replace("\n", " ").replace("\r", " ")
         sentences = re.split(r"[。！？.!?]", content_for_split)
-        
+
         # 信号词权重
         signal_words = [
-            "但是", "不过", "然而", "如果", "除非", "因为", "所以",
-            "注意", "重要", "关键", "必须", "不要",
-            "but", "however", "if", "because", "important", "note",
-            "must", "should", "don't",
+            "但是",
+            "不过",
+            "然而",
+            "如果",
+            "除非",
+            "因为",
+            "所以",
+            "注意",
+            "重要",
+            "关键",
+            "必须",
+            "不要",
+            "but",
+            "however",
+            "if",
+            "because",
+            "important",
+            "note",
+            "must",
+            "should",
+            "don't",
         ]
-        
+
         scored_sentences = []
         for s in sentences:
             s = s.strip()
@@ -254,13 +271,13 @@ class ContextManager:
                 if sw in s_lower:
                     score += 2
             scored_sentences.append((s, score))
-        
+
         # 按信号词权重降序 + 原文顺序排列
         # 使用 enumerate 保持原始顺序索引
         for idx, (s, score) in enumerate(scored_sentences):
             pass  # 已经在列表中
         scored_sentences.sort(key=lambda x: (-x[1], content_for_split.find(x[0])))
-        
+
         # 拼接到预算内
         result_parts = []
         used_chars = 0
@@ -270,11 +287,11 @@ class ContextManager:
                 used_chars += len(s) + 1
             else:
                 break
-        
+
         if not result_parts:
             # 回退：取前 max_chars
             return content_for_split[:max_chars].strip()
-        
+
         return "。".join(result_parts) + "。"
 
     # ─── 去重 (Dedup) ─────────────────────────────────────────
@@ -297,7 +314,7 @@ class ContextManager:
             os.path.dirname(os.path.dirname(__file__)), "config", "synonyms.json"
         )
         try:
-            with open(config_path, "r", encoding="utf-8") as f:
+            with open(config_path, encoding="utf-8") as f:
                 external = json.load(f)
             if isinstance(external, dict):
                 for key, val in external.items():

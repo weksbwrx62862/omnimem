@@ -31,7 +31,7 @@ _FTS5_SPECIAL = set("+-*()\"'^~&|!@: ")
 
 def _escape_fts5_query(text: str) -> str:
     """转义 FTS5 特殊字符以用于 MATCH 查询。"""
-    return "".join(f"\"{c}\"" if c in _FTS5_SPECIAL else c for c in text)
+    return "".join(f'"{c}"' if c in _FTS5_SPECIAL else c for c in text)
 
 
 class DistillationEngine:
@@ -98,14 +98,26 @@ class DistillationEngine:
              "input_count": int, "distilled_count": int, "facts": [...]}
         """
         if not self._llm_fn:
-            logger.warning("DistillationEngine: no LLM function configured, distillation unavailable")
-            return {"status": "llm_unavailable", "input_count": 0, "distilled_count": 0, "facts": []}
+            logger.warning(
+                "DistillationEngine: no LLM function configured, distillation unavailable"
+            )
+            return {
+                "status": "llm_unavailable",
+                "input_count": 0,
+                "distilled_count": 0,
+                "facts": [],
+            }
 
         # 频率控制
         now = time.time()
         if now - self._last_distill_time < self._min_interval_seconds:
-            return {"status": "skipped", "reason": "too_soon",
-                    "next_available_in": round(self._min_interval_seconds - (now - self._last_distill_time), 1)}
+            return {
+                "status": "skipped",
+                "reason": "too_soon",
+                "next_available_in": round(
+                    self._min_interval_seconds - (now - self._last_distill_time), 1
+                ),
+            }
 
         if turn_count and self._last_distill_turn >= turn_count:
             return {"status": "skipped", "reason": "already_distilled_this_turn"}
@@ -114,13 +126,16 @@ class DistillationEngine:
         raw_facts = self._get_recent_auto_facts(wing_filter, max_facts)
         logger.info("Distillation started: %d raw facts", len(raw_facts))
         if len(raw_facts) < min_facts:
-            return {"status": "no_facts", "input_count": len(raw_facts),
-                    "distilled_count": 0, "facts": []}
+            return {
+                "status": "no_facts",
+                "input_count": len(raw_facts),
+                "distilled_count": 0,
+                "facts": [],
+            }
 
         # 构建蒸馏 prompt
         facts_text = "\n".join(
-            f"- {f.get('content', f.get('summary', ''))[:300]}"
-            for f in raw_facts
+            f"- {f.get('content', f.get('summary', ''))[:300]}" for f in raw_facts
         )
 
         distill_model = self._get_distill_model()
@@ -139,12 +154,20 @@ class DistillationEngine:
             )
         except Exception as e:
             logger.warning("DistillationEngine LLM call failed: %s", e)
-            return {"status": "llm_unavailable", "input_count": len(raw_facts),
-                    "distilled_count": 0, "facts": []}
+            return {
+                "status": "llm_unavailable",
+                "input_count": len(raw_facts),
+                "distilled_count": 0,
+                "facts": [],
+            }
 
         if not raw_response or not raw_response.strip():
-            return {"status": "distilled", "input_count": len(raw_facts),
-                    "distilled_count": 0, "facts": []}
+            return {
+                "status": "distilled",
+                "input_count": len(raw_facts),
+                "distilled_count": 0,
+                "facts": [],
+            }
 
         # 解析蒸馏结果
         distilled = self._parse_distilled_facts(raw_response.strip())
@@ -154,13 +177,15 @@ class DistillationEngine:
         if distilled and self._memorize_fn:
             for fact in distilled:
                 try:
-                    result = self._memorize_fn({
-                        "content": fact,
-                        "memory_type": "fact",
-                        "confidence": 3,
-                        "scope": "personal",
-                        "privacy": "personal",
-                    })
+                    result = self._memorize_fn(
+                        {
+                            "content": fact,
+                            "memory_type": "fact",
+                            "confidence": 3,
+                            "scope": "personal",
+                            "privacy": "personal",
+                        }
+                    )
                     if result and "error" not in str(result).lower():
                         stored_count += 1
                 except Exception as e:
@@ -186,9 +211,7 @@ class DistillationEngine:
             return model if model else None  # None 表示使用默认
         return None
 
-    def _get_recent_auto_facts(
-        self, wing_filter: str, limit: int
-    ) -> list[dict[str, Any]]:
+    def _get_recent_auto_facts(self, wing_filter: str, limit: int) -> list[dict[str, Any]]:
         """从 Store 获取最近自动捕获的事实。"""
         if not self._store:
             return []

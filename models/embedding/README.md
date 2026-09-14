@@ -46,9 +46,10 @@ pip install -U sentence-transformers
 Then you can use the model like this:
 ```python
 from sentence_transformers import SentenceTransformer
+
 sentences = ["This is an example sentence", "Each sentence is converted"]
 
-model = SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')
+model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
 embeddings = model.encode(sentences)
 print(embeddings)
 ```
@@ -61,29 +62,34 @@ from transformers import AutoTokenizer, AutoModel
 import torch
 import torch.nn.functional as F
 
-#Mean Pooling - Take attention mask into account for correct averaging
+
+# Mean Pooling - Take attention mask into account for correct averaging
 def mean_pooling(model_output, attention_mask):
-    token_embeddings = model_output[0] #First element of model_output contains all token embeddings
+    token_embeddings = model_output[
+        0
+    ]  # First element of model_output contains all token embeddings
     input_mask_expanded = attention_mask.unsqueeze(-1).expand(token_embeddings.size()).float()
-    return torch.sum(token_embeddings * input_mask_expanded, 1) / torch.clamp(input_mask_expanded.sum(1), min=1e-9)
+    return torch.sum(token_embeddings * input_mask_expanded, 1) / torch.clamp(
+        input_mask_expanded.sum(1), min=1e-9
+    )
 
 
 # Sentences we want sentence embeddings for
-sentences = ['This is an example sentence', 'Each sentence is converted']
+sentences = ["This is an example sentence", "Each sentence is converted"]
 
 # Load model from HuggingFace Hub
-tokenizer = AutoTokenizer.from_pretrained('sentence-transformers/all-MiniLM-L6-v2')
-model = AutoModel.from_pretrained('sentence-transformers/all-MiniLM-L6-v2')
+tokenizer = AutoTokenizer.from_pretrained("sentence-transformers/all-MiniLM-L6-v2")
+model = AutoModel.from_pretrained("sentence-transformers/all-MiniLM-L6-v2")
 
 # Tokenize sentences
-encoded_input = tokenizer(sentences, padding=True, truncation=True, return_tensors='pt')
+encoded_input = tokenizer(sentences, padding=True, truncation=True, return_tensors="pt")
 
 # Compute token embeddings
 with torch.no_grad():
     model_output = model(**encoded_input)
 
 # Perform pooling
-sentence_embeddings = mean_pooling(model_output, encoded_input['attention_mask'])
+sentence_embeddings = mean_pooling(model_output, encoded_input["attention_mask"])
 
 # Normalize embeddings
 sentence_embeddings = F.normalize(sentence_embeddings, p=2, dim=1)
@@ -96,18 +102,18 @@ print(sentence_embeddings)
 
 ## Background
 
-The project aims to train sentence embedding models on very large sentence level datasets using a self-supervised 
-contrastive learning objective. We used the pretrained [`nreimers/MiniLM-L6-H384-uncased`](https://huggingface.co/nreimers/MiniLM-L6-H384-uncased) model and fine-tuned in on a 
+The project aims to train sentence embedding models on very large sentence level datasets using a self-supervised
+contrastive learning objective. We used the pretrained [`nreimers/MiniLM-L6-H384-uncased`](https://huggingface.co/nreimers/MiniLM-L6-H384-uncased) model and fine-tuned in on a
 1B sentence pairs dataset. We use a contrastive learning objective: given a sentence from the pair, the model should predict which out of a set of randomly sampled other sentences, was actually paired with it in our dataset.
 
-We developed this model during the 
-[Community week using JAX/Flax for NLP & CV](https://discuss.huggingface.co/t/open-to-the-community-community-week-using-jax-flax-for-nlp-cv/7104), 
+We developed this model during the
+[Community week using JAX/Flax for NLP & CV](https://discuss.huggingface.co/t/open-to-the-community-community-week-using-jax-flax-for-nlp-cv/7104),
 organized by Hugging Face. We developed this model as part of the project:
 [Train the Best Sentence Embedding Model Ever with 1B Training Pairs](https://discuss.huggingface.co/t/train-the-best-sentence-embedding-model-ever-with-1b-training-pairs/7354). We benefited from efficient hardware infrastructure to run the project: 7 TPUs v3-8, as well as intervention from Googles Flax, JAX, and Cloud team member about efficient deep learning frameworks.
 
 ## Intended uses
 
-Our model is intended to be used as a sentence and short paragraph encoder. Given an input text, it outputs a vector which captures 
+Our model is intended to be used as a sentence and short paragraph encoder. Given an input text, it outputs a vector which captures
 the semantic information. The sentence vector may be used for information retrieval, clustering or sentence similarity tasks.
 
 By default, input text longer than 256 word pieces is truncated.
@@ -115,11 +121,11 @@ By default, input text longer than 256 word pieces is truncated.
 
 ## Training procedure
 
-### Pre-training 
+### Pre-training
 
 We use the pretrained [`nreimers/MiniLM-L6-H384-uncased`](https://huggingface.co/nreimers/MiniLM-L6-H384-uncased) model. Please refer to the model card for more detailed information about the pre-training procedure.
 
-### Fine-tuning 
+### Fine-tuning
 
 We fine-tune the model using a contrastive objective. Formally, we compute the cosine similarity from each possible sentence pairs from the batch.
 We then apply the cross entropy loss by comparing with true pairs.
@@ -159,7 +165,7 @@ We sampled each dataset given a weighted probability which configuration is deta
 | [Eli5](https://huggingface.co/datasets/eli5) | [paper](https://doi.org/10.18653/v1/p19-1346) | 325,475 |
 | [Flickr 30k](https://shannon.cs.illinois.edu/DenotationGraph/) | [paper](https://transacl.org/ojs/index.php/tacl/article/view/229/33) | 317,695 |
 | [Stack Exchange](https://huggingface.co/datasets/flax-sentence-embeddings/stackexchange_xml) Duplicate questions (titles) | | 304,525 |
-| AllNLI ([SNLI](https://nlp.stanford.edu/projects/snli/) and [MultiNLI](https://cims.nyu.edu/~sbowman/multinli/) | [paper SNLI](https://doi.org/10.18653/v1/d15-1075), [paper MultiNLI](https://doi.org/10.18653/v1/n18-1101) | 277,230 | 
+| AllNLI ([SNLI](https://nlp.stanford.edu/projects/snli/) and [MultiNLI](https://cims.nyu.edu/~sbowman/multinli/) | [paper SNLI](https://doi.org/10.18653/v1/d15-1075), [paper MultiNLI](https://doi.org/10.18653/v1/n18-1101) | 277,230 |
 | [Stack Exchange](https://huggingface.co/datasets/flax-sentence-embeddings/stackexchange_xml) Duplicate questions (bodies) | | 250,519 |
 | [Stack Exchange](https://huggingface.co/datasets/flax-sentence-embeddings/stackexchange_xml) Duplicate questions (titles+bodies) | | 250,460 |
 | [Sentence Compression](https://github.com/google-research-datasets/sentence-compression) | [paper](https://www.aclweb.org/anthology/D13-1155/) | 180,000 |
