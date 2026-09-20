@@ -10,13 +10,37 @@
 > `09b4adf`（**撤回 8 个依赖未提交 WIP 的测试**）→ `3f55027`（本次文档收口）。详见 §3.1。
 > **既有 WIP 63 modified + 21 deleted 一律未碰**，详见 §3.2。
 > 数据来源：AST 静态扫描运行时模块 × `tests/` 全部 import 的真实引用图，非凭记忆
-> 回归基线：全量 suite **2680 passed / 0 failed**，经四次独立运行确认
+> 回归基线：全量 suite **2680 passed / 0 failed**（工作树），经四次独立运行确认；
+> 另有第五次在 **fresh clone** 里跑，见列表末尾
 > （`272.30s` 系统解释器 + `sys.path` 修复 → `/tmp/full_suite_fixed.log`；
 > `275.03s` 经 `run_tests.sh` → `/tmp/run_tests_sh_full.log`；
 > `267.45s` **重建后的 `.venv`，无任何路径 hack** → `/tmp/venv_rebuild_suite.log`；
-> `255.63s` **3 个 commit 落地后**复验已提交状态 → `/tmp/post_commit_suite.log`）
-> **⚠️ 上述四次全部在"带 WIP 的工作树"里跑**，因此会掩盖"已提交内容能否独立跑通"。
-> 补做的 fresh clone 复验见 §3.1 末尾，结论：HEAD 需 `37c5f59` + `09b4adf` 才自洽。
+> `255.63s` **3 个 commit 落地后**复验已提交状态 → `/tmp/post_commit_suite.log`；
+> `36.93s` **fresh clone（代码状态 `09b4adf`，ext4）→ 2462 passed / 0 failed / 0 skipped**
+> → `/tmp/clone_ext4_suite.log`。扫描器两状态的原始输出亦已留存：
+> `/tmp/scan_committed.txt`、`/tmp/scan_worktree.txt`）
+>
+> **2680 − 2462 = 218 的用例差已逐文件核实**（用 `pytest_collection_finish` 钩子导出
+> 两边全部 nodeid 后做集合差，不是估算）：
+> ```
+> 工作树独有 272 例
+>   216 例 = 09b4adf 撤回的 8 个测试
+>            （fusion_mixin 66 / forgetting_stages 49 / hybrid_orchestrator 43 /
+>              query_planner 26 / privacy_audit 15 / dashboard 8 /
+>              multimodal_ingest 6 / recall_agentic_wiring 3）
+>    56 例 = 5 个「WIP-modified 测试文件」在工作树里新增的用例
+>            （compression 25 / provider 19 / memory 10 / memory_service 1 / handlers 1）
+>            —— 这 5 个文件两边都有，但工作树版本被 WIP 改过，属 §3.2「不要动」
+> clone 独有  54 例 = 6 个被 WIP 在磁盘上删掉、但 HEAD 里仍在的测试
+>            （llm_summary 14 / provider_lifecycle 12 / mermaid_canvas 11 /
+>              provider_initializer 7 / drawer_closet_saga 5 / drawer_closet 5）
+> 净差 272 − 54 = 218 ✓
+> ```
+> 8 个撤回文件的用例数以上代码块为准（合计 216）。注意 `test_query_planner.py` 只有 **26** 例，
+> 而 §2 Tier2 表里提到的「49 用例」是 `test_forgetting_stages.py`，两者别混。
+>
+> **⚠️ 前四次全部在"带 WIP 的工作树"里跑**，因此会掩盖"已提交内容能否独立跑通"。
+> 补做的第五次 fresh clone 复验见 §3.1 末尾，结论：需 `37c5f59` + `09b4adf` 才自洽。
 
 ---
 
