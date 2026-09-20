@@ -1,13 +1,17 @@
 # OmniMem 未完成工作清单
 
 > 生成时间：2026-09-20（16:16 补入全量回归数字；16:40 复核 AST 扫描并修正若干条目；
-> 17:30 重建 `.venv`，§1 由"绕过"升级为"根治"）
-> 仓库：`/home/xxh/.hermes/plugins/omnimem`（git 分支 `master`，**全部改动均未提交**）
+> 17:30 重建 `.venv`，§1 由"绕过"升级为"根治"；18:10 本轮产出已分 3 个 commit 入库，
+> 并清理 `.venv.broken.bak`）
+> 仓库：`/home/xxh/.hermes/plugins/omnimem`（git 分支 `master`）。
+> **本轮产出已提交**（`cf7388a` / `ac799fb` / `69efd86`，均未 push）；
+> **既有 WIP 63 modified + 21 deleted 一律未碰**，详见 §3。
 > 数据来源：AST 静态扫描运行时模块 × `tests/` 全部 import 的真实引用图，非凭记忆
-> 回归基线：全量 suite **2680 passed / 0 failed**，经三次独立运行确认
+> 回归基线：全量 suite **2680 passed / 0 failed**，经四次独立运行确认
 > （`272.30s` 系统解释器 + `sys.path` 修复 → `/tmp/full_suite_fixed.log`；
 > `275.03s` 经 `run_tests.sh` → `/tmp/run_tests_sh_full.log`；
-> `267.45s` **重建后的 `.venv`，无任何路径 hack** → `/tmp/venv_rebuild_suite.log`）
+> `267.45s` **重建后的 `.venv`，无任何路径 hack** → `/tmp/venv_rebuild_suite.log`；
+> `255.63s` **3 个 commit 落地后**复验已提交状态 → `/tmp/post_commit_suite.log`）
 
 ---
 
@@ -20,7 +24,8 @@
 | 已被至少一个测试文件 import | 145（73%） |
 | 未被任何测试 import | 52（Tier1 6 + Tier2 28 + Tier3 18） |
 | `tests/` 下 `.py` 文件数 | 133（131 个 `test_*.py` + `__init__.py` + `conftest.py`） |
-| `tests/` 下未跟踪（新增、未提交）文件 | 68（62 个为 2026-09-20 当天产出） |
+| `tests/` 下仍未跟踪的文件 | **仅 2 个** `.bak.20260730_155405` 陈旧快照（其余 66 个已提交，见 §3.1） |
+| 本轮 commit | 3 个：`cf7388a`（文档+工具）、`ac799fb`（62 测试）、`69efd86`（4 游离测试） |
 | 全量 suite 结果 | 2680 passed / 0 failed |
 | 本地跑测试的推荐命令 | `.venv/bin/python -m pytest tests/`（**无需任何路径 hack**，见 §1） |
 | `.venv` 状态 | 2026-09-20 重建：uv + CPython 3.13.13，136 包 / 1.5G，`torch 2.14.0+cpu`，0 个 CUDA 包 |
@@ -188,15 +193,15 @@ requirements-dev.txt` 的干净环境，`packaging`/`cryptography` 均来自 pip
 
 - [x] (d) **重建 `.venv` —— 已完成，是当前推荐路径**。此后本地跑测试只需
       `.venv/bin/python -m pytest tests/`，**不需要任何路径 hack**。见上表与验证输出。
-- [x] (a) 在仓库根加 `run_tests.sh` —— **已完成并实测通过，但已降级为历史兜底**。它针对的是
-      "用系统解释器 `/home/xxh/.local/bin/python3.13` 跑测试"这一旧路径，通过在解释器内
+- [x] (a) 在仓库根加 `run_tests.sh` —— **已完成、已实测、已提交（`cf7388a`），并决定保留**。
+      它针对"用系统解释器 `/home/xxh/.local/bin/python3.13` 跑测试"这一旧路径，通过在解释器内
       `sys.path.append` 绕过遮蔽（注意不能用 `PYTHONPATH` 表达本修复 —— PYTHONPATH 必然排在
-      site-packages 之前，正是病因）。重建 venv 后该前提消失，脚本可以删除；保留它的唯一价值
-      是不依赖 venv 也能复现全量测试。**是否删除待用户决定。**
+      site-packages 之前，正是病因）。重建 venv 后它**降级为兜底**：36 行、已入库、删除是净损失，
+      且是 venv 缺失/损坏时唯一不依赖 venv 的复现路径 —— 而 venv 损坏正是本轮真实发生过的事。
 - [ ] (c) 卸载 `/usr/lib/python3/dist-packages/cryptography` 46.0.5 —— **动系统包，需用户授权**，
       未执行。重建 venv 后已无必要：venv 内 `include-system-site-packages = false`，
       系统包不再参与解析。仅在"有人继续用系统解释器裸跑 pytest"时才需要。
-- [ ] (e) 清理 `.venv.broken.bak`（1.4G）—— **删除操作，需用户授权**，未执行。
+- [x] (e) 清理 `.venv.broken.bak`（1.4G）—— **已删除**，释放 1.4G。删除依据见 §3.1。
 - [x] ~~更新 `AGENTS.md` / `CLAUDE.md` 中记录的测试命令~~ —— **原记录有误，已作废**：两个文件
       内容完全相同，且从头到尾都是 GitNexus 自动生成块（`<!-- gitnexus:start -->` …
       `<!-- gitnexus:end -->`），**并不含任何测试命令**，手改会在下次 `analyze` 时被覆盖。
@@ -404,39 +409,63 @@ requirements-dev.txt` 的干净环境，`packaging`/`cryptography` 均来自 pip
 
 ---
 
-## 3. 提交与仓库状态（需用户决策，未执行）
+## 3. 提交与仓库状态（本轮产出已提交；既有 WIP 仍未动）
 
-当前 `git status` 混杂了 **既有 WIP** 与 **本轮新增**，两者必须分开处理。
+当前 `git status` 混杂了 **既有 WIP** 与 **本轮新增**。本轮新增已按三个**可独立 revert** 的
+commit 入库；既有 WIP 一律未碰。
 
-### 3.1 本轮产出（纯新增，安全）
+### 3.1 本轮产出（已提交）
 
-**(a) `tests/` 下 68 个未跟踪文件。** 按 mtime 拆分：62 个为 2026-09-20 当天产出，4 个为 2026-08-07
-（`test_query_planner.py`、`test_hms_p0/p1/p2*.py`），另 2 个为 `.bak.20260730_155405` 备份文件。
+提交前按 `AGENTS.md` 要求跑了 `node .gitnexus/run.cjs detect-changes --scope all`，结果
+**84 文件 / 266 符号 / 105 流程 / risk=critical**。该 critical **全部来自既有 WIP**，与本轮
+无关，已核实两点：
 
-**(b) 本次复核新增的 3 个文件（`tests/` 之外）：**
+- 本轮 3 个新文件在变更图中**完全不出现**（`grep -E "pending_work|run_tests.sh|scan_test_coverage"` 无命中）
+- `scripts/scan_test_coverage.py` **零 importer** —— 一个 markdown 文档、一个 bash 脚本、
+  一个无人 import 的独立分析脚本，结构上不可能影响代码图
 
-| 文件 | 用途 | 重建 venv 后的状态 |
+| commit | 内容 | 规模 |
 |---|---|---|
-| `run_tests.sh` | §1 路径修复的落地入口，已实测全量 2680 passed | **降级为历史兜底**，可删（见 §1 选项 (a)） |
-| `scripts/scan_test_coverage.py` | §0/§2 全部覆盖率与 tier 数字的可复现来源 | 仍需要，是本文所有数字的唯一出处 |
-| `docs/pending_work.md` | 本文 | 仍需要 |
+| `cf7388a` | `docs/pending_work.md` + `scripts/scan_test_coverage.py` + `run_tests.sh` | 3 文件 |
+| `ac799fb` | 本轮 62 个补测文件（2026-09-20） | 14796 行 |
+| `69efd86` | 收编 4 个自 2026-08-07 游离的测试 + ruff 清零 | 761 行 |
 
-> `scripts/` 目录本身在覆盖率口径里属"范围外"，但 `scan_test_coverage.py` 是**分析工具**
-> 而非产品脚本，与 `scripts/mock_conflict_test.py` 等性质不同，建议一并提交以便复现。
+入库前的核查（均实测，非推断）：
 
-> ✅ **已核实：`.venv.broken.bak`（1.4G）不会污染 `git add -A`。** `git check-ignore` 对它
-> 返回 rc=1（`.gitignore` 第 48 行只匹配 `.venv/`），乍看像是个隐患；但 `git status --porcelain
-> --ignored=matching` 显示其内容全为 `!!`。原因是 venv 自带一个内容为 `*` 的内层
-> `.gitignore`，随目录一起被搬了过去，把自身全部内容忽略掉，因此该目录对 git 完全不可见。
-> 新建的 `.venv` 同理。**结论：无需改 `.gitignore`，但删除该备份仍需用户授权。**
+- **暂存集精确比对**：`git add --pathspec-from-file` 后 `diff` 暂存清单与预期清单 → EXACT MATCH；
+  全程**未用 `git add -A`**，故 63 个 WIP modified 文件一个都没被卷进来
+- **`.bak` 已排除**：`tests/*.bak.20260730_155405` 两个文件**未提交**（见下）
+- **凭据扫描**：对 68 个未跟踪文件跑硬编码密钥正则，仅命中
+  `tests/test_security.py.bak.*` 两行 —— 经核实是脱敏测试的**夹具字面量**
+  （`text = 'api_key="supersecret12345678"'`、假 Fernet token `gAAAAAB1234567890abcdef`），
+  **非真实凭据**，误报
+- **ruff**：62 个新文件 `All checks passed`；4 个游离文件有 10 处 I001/F401，已 `--fix`
+  并复跑 **68 passed** 确认未破坏行为
+- **提交后复验**：3 个 commit 全部落地后重跑全量 suite → **2680 passed / 0 failed（255.63s）**，
+  即入库状态本身是绿的（`/tmp/post_commit_suite.log`）
 
-- [ ] **待用户授权后**再 commit。建议逐个点名 `git add`，**不用 `git add -A`**：
-      `git add tests/test_*.py scripts/scan_test_coverage.py docs/pending_work.md`
-      （`run_tests.sh` 是否入列取决于 §1 选项 (a) 的删除决定）
-- [ ] 决定 2 个 `.bak` 文件是删除还是保留。
-- [ ] 决定 `.venv.broken.bak`（1.4G）删除还是保留 —— 新 venv 已验证可用，回滚价值已很低。
-- [ ] `run_tests.sh` 硬编码了本机绝对路径，若要进主干需先确认是否改为可配置
-      （或只作为本地未跟踪工具、加进 `.gitignore`）。
+**已决定保留的：**
+
+- ✅ `run_tests.sh` **不删**。它只有 36 行、已入库（删除反而是净损失），且是 venv 缺失/损坏时
+  唯一不依赖 venv 的复现路径 —— 而"venv 损坏"正是本轮真实发生过的事。已在其头部注释里
+  写明"首选 `.venv/bin/python -m pytest tests/`，本脚本为兜底"。
+  硬编码绝对路径属**有意为之**：该问题是这台机器特有的，CI 不经过此脚本。
+- ✅ `.venv.broken.bak`（1.4G）**已删除**，释放 1.4G（磁盘 76G/116G）。删除前已核实三件事：
+  1. 新 venv 健康 —— `pytest 9.1.1 / cryptography 50.0.1 / torch 2.14.0+cpu`
+  2. 该备份**从来不是可用回滚点** —— 其 `pyvenv.cfg` 写死 `executable = /usr/bin/python3.13`，
+     而该文件**已不存在**，正是它损坏的原因
+  3. `git ls-files .venv.broken.bak` → **0 个跟踪文件**，纯派生产物，可由
+     `requirements-dev.txt` 完全重建，删除不损失任何工作成果
+
+**仍未决：**
+
+- [ ] `tests/test_rest_api.py.bak.20260730_155405`、`tests/test_security.py.bak.20260730_155405`
+      两个陈旧快照。**保持未跟踪，本轮不删** —— 它们与已跟踪的同名文件相差 85 行且从未入库，
+      删除即不可恢复。价值判断需由用户做。
+- [ ] `tests/` 下仍有 **7 处 ruff 报错**（`test_compression.py`、`test_memory.py`、
+      `test_provider.py`、`test_rest_api.py`×2、`test_security.py`×2），全部为 I001/F401。
+      **这 5 个文件都是 ` M` 状态的既有 WIP**，按 §3.2 约定不碰，故未修 ——
+      即"全仓 ruff 清零"目前是被 WIP 破坏的，不是被本轮破坏的。
 
 ### 3.2 既有 WIP（**不要动**，非本轮产生）
 - 63 个 modified 文件，涉及 `api_fastapi.py`、`mcp_server.py`、`config/_config.py`、
@@ -470,11 +499,12 @@ requirements-dev.txt` 的干净环境，`packaging`/`cryptography` 均来自 pip
 
 ## 5. 建议的推进顺序
 
-1. ~~把 §1 的路径修复固化进仓库~~ —— **已完成并根治**：先加 `run_tests.sh` 绕过，随后按用户选择
-   **重建 `.venv`**，并以"无 `PYTHONPATH`、无 `sys.path` hack"的干净方式第三次跑通全量
-   **2680 passed / 0 failed**（267.45s）。§1 从此不再是阻塞项，本地只需
-   `.venv/bin/python -m pytest tests/`。剩余的全是**清理决策，需用户授权**：
-   删 `run_tests.sh`？删 `.venv.broken.bak`（1.4G）？卸载系统 cryptography 46.0.5（现已无必要）？
+1. ~~把 §1 的路径修复固化进仓库~~ —— **已完成并根治，清理亦已收口**：先加 `run_tests.sh` 绕过，
+   随后**重建 `.venv`**，以"无 `PYTHONPATH`、无 `sys.path` hack"的干净方式跑通全量
+   **2680 passed / 0 failed**（267.45s）。此后本地只需 `.venv/bin/python -m pytest tests/`。
+   清理决定也已执行：`run_tests.sh` **保留并入库**（兜底价值），`.venv.broken.bak` **已删**
+   （释放 1.4G）。§1 仅剩一项**可选**动作 —— 卸载系统 cryptography 46.0.5（现已无必要）。
+   **下一步的真实工作在 §2 Tier 1。**
 2. 按 §2 **Tier 1（6 个）** 顺序补测。建议起手：
    - `core/warmup_manager.py`（131 行，纯逻辑、无外部依赖，成本最低）
    - `core/llm_initializer.py`（110 行；注意 `tests/test_provider_initializer.py` 已被删除，
