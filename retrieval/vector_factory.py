@@ -6,14 +6,21 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from omnimem.retrieval.vector_store import ChromaDBStore, QdrantStore, VectorStore, _CachedEmbeddingFunction
+from omnimem.retrieval.vector_store import (
+    ChromaDBStore,
+    QdrantStore,
+    VectorStore,
+    _CachedEmbeddingFunction,
+)
 
 logger = logging.getLogger(__name__)
 
 
 def create_vector_store(backend: str = "chromadb", **kwargs: Any) -> VectorStore:
     if backend == "chromadb":
-        persist_dir = kwargs.pop("persist_dir", kwargs.pop("data_dir", "/tmp/omnimem/retrieval/chroma"))
+        persist_dir = kwargs.pop(
+            "persist_dir", kwargs.pop("data_dir", "/tmp/omnimem/retrieval/chroma")
+        )
         if not isinstance(persist_dir, Path):
             persist_dir = Path(persist_dir)
         collection_name = kwargs.pop("collection_name", "omnimem")
@@ -40,7 +47,10 @@ def create_vector_store(backend: str = "chromadb", **kwargs: Any) -> VectorStore
         )
     elif backend == "faiss":
         from omnimem.retrieval.faiss_store import FAISSStore
-        persist_dir = kwargs.pop("persist_dir", kwargs.pop("data_dir", "/tmp/omnimem/retrieval/faiss"))
+
+        persist_dir = kwargs.pop(
+            "persist_dir", kwargs.pop("data_dir", "/tmp/omnimem/retrieval/faiss")
+        )
         if not isinstance(persist_dir, Path):
             persist_dir = Path(persist_dir)
         embedding_fn = kwargs.pop("embedding_fn", None)

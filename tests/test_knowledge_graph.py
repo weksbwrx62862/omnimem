@@ -7,12 +7,12 @@ import unittest
 from pathlib import Path
 
 from omnimem.deep.knowledge_graph import (
+    _POLEO_TYPES,
     KnowledgeGraph,
     _classify_entity_poleo,
-    _POLEO_TYPES,
     extract_entities,
-    extract_triples,
     extract_entities_llm,
+    extract_triples,
 )
 
 

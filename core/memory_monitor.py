@@ -1,7 +1,6 @@
 import gc
-import sys
-import threading
 import logging
+import threading
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -31,6 +30,7 @@ class MemoryMonitor:
         usage: dict[str, Any] = {"rss_mb": 0, "objects": 0}
         try:
             import psutil
+
             process = psutil.Process()
             usage["rss_mb"] = process.memory_info().rss / 1024 / 1024
         except ImportError:
@@ -49,7 +49,9 @@ class MemoryMonitor:
     def _check(self) -> None:
         usage = self.get_usage()
         if usage["rss_mb"] > self._warning_mb:
-            logger.warning("Memory usage: %.1fMB exceeds %.1fMB threshold", usage["rss_mb"], self._warning_mb)
+            logger.warning(
+                "Memory usage: %.1fMB exceeds %.1fMB threshold", usage["rss_mb"], self._warning_mb
+            )
             for cb in self._callbacks:
                 try:
                     cb(usage)
