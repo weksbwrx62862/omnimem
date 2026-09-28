@@ -132,7 +132,10 @@ class SecurityValidator:
         (r"authorized_keys", "ssh_backdoor"),
         (r"\$HOME/\.ssh|\~/\.ssh", "ssh_access"),
         (r"\$HOME/\.hermes/\.env|\~/\.hermes/.env", "hermes_env"),
-        (r"忽略.{0,4}(之前|先前|上面|上文|以上).{0,4}(指令|提示|规则|限制|约束)", "prompt_injection_zh"),
+        (
+            r"忽略.{0,4}(之前|先前|上面|上文|以上).{0,4}(指令|提示|规则|限制|约束)",
+            "prompt_injection_zh",
+        ),
         (r"你现在是.{0,6}(黑客|恶意|DAN|无限制|越狱)", "role_hijack_zh"),
         (r"忘掉.{0,4}(所有|一切).{0,4}(限制|规则|约束)", "forget_context_zh"),
         (r"(导出|输出|显示|打印|泄露).{0,4}(所有|全部).{0,4}(记忆|数据|内容|信息)", "exfil_zh"),
@@ -148,7 +151,10 @@ class SecurityValidator:
     _TRIVIAL_PATTERNS: list[tuple[str, str]] = [
         (r"^[\s\d]+$", "Whitespace/digits only"),
         (r"^[\W_]+$", "Symbols only"),
-        (r"^(ok|yes|no|done|good|bad|test|debug|hello|hi|thanks|thx|嗯|好|行|对|是|否)\s*$", "Single trivial word"),
+        (
+            r"^(ok|yes|no|done|good|bad|test|debug|hello|hi|thanks|thx|嗯|好|行|对|是|否)\s*$",
+            "Single trivial word",
+        ),
         (r"^(.)\1{10,}$", "Repeated character"),
         (r"^[a-zA-Z]{1,2}$", "Too short (1-2 chars)"),
         (r"^(DEBUG|INFO|WARN|ERROR|TRACE)\s", "Log line prefix only"),
@@ -214,7 +220,10 @@ class SecurityValidator:
     def is_memory_summary_item(cls, text: str) -> bool:
         """Check if text is a memory summary list item (e.g., '- [fact] ...')."""
         return bool(
-            re.match(r"^\s*- \[(fact|preference|correction|skill|procedural|event|action|reasoning)\]", text)
+            re.match(
+                r"^\s*- \[(fact|preference|correction|skill|procedural|event|action|reasoning)\]",
+                text,
+            )
         )
 
     @classmethod
@@ -254,8 +263,7 @@ class SecurityValidator:
         if len(meaningful) > 0:
             noise_chars = sum(1 for c in meaningful if not c.isalpha() and not c.isalnum())
             # CJK characters are alnum but may be miscounted. Allow CJK.
-            alpha_count = sum(1 for c in meaningful
-                            if c.isalpha() or ('\u4e00' <= c <= '\u9fff'))
+            alpha_count = sum(1 for c in meaningful if c.isalpha() or ("\u4e00" <= c <= "\u9fff"))
             if alpha_count == 0 and len(meaningful) > 2:
                 return True  # No alphabetic/CJK chars at all
             # ★ R46修复：有足够有意义文本时不因特殊字符多而拒绝
@@ -291,13 +299,13 @@ class SecurityValidator:
             score += 0.1
 
         # Alpha diversity bonus (unique chars / total meaningful chars)
-        meaningful = "".join(c for c in stripped if c.isalnum() or '\u4e00' <= c <= '\u9fff')
+        meaningful = "".join(c for c in stripped if c.isalnum() or "\u4e00" <= c <= "\u9fff")
         if len(meaningful) > 5:
             unique_ratio = len(set(meaningful)) / len(meaningful)
             score += min(unique_ratio * 0.2, 0.15)
 
         # CJK presence bonus
-        cjk_count = sum(1 for c in stripped if '\u4e00' <= c <= '\u9fff')
+        cjk_count = sum(1 for c in stripped if "\u4e00" <= c <= "\u9fff")
         if cjk_count > 2:
             score += 0.05
 

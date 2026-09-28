@@ -19,7 +19,6 @@ from omnimem.memory.wing_room import WingRoomManager
 
 
 class StorageFacade:
-
     def __init__(self, data_dir: Path, config: Any):
         self._data_dir = data_dir
         self._config = config

@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import logging
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any
 
 logger = logging.getLogger(__name__)
+
 
 @dataclass
 class DbWriteStep:
@@ -14,12 +16,14 @@ class DbWriteStep:
     compensate: Callable[[], Any] | None = None
     max_retries: int = 3
 
+
 @dataclass
 class CrossDbResult:
     success: bool
     completed: list[str] = field(default_factory=list)
     failed: str | None = None
     compensated: list[str] = field(default_factory=list)
+
 
 class CrossDbCoordinator:
     def __init__(self) -> None:
@@ -63,20 +67,29 @@ class CrossDbCoordinator:
         for step, attempt in self._pending:
             try:
                 if backoff_enabled and attempt > 0:
-                    time.sleep(min(0.1 * (2 ** attempt), 5.0))
+                    time.sleep(min(0.1 * (2**attempt), 5.0))
                 step.action()
                 succeeded += 1
-                logger.info("CrossDb retry step '%s' succeeded on attempt %d", step.name, attempt + 1)
+                logger.info(
+                    "CrossDb retry step '%s' succeeded on attempt %d", step.name, attempt + 1
+                )
             except Exception as e:
                 next_attempt = attempt + 1
                 if next_attempt >= step.max_retries:
                     logger.error(
                         "CrossDb step '%s' exceeded max_retries (%d): %s",
-                        step.name, step.max_retries, e,
+                        step.name,
+                        step.max_retries,
+                        e,
                     )
                 else:
                     remaining.append((step, next_attempt))
-                    logger.warning("CrossDb retry step '%s' failed (attempt %d): %s", step.name, next_attempt, e)
+                    logger.warning(
+                        "CrossDb retry step '%s' failed (attempt %d): %s",
+                        step.name,
+                        next_attempt,
+                        e,
+                    )
         self._pending = remaining
         return succeeded
 
