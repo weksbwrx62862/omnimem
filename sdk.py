@@ -36,6 +36,17 @@ _DISK_SPACE_WARNING_GB = 1.0
 _DISK_SPACE_CRITICAL_GB = 0.1
 
 
+def _join_text_segments(segments: Any) -> str:
+    """从多模态内容片段列表中抽取并拼接纯文本部分。"""
+    out: list[str] = []
+    for seg in segments or []:
+        if isinstance(seg, dict):
+            t = seg.get("text")
+            if isinstance(t, str) and t.strip():
+                out.append(t.strip())
+    return " ".join(out)
+
+
 class OmniMemSDK:
     """OmniMem 独立 SDK — 直接初始化子组件，不依赖 agent.memory_provider。"""
 
@@ -91,6 +102,74 @@ class OmniMemSDK:
         raw = handle_memorize(self._build_provider_proxy(), args)
         return json.loads(raw)
 
+    def memorize_media(
+        self,
+        content: Any,
+        media: Any = None,
+        *,
+        memory_type: str = "fact",
+        embed: bool = False,
+        backend: str = "hash",
+        **kwargs: Any,
+    ) -> dict:
+        """多模态摄入（改进项 #12）：内容寻址落盘媒体 + 记录可检索记忆。
+
+        - `content` 可为文本说明，或 OpenAI/Anthropic 风格的多模态结构（自动解析媒体）；
+        - `media` 可显式传入 MediaPart 列表（与 content 解析结果合并）；
+        - 内联字节按 sha256 去重落盘到 <data_dir>/media，仅 URL 引用不落盘；
+        - 生成的记忆正文 = 文本说明 + 各媒体引用行，从而复用既有文本检索通道；
+        - embed=True 时按需计算媒体向量（默认 hash 后端，clip 需装依赖），失败非致命。
+        返回 memorize 结果并附 `media` 引用列表。
+        """
+        from omnimem.multimodal import MediaStore, parse_content, parse_message
+
+        parts = list(media or [])
+        text = ""
+        if isinstance(content, str):
+            text = content
+        elif isinstance(content, dict):
+            parts += parse_message(content)
+            inner = content.get("content")
+            if isinstance(inner, str):
+                text = inner
+            elif isinstance(inner, list):
+                text = _join_text_segments(inner)
+        elif isinstance(content, list):
+            parts += parse_content(content)
+            text = _join_text_segments(content)
+        else:
+            text = "" if content is None else str(content)
+
+        store = MediaStore(self._data_dir)
+        raw_refs = store.put_all(parts)
+        seen: set[str] = set()
+        refs = [r for r in raw_refs if not (r.sha256 in seen or seen.add(r.sha256))]
+
+        lines = [text] if text else []
+        for r in refs:
+            lines.append(f"[media kind={r.kind} mime={r.mime} sha256={r.sha256} size={r.size}]")
+        caption = "\n".join(lines) if lines else f"multimodal memory ({len(refs)} media)"
+
+        result = self.memorize(caption, memory_type=memory_type, **kwargs)
+
+        if embed and refs:
+            try:
+                from omnimem.multimodal import create_media_embedder
+
+                embedder = create_media_embedder(backend=backend)
+                vectors: dict[str, list[float]] = {}
+                for r in refs:
+                    blob = store.get(r)
+                    if blob is not None:
+                        vectors[r.sha256] = embedder.embed(blob)
+                result["media_embeddings"] = {"backend": backend, "dimension": embedder.dimension, "vectors": vectors}
+            except Exception as e:  # 非致命：如缺 clip 依赖
+                logger.warning("媒体嵌入失败（非致命）: %s", e)
+                result["media_embeddings"] = {"error": str(e)}
+
+        result["media"] = [r.to_dict() for r in refs]
+        return result
+
     def recall(self, query: str, mode: str = "rag", **kwargs: Any) -> dict:
         """检索记忆。"""
         from omnimem.handlers.recall import handle_recall
@@ -98,6 +177,30 @@ class OmniMemSDK:
         args = {"query": query, "mode": mode, **kwargs}
         raw = handle_recall(self._build_provider_proxy(), args)
         return json.loads(raw)
+
+    def agentic_search(
+        self,
+        query: str,
+        *,
+        max_steps: int = 3,
+        top_k: int = 20,
+        final_k: int = 10,
+        mode: str = "rag",
+        min_hits: int = 3,
+        explain: bool = False,
+    ) -> dict:
+        """Agentic 迭代检索（改进项 #9）：检索→判据→再检索，逐轮补检后 RRF 融合。
+
+        纯增量入口，复用 self._retriever（HybridRetriever）；默认 mode="rag" 与
+        主检索一致。可后续通过注入 rewrite_fn/judge_fn 接 LLM（此处走启发式默认）。
+        """
+        from omnimem.retrieval.agentic import AgenticConfig, AgenticRetriever
+
+        cfg = AgenticConfig(
+            max_steps=max_steps, top_k=top_k, final_k=final_k, mode=mode, min_hits=min_hits,
+        )
+        engine = AgenticRetriever(self._retriever, config=cfg)
+        return engine.run(query).to_recall_dict(explain=explain)
 
     def reflect(self, query: str, **kwargs: Any) -> dict:
         """深层反思。"""
@@ -356,6 +459,33 @@ class OmniMemSDK:
             encryption_key=encryption_key,
         )
         return {"status": "imported", **result}
+
+    def import_file(
+        self,
+        input_path: str | Path,
+        *,
+        source: str = "auto",
+        skip_duplicates: bool = True,
+        resolve_conflicts: bool = True,
+        workdir: str | Path | None = None,
+        **kwargs: Any,
+    ) -> dict:
+        """导入外部记忆（改进项 #8）：mem0/letta/zep/graphiti/cognee/auto -> 落库。
+
+        先由来源适配器拆解为 OmniMem 原生信封，再复用 import_memories 管线。
+        返回导入统计，并附带生成的原生信封路径（native_envelope）便于排查。
+        """
+        from omnimem.importers import import_file as _import_file
+
+        return _import_file(
+            self,
+            input_path,
+            source=source,
+            skip_duplicates=skip_duplicates,
+            resolve_conflicts=resolve_conflicts,
+            workdir=workdir,
+            **kwargs,
+        )
 
     def _build_provider_proxy(self) -> Any:
         """构建轻量级 Provider 代理对象，供 handler 函数访问子组件。

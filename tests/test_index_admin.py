@@ -18,17 +18,15 @@ from omnimem.retrieval.index_admin import IndexAdminMixin
 
 
 class _FakeVector:
-    def __init__(self, *, raise_reset: bool = False) -> None:
+    def __init__(self, *, rebuild_result: int | None = None) -> None:
         self.reset_calls = 0
         self.deleted: list[str] = []
         self.added: list[dict[str, Any]] = []
         self.flush_calls = 0
         self.rebuild_parallel_kwargs: dict[str, Any] | None = None
-        self._raise_reset = raise_reset
+        self._rebuild_result = rebuild_result
 
     def reset(self) -> None:
-        if self._raise_reset:
-            raise RuntimeError("reset boom")
         self.reset_calls += 1
 
     def delete(self, mid: str) -> None:
@@ -46,7 +44,7 @@ class _FakeVector:
             "batch_size": batch_size,
             "max_workers": max_workers,
         }
-        return len(entries)
+        return len(entries) if self._rebuild_result is None else self._rebuild_result
 
 
 class _FakeBM25:
@@ -192,12 +190,24 @@ def test_rebuild_all_floors_batch_and_workers_to_one(engine: _Engine) -> None:
     assert kwargs["max_workers"] == 1
 
 
-def test_rebuild_all_survives_vector_reset_failure(facade: _FakeFacade) -> None:
-    facade._vector = _FakeVector(raise_reset=True)
+def test_rebuild_all_does_not_clear_the_index_first(engine: _Engine) -> None:
+    """★ 重建必须"先写后谈"，不许在算 embedding 之前把索引清空。
+
+    副本实测：旧实现逐条 delete 后并行 embedding 因模型加载锁超时而整体失败，
+    vectors 975→193、检索 0 命中 —— 一次失败的重建毁掉了可用索引。
+    """
+    engine.rebuild_all_from_entries([{"memory_id": "m1", "content": "c"}])
+    assert engine._facade._vector.reset_calls == 0
+    assert engine._facade._vector.deleted == []
+
+
+def test_failed_rebuild_leaves_existing_index_untouched(facade: _FakeFacade) -> None:
+    facade._vector = _FakeVector(rebuild_result=0)
     eng = _Engine(facade)
     out = eng.rebuild_all_from_entries([{"memory_id": "m", "content": "c"}])
-    assert out["vector"] == 1  # rebuild_vectors_parallel 仍返回长度
-    assert out["bm25"] == 1
+    assert out["vector"] == 0
+    assert facade._vector.reset_calls == 0, "重建失败时不得有任何形式的清空"
+    assert facade._vector.deleted == []
 
 
 def test_rebuild_all_bm25_skips_missing_fields(engine: _Engine) -> None:

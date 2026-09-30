@@ -72,6 +72,14 @@ def handle_memorize(provider: Any, args: dict[str, Any], llm_memory_manager: Any
     Returns:
         JSON 字符串
     """
+    # ★ P1-14 修复：输入类型校验，防止 None/bytes/int 触发未捕获异常
+    content = args.get("content") if isinstance(args, dict) else None
+    if not isinstance(content, str):
+        return json.dumps({
+            "status": "blocked",
+            "reason": f"Content must be string, got {type(content).__name__}"
+        })
+
     validation_error = _validate_memorize_args(args)
     if validation_error:
         return json.dumps({"status": "error", "reason": validation_error})

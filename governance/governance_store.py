@@ -240,8 +240,22 @@ class GovernanceStore:
         return result
 
     def _commit(self) -> None:
-        """提交写连接上的待写入数据。"""
-        if self._write_conn and self._pending_writes > 0:
+        """提交写连接上的待写入数据。
+
+        ★ 2026-09-16 修复（F4，本次事故的真正根因）：
+          原实现为 `if self._write_conn and self._pending_writes > 0:` ——
+          但 ForgettingCurve 等模块**不经过** store.execute()，而是直接在自己的
+          连接上 execute，只累加【自己的】_pending_writes；store 自己的计数器
+          始终为 0 → 该门控恒假 → `store.commit()` **永远不提交**。
+          后果：写事务永久悬挂在 WAL 中（in_transaction 恒 True），
+                外部/其他连接读不到新数据 → forgetting_state 与 access_log 停更，
+                且长期持有写锁引发次生的 "database is locked"（8 月日志 924 次）。
+
+          commit() 本身幂等、无副作用，因此去掉计数门控、无条件提交是安全的。
+          批量节流仍由各调用方自己的 _BATCH_THRESHOLD 决定（我们已把
+          ForgettingCurve._BATCH_THRESHOLD 设为 1 = 每写即提交）。
+        """
+        if self._write_conn:
             self._write_conn.commit()
             self._pending_writes = 0
 

@@ -190,10 +190,11 @@ class GovernanceFacade:
         new_trust = max(0.0, min(1.0, current_trust + delta))
         try:
             self._store.update(memory_id, {"trust": new_trust})
-            self._audit_logger.record(
-                action=("trust_helpful" if useful else "trust_unhelpful"),
-                target=memory_id,
-                detail=f"trust: {current_trust:.2f} -> {new_trust:.2f}",
+            # P3-10 修复：AuditLogger 只有 log() 方法，原 record() 调用不存在，修正为 log()
+            self._audit_logger.log(
+                operation=("trust_helpful" if useful else "trust_unhelpful"),
+                memory_id=memory_id,
+                details={"trust_from": round(current_trust, 2), "trust_to": round(new_trust, 2)},
             )
         except Exception as e:
             logger.warning("Trust feedback update failed for %s: %s", memory_id, e)

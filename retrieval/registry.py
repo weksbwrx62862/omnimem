@@ -9,7 +9,7 @@ from math import exp
 from pathlib import Path
 from typing import Any
 
-from omnimem.governance.temporal_kg import TemporalKnowledgeGraph
+from omnimem.deep.kg.backends.factory import create_graph_store
 from omnimem.retrieval.base import BaseRetriever, RetrievalResult
 from omnimem.retrieval.bm25 import BM25Retriever
 from omnimem.retrieval.vector import VectorRetriever
@@ -33,24 +33,50 @@ class _GraphRetriever(BaseRetriever):
     def __init__(self, data_dir: Path | None = None, config: Any | None = None, **kwargs: Any) -> None:
         self._data_dir = data_dir
         self._config = config
-        self._tkg: TemporalKnowledgeGraph | None = None
+        self._tkg: Any | None = None
 
     @property
     def name(self) -> str:
         return "graph"
 
-    def _ensure_tkg(self) -> TemporalKnowledgeGraph | None:
-        """延迟初始化 TemporalKnowledgeGraph，失败时返回 None。"""
+    def _cfg(self, key: str, default: Any = None) -> Any:
+        getter = getattr(self._config, "get", None)
+        if callable(getter):
+            try:
+                val = getter(key, default)
+                return default if val is None else val
+            except Exception:
+                return default
+        return default
+
+    def _ensure_tkg(self) -> Any | None:
+        """延迟初始化可插拔图后端（#6），失败时返回 None。
+
+        默认 sqlite（委托现有 TemporalKnowledgeGraph，零迁移）；config.graph_backend
+        指向 neo4j/falkordb 且提供 uri 时切换 Cypher 后端，否则回落 sqlite。
+        """
         if self._tkg is not None:
             return self._tkg
         if self._data_dir is None:
             logger.debug("图谱检索：未提供 data_dir，跳过初始化")
             return None
+        backend = str(self._cfg("graph_backend", "sqlite")).lower()
         try:
-            self._tkg = TemporalKnowledgeGraph(self._data_dir, config=self._config)
+            if backend in ("neo4j", "falkordb"):
+                uri = self._cfg(f"{backend}_uri") or self._cfg("graph_uri")
+                if uri:
+                    self._tkg = create_graph_store(
+                        backend,
+                        uri=uri,
+                        auth=self._cfg(f"{backend}_auth") or self._cfg("graph_auth"),
+                        database=self._cfg(f"{backend}_database", "neo4j"),
+                    )
+                    return self._tkg
+                logger.warning("图后端 %s 未配置 uri，回落 sqlite", backend)
+            self._tkg = create_graph_store("sqlite", data_dir=self._data_dir, config=self._config)
             return self._tkg
         except Exception as e:
-            logger.warning("TemporalKnowledgeGraph 初始化失败: %s", e)
+            logger.warning("图存储初始化失败: %s", e)
             return None
 
     @classmethod

@@ -63,8 +63,10 @@ def format_summary(label: str, cap: LogCapture) -> str:
 
 
 # ─── 测试用例 ────────────────────────────────────────────────
+# 实现体 _run_* 返回 (passed, failed) 供 main() 汇总；
+# pytest 入口 test_* 返回 None（避免 PytestReturnNotNoneWarning，未来版本将判 fail）
 
-def test_temporal_kg_refcount():
+def _run_temporal_kg_refcount():
     """测试 TemporalKnowledgeGraph 引用计数日志。"""
     from governance.temporal_kg import (
         TemporalKnowledgeGraph,
@@ -171,7 +173,12 @@ def test_temporal_kg_refcount():
     return passed, failed
 
 
-def test_forgetting_refcount():
+def test_temporal_kg_refcount() -> None:
+    passed, failed = _run_temporal_kg_refcount()
+    assert failed == 0, f"temporal_kg 引用计数场景失败数={failed}"
+
+
+def _run_forgetting_refcount():
     """★ M6-8: ForgettingCurve 已接入 GovernanceStore，不再使用引用计数。
     改为测试 GovernanceStore 共享模式下的基本功能。
     """
@@ -218,7 +225,12 @@ def test_forgetting_refcount():
     return passed, failed
 
 
-def test_ensure_conn_alive_logging():
+def test_forgetting_refcount() -> None:
+    passed, failed = _run_forgetting_refcount()
+    assert failed == 0, f"forgetting 场景失败数={failed}"
+
+
+def _run_ensure_conn_alive_logging():
     """测试 _ensure_conn_alive 的日志输出。"""
     from governance.temporal_kg import (
         TemporalKnowledgeGraph,
@@ -267,7 +279,12 @@ def test_ensure_conn_alive_logging():
     return passed, failed
 
 
-def test_meta_store_fts5_logging():
+def test_ensure_conn_alive_logging() -> None:
+    passed, failed = _run_ensure_conn_alive_logging()
+    assert failed == 0, f"_ensure_conn_alive 场景失败数={failed}"
+
+
+def _run_meta_store_fts5_logging():
     """测试 MetaStore FTS5 日志级别降为 debug。"""
     from memory.meta_store import MetaStore
 
@@ -293,6 +310,11 @@ def test_meta_store_fts5_logging():
     return passed, 0
 
 
+def test_meta_store_fts5_logging() -> None:
+    passed, failed = _run_meta_store_fts5_logging()
+    assert failed == 0, f"MetaStore FTS5 场景失败数={failed}"
+
+
 # ─── 主流程 ──────────────────────────────────────────────────
 
 def main():
@@ -305,25 +327,25 @@ def main():
 
     print("\n[1/4] TemporalKnowledgeGraph 引用计数日志")
     print("-" * 40)
-    p, f = test_temporal_kg_refcount()
+    p, f = _run_temporal_kg_refcount()
     total_passed += p
     total_failed += f
 
     print("\n[2/4] ForgettingCurve 引用计数日志")
     print("-" * 40)
-    p, f = test_forgetting_refcount()
+    p, f = _run_forgetting_refcount()
     total_passed += p
     total_failed += f
 
     print("\n[3/4] _ensure_conn_alive 日志")
     print("-" * 40)
-    p, f = test_ensure_conn_alive_logging()
+    p, f = _run_ensure_conn_alive_logging()
     total_passed += p
     total_failed += f
 
     print("\n[4/4] MetaStore FTS5 日志级别")
     print("-" * 40)
-    p, f = test_meta_store_fts5_logging()
+    p, f = _run_meta_store_fts5_logging()
     total_passed += p
     total_failed += f
 

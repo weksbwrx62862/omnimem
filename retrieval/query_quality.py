@@ -154,7 +154,7 @@ def trim_to_budget(results: list[dict[str, Any]], max_tokens: int) -> list[dict[
     trimmed = []
     used = 0
     for r in results:
-        content = r.get("content", "")
+        content = r.get("content") or ""
         est_tokens = max(1, len(content) // chars_per_token)
         if used + est_tokens <= budget:
             trimmed.append(r)

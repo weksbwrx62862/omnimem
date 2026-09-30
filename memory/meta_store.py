@@ -19,6 +19,7 @@ import threading
 from pathlib import Path
 from typing import Any
 
+from omnimem.memory.index import _retry_db_op
 from omnimem.utils.migration import SchemaMigrator
 
 # 异步 SQLite 支持（可选降级）
@@ -29,21 +30,8 @@ except Exception:  # pragma: no cover
 
 logger = logging.getLogger(__name__)
 
-_DB_RETRY_COUNT = 3
-_DB_RETRY_DELAY = 0.1
-
-
-def _retry_db_op(fn, *args, **kwargs):
-    """★ P2修复Minor-4：SQLite 操作重试，解决并发锁超时问题。"""
-    for attempt in range(_DB_RETRY_COUNT):
-        try:
-            return fn(*args, **kwargs)
-        except sqlite3.OperationalError as e:
-            if "locked" in str(e).lower() and attempt < _DB_RETRY_COUNT - 1:
-                import time
-                time.sleep(_DB_RETRY_DELAY * (attempt + 1))
-                continue
-            raise
+# ★ P1-3：重试策略复用 index.py 的实现（busy / locked / InterfaceError 都重试），
+#   原来此处另有一份只认 "locked" 的版本，同一类并发失败在两个库里表现不一致。
 
 
 class MetaStore:
@@ -58,32 +46,68 @@ class MetaStore:
         "memory_id", "wing", "hall", "room", "type", "confidence",
         "privacy", "stored_at", "summary", "content_preview",
         "drawer_path", "vc", "created_at", "conflicting_with", "conflict_type",
+        "project",
     }
 
-    def __init__(self, db_dir: Path):
+    def __init__(self, db_dir: Path, palace_dir: Path | None = None):
         self._db_dir = db_dir
         self._db_dir.mkdir(parents=True, exist_ok=True)
         self._db_path = self._db_dir / "meta_store.db"
-        self._conn: sqlite3.Connection | None = None
+        # ★ P1-7：磁盘抽屉是记忆是否存在的最终事实。sync_from_index 需要它才能区分
+        #   「index 行是幽灵」和「index 行合法、只是 MetaStore 双写时缺行」。
+        self._palace_dir = palace_dir
+        # ★ P1-3（MetaStore 侧，与 memory/index.py 同一口径）：一条共享连接被多线程
+        #   同时使用，sqlite3 会抛 InterfaceError("bad parameter or other API misuse")
+        #   和 OperationalError("cannot commit transaction - SQL statements in progress")
+        #   —— 这正是并发写入 memorize 时整条链路失败、记忆进不了索引的成因。
+        #   改为每线程一条连接，WAL 下读写并发不互斥。
+        self._local = threading.local()
+        self._connections: list[sqlite3.Connection] = []
+        self._connections_lock = threading.Lock()
+        self._closed = False
         self._fts_enabled = False
         self._lock = threading.RLock()
         self._pending_writes = 0
-        self._batch_size = 20
+        # ★ 与 index.py 同理：每线程一条连接后，未提交事务对别的线程不可见，
+        #   批量提交会让「A 线程刚写入、B 线程立刻查」读不到。WAL+NORMAL 下 commit 不 fsync。
+        self._batch_size = 1
         self._init_db()
+
+    def _new_connection(self) -> sqlite3.Connection:
+        conn = sqlite3.connect(str(self._db_path), check_same_thread=False)
+        # ★ 修复3: 设置 row_factory 以支持 row.keys() 动态列名
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA synchronous=NORMAL")
+        conn.execute("PRAGMA busy_timeout=5000")
+        with self._connections_lock:
+            self._connections.append(conn)
+        return conn
+
+    @property
+    def _conn(self) -> sqlite3.Connection | None:
+        """当前线程的数据库连接（惰性创建）；close() 之后为 None。"""
+        if self._closed:
+            return None
+        conn = getattr(self._local, "conn", None)
+        if conn is None:
+            conn = self._new_connection()
+            self._local.conn = conn
+        return conn
 
     @property
     def db_path(self) -> Path:
         """公开访问数据库文件路径。"""
         return self._db_path
 
+    @property
+    def palace_dir(self) -> Path | None:
+        """磁盘抽屉所在目录；未绑定则为 None（调用方据此拒绝删除，见 P1-7/P1-9）。"""
+        return self._palace_dir
+
     def _init_db(self) -> None:
         """初始化数据库表结构和索引。"""
-        self._conn = sqlite3.connect(str(self._db_path), check_same_thread=False)
-        # ★ 修复3: 设置 row_factory 以支持 row.keys() 动态列名
-        self._conn.row_factory = sqlite3.Row
-        self._conn.execute("PRAGMA journal_mode=WAL")
-        self._conn.execute("PRAGMA synchronous=NORMAL")
-        self._conn.execute("PRAGMA busy_timeout=5000")
+        self._local.conn = self._new_connection()
 
         # 核心元数据表
         migrator = SchemaMigrator(self._conn)
@@ -125,12 +149,20 @@ class MetaStore:
                 self._conn.execute(f"ALTER TABLE memories ADD COLUMN {col} TEXT")
                 logger.info("MetaStore migrated: added %s column", col)
 
+        # ★ 项目命名空间列（LLM 补充通道按 project 硬隔离，防跨项目混淆）
+        try:
+            self._conn.execute("SELECT project FROM memories LIMIT 1")
+        except sqlite3.OperationalError:
+            self._conn.execute("ALTER TABLE memories ADD COLUMN project TEXT DEFAULT ''")
+            logger.info("MetaStore migrated: added project column")
+
         # 单列索引
         self._conn.execute("CREATE INDEX IF NOT EXISTS idx_mem_type ON memories(type)")
         self._conn.execute("CREATE INDEX IF NOT EXISTS idx_mem_wing ON memories(wing)")
         self._conn.execute("CREATE INDEX IF NOT EXISTS idx_mem_privacy ON memories(privacy)")
         self._conn.execute("CREATE INDEX IF NOT EXISTS idx_mem_stored_at ON memories(stored_at)")
         self._conn.execute("CREATE INDEX IF NOT EXISTS idx_mem_room ON memories(room)")
+        self._conn.execute("CREATE INDEX IF NOT EXISTS idx_mem_project ON memories(project)")
 
         # 尝试创建 FTS5 虚拟表（全文搜索）
         try:
@@ -319,6 +351,8 @@ class MetaStore:
         """
         if not self._conn or not query:
             return []
+        # ★ 防御: 超长查询串作 LIKE 模式会触发 SQLite "LIKE or GLOB pattern too complex"
+        query = query[:500]
         try:
             if self._fts_enabled:
                 # FTS5 查询：转义双引号（用 "" 表示字面量双引号），然后用双引号包裹
@@ -449,13 +483,20 @@ class MetaStore:
         return dict(zip(row.keys(), tuple(row)))
 
     def sync_from_index(self, index_db_path: Path) -> tuple[int, int]:
-        """从 index.db 同步到 meta_store.db，清理失联条目并补充缺失条目。
+        """用 MetaStore 补齐 index.db 缺失的条目，并清掉真正的幽灵行。
+
+        ★ P1-7：**不能**把 MetaStore 当 index.db 的删除依据。MetaStore 是并行双写的一方，
+        降级路径下自己就缺行（副本实测 877 行 vs 磁盘 3 135 个抽屉），原先的实现
+        ``stale = idx_ids - meta_ids`` → 开机 warmup 一跑就把 ``doctor reconcile --apply``
+        补出来的 2 431 行合法索引全删了（3 135 → 877），同时把 173 条「meta 有、抽屉已
+        不在磁盘」的幽灵重新写回 index.db。删除判据必须是磁盘，不是另一张不完整的表。
 
         Args:
             index_db_path: index.db 的文件路径
 
         Returns:
-            (stale_count, missing_count) — 清理的失联条目数和补充的缺失条目数
+            (stale_count, missing_count) — 清理的幽灵条目数和补充的缺失条目数。
+            没有 palace_dir（无法核验磁盘）时两个数都是 0：宁可不动，不可误删。
         """
         import sqlite3 as _sql
 
@@ -464,6 +505,18 @@ class MetaStore:
         with self._lock:
             try:
                 idx_db = _sql.connect(str(index_db_path), check_same_thread=False)
+                # ★ P1-3：index.db 正被 ThreeLevelIndex 的连接写着，这里不设 busy_timeout
+                #   就是立刻 "database is locked" → 整个同步被 except 吞成 (0, 0)。
+                idx_db.execute("PRAGMA journal_mode=WAL")
+                idx_db.execute("PRAGMA busy_timeout=5000")
+                disk_ids = self._disk_memory_ids()
+                if disk_ids is None:
+                    logger.warning(
+                        "OmniMem: 跳过 index.db 同步（未绑定 palace_dir，无法核验抽屉是否存在）——"
+                        "index 行一律保留，幽灵清理走 `omni-doctor reconcile --apply --prune-ghosts`"
+                    )
+                    idx_db.close()
+                    return (0, 0)
                 # 获取两组 ID
                 meta_rows = self._conn.execute(
                     "SELECT memory_id, wing, type, room, summary, confidence, privacy, stored_at, content_preview FROM memories"
@@ -471,12 +524,13 @@ class MetaStore:
                 idx_rows = idx_db.execute("SELECT memory_id FROM memory_index").fetchall()
                 meta_ids = {r[0] for r in meta_rows}
                 idx_ids = {r[0] for r in idx_rows}
-                # 清理 index.db 中失联条目
-                stale = idx_ids - meta_ids
+                # 清理 index.db 中失联条目：既没有 meta 行、也没有抽屉文件，才是真幽灵
+                stale = idx_ids - meta_ids - disk_ids
                 for mid in stale:
                     idx_db.execute("DELETE FROM memory_index WHERE memory_id = ?", (mid,))
-                # 补充 index.db 中缺失条目
-                missing = meta_ids - idx_ids
+                # 补充 index.db 中缺失条目：只补磁盘上确实还在的
+                missing = (meta_ids - idx_ids) & disk_ids
+                unverified = len(idx_ids - meta_ids)
                 if missing:
                     meta_map = {}
                     for r in meta_rows:
@@ -494,23 +548,50 @@ class MetaStore:
                                 'content': r[8] or r[4] or '',
                             }
                     for mid, m in meta_map.items():
+                        # ★ P1-3：这条 INSERT 走的是 index.db 的第二个连接。裸 INSERT 一旦
+                        #   撞上并发写入刚建好的同一 memory_id，UNIQUE 冲突会让整个 try 失败，
+                        #   连带这一批同步全部作废（返回值退化成 (0, 0)）。改为 upsert。
                         idx_db.execute(
-                            "INSERT INTO memory_index (memory_id, wing, hall, room, summary, content, type, confidence, privacy, scope, stored_at, provenance) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                            """INSERT INTO memory_index (memory_id, wing, hall, room, summary, content, type, confidence, privacy, scope, stored_at, provenance)
+                               VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+                               ON CONFLICT(memory_id) DO UPDATE SET
+                                 wing=excluded.wing, hall=excluded.hall, room=excluded.room,
+                                 summary=excluded.summary, content=excluded.content,
+                                 type=excluded.type, confidence=excluded.confidence,
+                                 privacy=excluded.privacy, scope=excluded.scope,
+                                 stored_at=excluded.stored_at, provenance=excluded.provenance""",
                             (mid, m['wing'], m['hall'], m['room'], m['summary'], m['content'],
                              m['type'], m['confidence'], m['privacy'], m['wing'], m['stored_at'], '{}'))
                 idx_db.commit()
                 idx_db.close()
+                if stale or missing or unverified:
+                    logger.info(
+                        "OmniMem: index.db synced — pruned %d ghosts, added %d missing "
+                        "(%d index rows have no MetaStore row but have a drawer: kept)",
+                        len(stale), len(missing), unverified,
+                    )
                 return (len(stale), len(missing))
             except Exception as e:
                 logger.warning("MetaStore sync_from_index failed: %s", e)
                 return (0, 0)
 
+    def _disk_memory_ids(self) -> set[str] | None:
+        """磁盘抽屉的 memory_id 集合；无法核验时返回 None（调用方据此拒绝删除）。"""
+        from omnimem.governance.reconciler import disk_memory_ids
+
+        return disk_memory_ids(self._palace_dir)
+
     def close(self) -> None:
-        """关闭数据库连接。"""
+        """提交并关闭本对象创建过的全部线程连接。"""
         self.flush()
-        if self._conn:
-            self._conn.close()
-            self._conn = None
+        self._closed = True
+        with self._connections_lock:
+            conns, self._connections = self._connections, []
+        for conn in conns:
+            try:
+                conn.close()
+            except Exception:
+                logger.debug("MetaStore 连接关闭失败", exc_info=True)
 
 
 class AsyncMetaStore:
@@ -574,6 +655,13 @@ class AsyncMetaStore:
             except Exception:
                 await self._conn.execute(f"ALTER TABLE memories ADD COLUMN {col} TEXT")
                 logger.info("AsyncMetaStore migrated: added %s column", col)
+
+        # ★ 项目命名空间列（与同步 MetaStore 对齐）
+        try:
+            await self._conn.execute("SELECT project FROM memories LIMIT 1")
+        except Exception:
+            await self._conn.execute("ALTER TABLE memories ADD COLUMN project TEXT DEFAULT ''")
+            logger.info("AsyncMetaStore migrated: added project column")
 
         for col in ("type", "wing", "privacy", "stored_at", "room"):
             await self._conn.execute(
@@ -772,6 +860,8 @@ class AsyncMetaStore:
         await self._ensure_initialized()
         if self._conn is None or not query:
             return []
+        # ★ 防御: 超长查询串作 LIKE 模式会触发 SQLite "LIKE or GLOB pattern too complex"
+        query = query[:500]
         try:
             if self._fts_enabled:
                 escaped = query.replace('"', '""')

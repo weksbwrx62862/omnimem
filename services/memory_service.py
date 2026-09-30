@@ -18,8 +18,16 @@ from omnimem.handlers.deps import HandlerDependencies
 logger = logging.getLogger(__name__)
 
 
-def _enrich_retriever_content(content: str, memory_type: str, room: str = "") -> str:
-    """为 secret/skill/procedural 类型附加可搜索描述，弥合语义鸿沟。"""
+def _enrich_retriever_content(
+    content: str, memory_type: str, room: str = "", privacy: str = ""
+) -> str:
+    """为 secret/skill/procedural 类型附加可搜索描述，弥合语义鸿沟。
+
+    ★ 安全: privacy=secret 的记忆不得将明文写入 BM25/向量语料（磁盘缓存均为明文），
+    仅保留类型占位描述，内容需通过 detail(memory_id) 按需解密获取。
+    """
+    if privacy == "secret":
+        return f"[加密信息/密钥/凭证] {memory_type}"
     if memory_type == "secret":
         return f"[加密信息/密钥/凭证] {room} {content}"
     if memory_type == "skill":
@@ -60,6 +68,7 @@ class MemoryService:
         vc: str = "",
         entities: list[str] | None = None,
         stored_at: str = "",
+        project: str = "",
     ) -> tuple[str, SagaResult]:
         """编排写入一条记忆到所有后端。
 
@@ -80,6 +89,9 @@ class MemoryService:
 
         memory_id: str = ""
         steps: list[SagaStep] = []
+        # ★ P1-4：补偿闭包共享的检索层载荷。step 3 会用 enrich 后的内容覆盖；
+        #   补偿可能在 step 3 之前就被触发（index_add 失败），所以先给兜底值。
+        retrieval_payload: dict[str, Any] = {"content": content, "metadata": {}}
 
         # 1. Store 写入（主存储作为事实来源）
         if self.deps.store is not None:
@@ -96,23 +108,51 @@ class MemoryService:
                     privacy=privacy,
                     provenance=provenance,
                     vc=vc,
-                    original_content=content,
+                    # ★ 安全: secret 级不通过 kwargs 保留明文 original_content（会进入内存索引与搜索结果）
+                    original_content="" if privacy == "secret" else content,
                     entities=entities or [],
+                    project=project,
                 )
                 return memory_id
 
             def _compensate_store() -> None:
+                """★ P1-4：下游步骤失败时**不删主抽屉**。
+
+                原实现 ``store.flush()`` + ``store.delete(memory_id)``：index_add /
+                retriever_add 抖动一次，就把已经写成功的主存储整条抹掉 —— 用户记忆
+                凭空消失，而这本来只是「检索索引没建上」这种可以异步补的缺口。
+                现在的策略：主存储 + 已写好的派生索引一律保留，把检索缺口投递到
+                P1-2 的待回填队列（由 warmup 排空），index.db 缺口由磁盘对账（P1-1）修复。
+                """
                 if not memory_id:
                     return
-                # 先 flush 缓冲，避免 drawer/closet 文件尚未落盘导致删除失败
+                # 先 flush 缓冲，确保抽屉确实落盘（保留的前提）
                 try:
                     store.flush()
                 except Exception as e:
-                    logger.warning("MemoryService store 补偿 flush 失败: %s", e)
-                try:
-                    store.delete(memory_id)
-                except Exception as e:
-                    logger.warning("MemoryService store 补偿 delete 失败: %s", e)
+                    logger.error("MemoryService store 补偿 flush 失败 %s: %s", memory_id, e)
+                retriever = self.deps.retriever
+                if retriever is not None and hasattr(retriever, "queue_vector_backfill"):
+                    try:
+                        queued = retriever.queue_vector_backfill(
+                            retrieval_payload["content"],
+                            memory_id=memory_id,
+                            metadata=retrieval_payload["metadata"],
+                            reason="saga_compensate_kept",
+                        )
+                    except Exception as e:
+                        logger.warning("MemoryService 检索缺口投递失败 %s: %s", memory_id, e)
+                        queued = False
+                    if queued:
+                        logger.error(
+                            "MemoryService saga 下游步骤失败：保留记忆 %s，检索缺口已投递待回填",
+                            memory_id,
+                        )
+                        return
+                logger.error(
+                    "MemoryService saga 失败且无法投递待回填队列：记忆 %s 可能不可召回，"
+                    "请运行磁盘对账重建索引", memory_id,
+                )
 
             steps.append(
                 SagaStep(name="store_add", action=_store_add, compensate=_compensate_store)
@@ -121,6 +161,8 @@ class MemoryService:
         # 2. 三级索引写入
         if self.deps.index is not None:
             index = self.deps.index
+            # ★ 安全: secret 级不将明文写入 L2 索引（memory_index.content 及 FTS 表均为明文存储）
+            index_content = "[加密记忆]" if privacy == "secret" else content
 
             def _index_add() -> None:
                 index.add(
@@ -128,7 +170,7 @@ class MemoryService:
                     wing=wing,
                     hall=hall,
                     room=room,
-                    content=content,
+                    content=index_content,
                     summary=summary,
                     type=memory_type,
                     confidence=confidence,
@@ -136,19 +178,22 @@ class MemoryService:
                     scope=scope,
                     stored_at=stored_at,
                     provenance=json.dumps(provenance, ensure_ascii=False) if provenance else "",
+                    project=project,
                 )
 
             def _compensate_index() -> None:
+                """★ P1-4：只提交事务，不删索引行。
+
+                抽屉被保留（见 _compensate_store），索引行是它的正当派生物；删掉只会
+                重新制造「有 drawer 无 index 行」的不可召回缺口。flush 仍然要做 ——
+                未提交的 WAL 写事务会在常驻网关上长时间持锁。
+                """
                 if not memory_id:
                     return
                 try:
                     index.flush()
                 except Exception as e:
                     logger.warning("MemoryService index 补偿 flush 失败: %s", e)
-                try:
-                    index.delete(memory_id)
-                except Exception as e:
-                    logger.warning("MemoryService index 补偿 delete 失败: %s", e)
 
             steps.append(
                 SagaStep(name="index_add", action=_index_add, compensate=_compensate_index)
@@ -157,7 +202,7 @@ class MemoryService:
         # 3. 检索器写入（向量 + BM25）
         if self.deps.retriever is not None:
             retriever = self.deps.retriever
-            retriever_content = _enrich_retriever_content(content, memory_type, room)
+            retriever_content = _enrich_retriever_content(content, memory_type, room, privacy)
             retriever_metadata: dict[str, Any] = {
                 "memory_id": memory_id,
                 "type": memory_type,
@@ -168,7 +213,11 @@ class MemoryService:
                 "room": room,
                 "stored_at": stored_at,
                 "entities": entities or [],
+                "project": project,
             }
+            # ★ P1-4：补偿（可能由本步之后的失败触发）用这份载荷投递待回填队列
+            retrieval_payload["content"] = retriever_content
+            retrieval_payload["metadata"] = retriever_metadata
 
             def _retriever_add() -> None:
                 retriever.add(
@@ -178,12 +227,11 @@ class MemoryService:
                 )
 
             def _compensate_retriever() -> None:
+                """★ P1-4：检索层已写成功时不回滚 —— 只有更后面的派生步骤失败了，
+                删掉向量/BM25 只会让这条已落盘的记忆变得不可召回。
+                """
                 if not memory_id:
                     return
-                try:
-                    retriever.delete(memory_id)
-                except Exception as e:
-                    logger.warning("MemoryService retriever 补偿 delete 失败: %s", e)
                 try:
                     retriever.flush()
                 except Exception as e:
@@ -257,7 +305,10 @@ class MemoryService:
         if coordinator is None:
             coordinator = SagaCoordinator()
 
-        saga_result = coordinator.execute(memory_id or "pending", steps)
+        # ★ 传惰性取值而不是当前值：真实 ID 由 store_add 步骤内部生成，此刻仍是空串，
+        #   直接传会让所有 pending 记录落成 memory_id="pending" —— 重试器无法定位
+        #   该重做哪条记忆，死信也就无从对账。
+        saga_result = coordinator.execute(lambda: memory_id, steps)
         return memory_id, saga_result
 
     # ------------------------------------------------------------------

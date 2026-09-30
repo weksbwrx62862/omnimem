@@ -28,10 +28,14 @@ _warnings.filterwarnings(
     "ignore", message="pkg_resources is deprecated as an API.*", category=UserWarning
 )
 
-# 当作为独立包运行时，将项目根目录加入 sys.path
+# 当作为独立包运行时，将项目根目录加入 sys.path。
+# ★ P2-3e: 必须 append 而不是 insert(0)。本目录下的 utils/config/core/memory/... 若抢占
+# sys.path 头部，会以顶层裸名遮蔽 Hermes 框架自己的同名包（实测 `utils` 被本插件遮蔽，
+# 导致 agent.skill_utils 的 `from utils import file_signature` 失败、skill 预注入静默失效）。
+# append 保留了独立运行时的裸名回退能力，同时把顶层命名优先级让给宿主框架。
 _PROJECT_ROOT = Path(__file__).resolve().parent
 if str(_PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(_PROJECT_ROOT))
+    sys.path.append(str(_PROJECT_ROOT))
 
 try:
     # 优先使用真实 Hermes 框架的 MemoryProvider ABC
@@ -53,7 +57,13 @@ except ImportError:
 # 此处补全 __path__ 以支持子模块绝对导入；真实 package 加载场景下 __path__ 已存在，不会覆盖。
 if "__path__" not in globals():
     __path__ = [str(_PROJECT_ROOT)]
-sys.modules.setdefault("omnimem", sys.modules[__name__])
+# setdefault 不够：只要 sys.path 上存在任何名为 omnimem 且无 __init__.py 的目录，
+# `omnimem` 就会被先绑定为 namespace package（实测数据目录 $HERMES_HOME/omnimem 即触发），
+# 此时 setdefault 变空操作，register() 里的 `from omnimem.provider import ...` 静默失败，
+# provider 根本不注册。判据用 __file__：namespace package 没有 __file__，真实已安装的
+# omnimem 包有，后者仍保持不覆盖。
+if getattr(sys.modules.get("omnimem"), "__file__", None) is None:
+    sys.modules["omnimem"] = sys.modules[__name__]
 
 # 注意：OmniMemProvider 不在顶层导入，改为在 register() 内部延迟导入，
 # 以避免 import 阶段加载完整 provider 链（原耗时 ~858ms，目标 < 200ms）。

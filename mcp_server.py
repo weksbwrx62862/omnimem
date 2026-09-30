@@ -48,6 +48,9 @@ class OmniMemMCPServer:
         # MCP Server API Key 中间件：环境变量 > 配置文件；mcp_require_api_key 强制启用校验
         self._require_api_key = bool(self._sdk._config.get("mcp_require_api_key", False))
         self._api_key = os.environ.get("OMNIMEM_API_KEY", "") or self._sdk._config.get("api_key", "")
+        # ★ P2-3h：每个 storage_dir 各自生成/持有 api_key 是设计（不是缺陷），
+        #   但排查时看不出来「这个 key 属于哪个实例」。记下数据目录用于失败提示。
+        self._data_dir = getattr(self._sdk, "_data_dir", None)
         self._auth_middleware = MCPAuthMiddleware(api_key=self._api_key)
         # ★ M8-19: MCP 入口安全对齐 REST — 速率限制 + 工具调用审计
         from omnimem.rest_api import RateLimiter
@@ -127,6 +130,14 @@ class OmniMemMCPServer:
                             "enum": ["public", "team", "personal", "secret"],
                             "default": "personal",
                         },
+                        "project": {
+                            "type": "string",
+                            "description": (
+                                "Optional project/namespace tag. When set, deep 'llm' "
+                                "recall only supplements memories from the SAME project, "
+                                "preventing cross-project confusion on generic queries."
+                            ),
+                        },
                     },
                     "required": ["content"],
                 },
@@ -158,6 +169,13 @@ class OmniMemMCPServer:
                             "type": "integer",
                             "default": 1500,
                             "description": "Maximum tokens in results",
+                        },
+                        "project": {
+                            "type": "string",
+                            "description": (
+                                "Optional project/namespace tag. In 'llm' mode, restricts "
+                                "the store-supplement channel to the SAME project."
+                            ),
                         },
                     },
                     "required": ["query"],
@@ -281,7 +299,12 @@ class OmniMemMCPServer:
             if auth_header.startswith("Bearer "):
                 provided = auth_header[7:]
         if provided != self._api_key:
-            return "API Key 校验失败"
+            # ★ P2-3h：只报「哪个实例的哪份配置」，绝不把 key 本身写进错误信息。
+            #   多个 storage_dir 各自持有不同 api_key（设计如此），失败时最需要知道
+            #   的是当前服务绑定的是哪个 store。
+            store_dir = getattr(self, "_data_dir", None)
+            store = f"（storage_dir={store_dir}，key 取自该目录的 config.yaml 或环境变量 OMNIMEM_API_KEY）" if store_dir else ""
+            return f"API Key 校验失败{store}"
         return None
 
     def call_tool(self, name: str, arguments: dict[str, Any]) -> str:

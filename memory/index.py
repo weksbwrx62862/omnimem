@@ -14,6 +14,8 @@ import contextlib
 import json
 import logging
 import sqlite3
+import threading
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -22,21 +24,41 @@ from omnimem.utils.migration import SchemaMigrator
 
 logger = logging.getLogger(__name__)
 
-_DB_RETRY_COUNT = 3
-_DB_RETRY_DELAY = 0.1
+# ★ P1-3：重试口径对齐 governance/forgetting_stages（那里已验证 5 次线性退避够用），
+#   3 次在并发写高峰期不足，第 4 个等待者就直接抛错给上层。
+_DB_RETRY_COUNT = 5
+_DB_RETRY_DELAY = 0.05
+
+
+def _is_retryable(exc: BaseException) -> bool:
+    """判断一次 SQLite 失败是否值得重试。
+
+    只认 "locked" 是漏的：并发写还常见 "database is busy"，而连接跨线程复用时
+    sqlite3 抛的是 InterfaceError("bad parameter or other API misuse") ——
+    原实现里它既不是 OperationalError 也不在重试名单，直接掀掉整条写入路径。
+    """
+    if isinstance(exc, sqlite3.InterfaceError):
+        return True
+    if isinstance(exc, sqlite3.OperationalError):
+        msg = str(exc).lower()
+        return "locked" in msg or "busy" in msg
+    return False
 
 
 def _retry_db_op(fn, *args, **kwargs):
     """★ P2修复Minor-4：SQLite 操作重试，解决并发锁超时问题。"""
+    last_error: BaseException | None = None
     for attempt in range(_DB_RETRY_COUNT):
         try:
             return fn(*args, **kwargs)
-        except sqlite3.OperationalError as e:
-            if "locked" in str(e).lower() and attempt < _DB_RETRY_COUNT - 1:
-                import time
+        except (sqlite3.OperationalError, sqlite3.InterfaceError) as e:
+            if not _is_retryable(e):
+                raise
+            last_error = e
+            if attempt < _DB_RETRY_COUNT - 1:
                 time.sleep(_DB_RETRY_DELAY * (attempt + 1))
-                continue
-            raise
+    assert last_error is not None
+    raise last_error
 
 
 class ThreeLevelIndex:
@@ -46,14 +68,23 @@ class ThreeLevelIndex:
     减少磁盘 fsync 次数。
     """
 
-    _BATCH_THRESHOLD = 5  # 每 5 次写入 commit 一次
+    # ★ P1-3 追加：每 1 次写入就 commit。批处理阈值 >1 与「每线程一条连接」不兼容 ——
+    #   未提交的事务对**其它线程的连接不可见**（WAL 只隔离已提交数据），于是 A 线程
+    #   写完、B 线程立刻召回放不出来，线上表现是「写入成功但检索偶发漏一条」。
+    #   WAL + synchronous=NORMAL 下 commit 不 fsync，代价可忽略。
+    _BATCH_THRESHOLD = 1  # 每次写入立即 commit
 
     def __init__(self, index_dir: Path):
         self._index_dir = index_dir
         self._index_dir.mkdir(parents=True, exist_ok=True)
         self._db_path = self._index_dir / "index.db"
-        self._conn: sqlite3.Connection | None = None
-        self._pending_writes = 0
+        # ★ P1-3：一进程一条共享连接（即便 check_same_thread=False）在并发写下会
+        #   触发 InterfaceError/SQLITE_BUSY，且长读会挡住写。改为每线程一条连接，
+        #   WAL 模式下读写并发不互斥；写锁仍由 SQLite 自身串行化保证。
+        self._local = threading.local()
+        self._connections: list[sqlite3.Connection] = []
+        self._connections_lock = threading.Lock()
+        self._closed = False
         self._init_db()
 
     @property
@@ -61,13 +92,31 @@ class ThreeLevelIndex:
         """公开访问数据库文件路径。"""
         return self._db_path
 
+    def _new_connection(self) -> sqlite3.Connection:
+        conn = sqlite3.connect(str(self._db_path), check_same_thread=False)
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA synchronous=NORMAL")
+        conn.execute("PRAGMA busy_timeout=5000")
+        with self._connections_lock:
+            self._connections.append(conn)
+        return conn
+
+    @property
+    def _conn(self) -> sqlite3.Connection | None:
+        """当前线程的数据库连接（惰性创建）；close() 之后为 None。"""
+        if self._closed:
+            return None
+        conn = getattr(self._local, "conn", None)
+        if conn is None:
+            conn = self._new_connection()
+            self._local.conn = conn
+        return conn
+
     def _init_db(self) -> None:
         """初始化 SQLite 数据库。"""
-        self._conn = sqlite3.connect(str(self._db_path), check_same_thread=False)
-        self._conn.execute("PRAGMA journal_mode=WAL")
-        self._conn.execute("PRAGMA synchronous=NORMAL")
-        self._conn.execute("PRAGMA busy_timeout=5000")
-        migrator = SchemaMigrator(self._conn)
+        conn = self._conn
+        assert conn is not None
+        migrator = SchemaMigrator(conn)
         migrator.migrate(
             table_name="memory_index",
             create_sql="""
@@ -84,7 +133,8 @@ class ThreeLevelIndex:
                     scope TEXT DEFAULT 'personal',
                     stored_at TEXT,
                     provenance TEXT,
-                    metadata TEXT
+                    metadata TEXT,
+                    project TEXT DEFAULT ''
                 )
             """,
             migrations=[],
@@ -106,6 +156,7 @@ class ThreeLevelIndex:
             ("conflict_type", "TEXT"),
             ("is_updated", "INTEGER DEFAULT 0"),
             ("is_superseded", "INTEGER DEFAULT 0"),
+            ("project", "TEXT DEFAULT ''"),
         ]
         for col_name, col_def in _migrate_columns:
             try:
@@ -154,12 +205,25 @@ class ThreeLevelIndex:
         self._conn.commit()
 
     def _maybe_commit(self) -> None:
-        """检查待写入数是否达到阈值，达到则提交事务。"""
-        assert self._conn is not None
-        self._pending_writes += 1
-        if self._pending_writes >= self._BATCH_THRESHOLD:
-            _retry_db_op(self._conn.commit)
-            self._pending_writes = 0
+        """检查本线程待写入数是否达到阈值，达到则提交。
+
+        计数必须挂在线程本地：每条连接只提交自己的事务，共享计数器会让
+        A 线程的 commit 阈值被 B 线程的写入消耗掉，A 的行迟迟不落盘。
+        """
+        conn = self._conn
+        assert conn is not None
+        pending = getattr(self._local, "pending_writes", 0) + 1
+        if pending >= self._BATCH_THRESHOLD:
+            try:
+                _retry_db_op(conn.commit)
+            except Exception:
+                # 半批持久化比丢批更糟：失败后必须回滚，否则阈值计数清零了，
+                # 上一批里没提交成功的行会永远悬在一个不再被提交的事务里。
+                with contextlib.suppress(Exception):
+                    conn.rollback()
+                raise
+            pending = 0
+        self._local.pending_writes = pending
 
     def add(
         self,
@@ -176,18 +240,37 @@ class ThreeLevelIndex:
         stored_at: str = "",
         provenance: str = "",
         metadata: str = "",
+        project: str = "",
     ) -> None:
-        """添加一条索引记录。"""
-        assert self._conn is not None
+        """添加或更新一条索引记录（失败向上抛出，不静默吞）。
+
+        ★ P1-3 两处关键改动：
+          1. ``INSERT OR REPLACE`` 是「先删后插」，会丢掉本方法没有传列的
+             ``conflicting_with`` / ``conflict_type`` / ``is_updated`` / ``is_superseded``，
+             并换掉 rowid（连带 FTS 触发器重写）。改为 ``ON CONFLICT DO UPDATE``
+             只覆盖显式给出的列，其余保持原值。
+          2. 原来 ``except`` 只打一条 warning 就当成功。写抽屉成功、写索引失败的
+             记忆就此变成「有 drawer 无 index 行」的不可召回数据（线上 2 596 条），
+             必须让 saga 看见异常并走补偿。
+        """
+        conn = self._conn
+        assert conn is not None
         if not stored_at:
             stored_at = datetime.now().isoformat()
         try:
             _retry_db_op(
-                self._conn.execute,
-                """INSERT OR REPLACE INTO memory_index
+                conn.execute,
+                """INSERT INTO memory_index
                    (memory_id, wing, hall, room, content, summary, type,
-                    confidence, privacy, scope, stored_at, provenance, metadata)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    confidence, privacy, scope, stored_at, provenance, metadata, project)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(memory_id) DO UPDATE SET
+                    wing=excluded.wing, hall=excluded.hall, room=excluded.room,
+                    content=excluded.content, summary=excluded.summary, type=excluded.type,
+                    confidence=excluded.confidence, privacy=excluded.privacy,
+                    scope=excluded.scope, stored_at=excluded.stored_at,
+                    provenance=excluded.provenance, metadata=excluded.metadata,
+                    project=excluded.project""",
                 (
                     memory_id,
                     wing,
@@ -202,11 +285,13 @@ class ThreeLevelIndex:
                     stored_at,
                     provenance,
                     metadata,
+                    project,
                 ),
             )
             self._maybe_commit()
         except Exception as e:
-            logger.warning("Index add failed for %s: %s", memory_id, e)
+            logger.error("Index add failed for %s: %s", memory_id, e)
+            raise
 
     def get(self, memory_id: str) -> dict[str, Any] | None:
         """根据 ID 获取索引记录。"""
@@ -307,7 +392,7 @@ class ThreeLevelIndex:
     def search_l1(self, wing: str = "", type: str = "", limit: int = 50) -> list[dict[str, Any]]:
         """L1 摘要索引：返回摘要记录（含 content 用于 warm_up）。"""
         assert self._conn is not None
-        query = "SELECT memory_id, wing, hall, room, summary, type, confidence, privacy, stored_at, content, conflicting_with, conflict_type FROM memory_index WHERE 1=1"
+        query = "SELECT memory_id, wing, hall, room, summary, type, confidence, privacy, stored_at, content, conflicting_with, conflict_type, project FROM memory_index WHERE is_superseded=0"
         params = []
         if wing:
             query += " AND wing = ?"
@@ -333,6 +418,7 @@ class ThreeLevelIndex:
                     "content": r[9] if len(r) > 9 else "",
                     "conflicting_with": r[10] if len(r) > 10 else "",
                     "conflict_type": r[11] if len(r) > 11 else "",
+                    "project": r[12] if len(r) > 12 else "",
                 }
                 for r in rows
             ]
@@ -465,20 +551,21 @@ class ThreeLevelIndex:
             immediate: 为 True 时直接 commit 而非走 _maybe_commit 批处理，
                        适用于 governance 等需要跨组件一致性的场景
         """
-        assert self._conn is not None
+        conn = self._conn
+        assert conn is not None
         if not fields:
             return False
         try:
             set_clause = ", ".join(f"{k} = ?" for k in fields)
             values = list(fields.values()) + [memory_id]
             _retry_db_op(
-                self._conn.execute,
+                conn.execute,
                 f"UPDATE memory_index SET {set_clause} WHERE memory_id = ?",
                 values,
             )
             if immediate:
-                _retry_db_op(self._conn.commit)
-                self._pending_writes = 0
+                _retry_db_op(conn.commit)
+                self._local.pending_writes = 0
             else:
                 self._maybe_commit()
             return True
@@ -501,20 +588,34 @@ class ThreeLevelIndex:
             return False
 
     def close(self) -> None:
-        """关闭数据库连接。"""
+        """提交并关闭本进程内所有线程的数据库连接。"""
         self.flush()
-        if self._conn:
-            self._conn.close()
-            self._conn = None
+        self._closed = True
+        with self._connections_lock:
+            conns, self._connections = self._connections, []
+        for conn in conns:
+            try:
+                conn.close()
+            except Exception:
+                logger.debug("Index 连接关闭失败", exc_info=True)
 
     def flush(self) -> None:
-        """显式提交所有待写入。"""
-        if self._conn and self._pending_writes > 0:
+        """显式提交所有线程连接的待写入。
+
+        每线程一条连接后，只提交调用线程自己那条会把别的线程的半批留在未提交
+        事务里；线程一退出，那半批整体回滚 —— 表现为「写成功却查不到」。
+        """
+        with self._connections_lock:
+            conns = list(self._connections)
+        for conn in conns:
             try:
-                _retry_db_op(self._conn.commit)
-                self._pending_writes = 0
+                _retry_db_op(conn.commit)
             except Exception as e:
-                logger.warning("Index flush failed: %s", e)
+                # 其他线程正握着未完成语句时会拒绝提交，留给它的下一次写入。
+                logger.debug("Index flush 跳过一条连接: %s", e)
+                continue
+            if conn is getattr(self._local, "conn", None):
+                self._local.pending_writes = 0
 
     def _row_to_dict(self, row: tuple[Any, ...]) -> dict[str, Any]:
         """将数据库行转为字典。"""

@@ -74,8 +74,14 @@ class _ForgettingCore:
     类级共享连接等防御代码。写锁由 store.write_lock 提供。
     """
 
-    # ★ P2修复：批量提交阈值从5提升到20，减少频繁 commit 的 I/O 开销
-    _BATCH_THRESHOLD = 20
+    # ★ 2026-09-16 修复（F2）：该阈值原为 5，被"P2修复"提到 20 以省 I/O，
+    #   但 governance 这条链【没有重试机制】，攒不到 20 条就不 commit，
+    #   → 写事务长期悬挂、持 SQLite 写锁 → 后台线程池并发时报
+    #   "database is locked" → 异常被 except 吞掉 → access_log 静默停更 47 天。
+    #   写入频率极低（每次 memorize 才 1 条），攒 20 条要数小时，
+    #   因此改为"每次写即提交"。WAL + synchronous=NORMAL 下 commit 开销很小，
+    #   正确性 » 这点 I/O 优化。
+    _BATCH_THRESHOLD = 1
 
     def __init__(self, governance_dir: Path, config: Any = None,
                  governance_store: Any = None):

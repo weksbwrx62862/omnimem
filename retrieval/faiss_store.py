@@ -15,6 +15,8 @@ import json
 import logging
 import sqlite3
 import threading
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 import faiss
@@ -44,10 +46,24 @@ class FAISSStore(VectorStore):
         self._lock = threading.Lock()
         self._initialized = False
 
+    # ★ P1-6：这些锁的临界区内会调 _embed → 首次触发 SentenceTransformer 加载（十几秒级），
+    #   无界 acquire 会把并发的 recall/write 全部挂成 futex 等待。一律改成有界获取，
+    #   超时即抛 TimeoutError，由各方法既有的 except 分支降级（query 返回空、写跳过）。
+    _LOCK_TIMEOUT = 30.0
+
+    @contextmanager
+    def _locked(self, timeout: float = _LOCK_TIMEOUT) -> Iterator[None]:
+        if not self._lock.acquire(timeout=timeout):
+            raise TimeoutError(f"FAISSStore 等待锁超过 {timeout}s，已降级跳过本次向量操作")
+        try:
+            yield
+        finally:
+            self._lock.release()
+
     def _ensure_initialized(self) -> None:
         if self._initialized:
             return
-        with self._lock:
+        with self._locked():
             if self._initialized:
                 return
             # 初始化 SQLite 元数据库
@@ -166,7 +182,7 @@ class FAISSStore(VectorStore):
         self._ensure_initialized()
         if not ids:
             return
-        with self._lock:
+        with self._locked():
             try:
                 vectors = self._embed(documents)
                 if self._index is None or self._index.d != vectors.shape[1]:
@@ -218,7 +234,7 @@ class FAISSStore(VectorStore):
         empty = {"ids": [[]], "documents": [[]], "metadatas": [[]], "distances": [[]]}
         if self._index is None or self._index.ntotal == 0:
             return empty
-        with self._lock:
+        with self._locked():
             try:
                 query_vectors = self._embed(query_texts)
                 k = min(n_results, self._index.ntotal)
@@ -265,7 +281,7 @@ class FAISSStore(VectorStore):
         self._ensure_initialized()
         if not ids:
             return
-        with self._lock:
+        with self._locked():
             try:
                 placeholders = ",".join("?" * len(ids))
                 self._meta_conn.execute(f"DELETE FROM metadata WHERE id IN ({placeholders})", ids)
@@ -305,9 +321,17 @@ class FAISSStore(VectorStore):
             logger.warning("FAISSStore: count() failed", exc_info=True)
             return 0
 
+    def all_ids(self) -> list[str]:
+        self._ensure_initialized()
+        try:
+            return [r[0] for r in self._meta_conn.execute("SELECT id FROM metadata")]
+        except Exception:
+            logger.warning("FAISSStore: all_ids() failed", exc_info=True)
+            return []
+
     def reset(self) -> None:
         self._ensure_initialized()
-        with self._lock:
+        with self._locked():
             try:
                 self._meta_conn.execute("DELETE FROM metadata")
                 self._meta_conn.commit()
@@ -319,7 +343,7 @@ class FAISSStore(VectorStore):
 
     def close(self) -> None:
         """释放 FAISS 索引和 SQLite 连接。"""
-        with self._lock:
+        with self._locked():
             if self._index is not None:
                 del self._index
                 self._index = None

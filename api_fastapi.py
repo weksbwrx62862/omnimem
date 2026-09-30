@@ -10,6 +10,7 @@ import json
 import logging
 import os
 import time
+from pathlib import Path
 from typing import Any
 
 from omnimem.rest_api import (
@@ -40,17 +41,56 @@ _ADMIN_PATHS = {"/api/export", "/api/import"}
 _TOOLS = ["memorize", "recall", "reflect", "govern", "compact", "detail", "export", "import", "health"]
 
 
+def _resolve_credentials(sdk: Any, api_key: str, admin_token: str) -> tuple[str, str]:
+    """fail-closed 地补齐密钥：显式传入 > store 配置 > 环境变量 > 自动生成。
+
+    ``AuthMiddleware`` 把 ``api_key=""`` 当作「关闭认证」，所以任何自建 SDK 的入口
+    都必须先补出密钥，否则 ``create_app(storage_dir=...)`` 会拉起一个无认证的服务。
+    """
+    config = getattr(sdk, "_config", None)
+    resolved_key = (
+        api_key
+        or (config.get("api_key", "") if config is not None else "")
+        or _generate_default_key()
+    )
+    resolved_admin = (
+        admin_token
+        or (config.get("admin_token", "") if config is not None else "")
+        or os.environ.get("OMNIMEM_ADMIN_TOKEN", "")
+        or _generate_default_key()
+    )
+    if not api_key:
+        logger.warning("REST API 未配置 api_key,已自动生成默认密钥（请查看控制台输出）")
+    if not admin_token:
+        logger.warning("REST API 未配置 admin_token,已自动生成默认管理令牌（请查看控制台输出）")
+    return resolved_key, resolved_admin
+
+
 def create_app(
     sdk: Any = None,
     *,
+    storage_dir: str | Path | None = None,
     api_key: str = "",
     admin_token: str = "",
     rate_limit_per_minute: int = 60,
     cors_allowed_origins: list[str] | None = None,
 ):
-    """构建 FastAPI 应用（sdk 可注入 mock 便于测试）。"""
+    """构建 FastAPI 应用（sdk 可注入 mock 便于测试）。
+
+    ★ P2-3b：``sdk`` 与 ``storage_dir`` 二选一。以前只能注入 sdk，于是
+    ``create_app(storage_dir=...)`` 这种最自然的工厂用法直接 TypeError，
+    且与 ``run_api(storage_dir=...)`` 的参数名不一致。自建 SDK 时按 fail-closed
+    补齐密钥；显式注入 sdk 的调用方保持原语义（``api_key=""`` 仍是关闭认证，
+    仓库自己的 test_api_fastapi 依赖这一点）。
+    """
     from fastapi import FastAPI
     from fastapi.responses import JSONResponse, PlainTextResponse
+
+    if sdk is None:
+        from omnimem.sdk import OmniMemSDK
+
+        sdk = OmniMemSDK(storage_dir=storage_dir)
+        api_key, admin_token = _resolve_credentials(sdk, api_key, admin_token)
 
     app = FastAPI(title="OmniMem REST API", version="1.1.0")
     auth = AuthMiddleware(api_key=api_key)
@@ -58,6 +98,8 @@ def create_app(
     limiter = RateLimiter(limit_per_minute=rate_limit_per_minute)
     cors_origins = cors_allowed_origins or []
     app.state.sdk = sdk
+    app.state.api_key = api_key
+    app.state.admin_token = admin_token
 
     def _cors_headers(request: Request) -> dict[str, str]:
         origin = (request.headers.get("origin") or "").strip()

@@ -33,32 +33,59 @@ class ProviderLifecycleMixin:
 
         self._config = OmniMemConfig(self._data_dir)
 
-        # 降级模式：跳过向量检索和 ChromaDB，仅 BM25 检索
+        # 降级模式：只建 L1 门面。注意此分支**不**初始化 store/检索（见下方 info 日志），
+        # 生产代码不会走到这里（_degraded_mode 只在测试里被显式置位）。
         if self._degraded_mode:
-            logger.warning("OmniMem: 降级模式 — 向量检索和 reranker 不可用，仅 BM25 检索")
+            logger.warning("OmniMem: 降级模式 — 仅初始化 L1 门面，写入与检索均不可用")
             self._init_l1()
             logger.info(
-                "OmniMem initialized (degraded): session=%s, platform=%s, data_dir=%s, BM25-only",
+                "OmniMem initialized (degraded): session=%s, platform=%s, data_dir=%s, L1-only",
                 session_id,
                 platform,
                 self._data_dir,
             )
             return
 
+        # ★ P1-6 追加：先把重型数值导入链在当前单线程里跑完，再起任何后台线程。
+        #   否则 ChromaDB 初始化线程与嵌入模型加载线程会并发首次 import numpy，
+        #   触发 numpy 惰性子模块自我递归（RecursionError）并留下半初始化的
+        #   numpy._typing —— 整个进程的向量通道从此静默失效。
+        from omnimem.retrieval.vector_store import preheat_heavy_imports
+
+        preheat_heavy_imports()
+
         # 阶段1: 核心同步初始化（快速返回，让 agent 尽早就绪）
         self._init_l1()
 
-        with ThreadPoolExecutor(max_workers=2) as executor:
-            futures = {
-                executor.submit(self._init_store): "store",
-                executor.submit(self._init_retrieval): "retrieval",
-            }
-            for future in as_completed(futures):
-                name = futures[future]
-                try:
-                    future.result()
-                except Exception as e:
-                    logger.warning("Init %s failed: %s", name, e)
+        # ★ P1-6: 会话初始化在对话路径上。原先 as_completed 无超时 + with 语句隐式
+        #   shutdown(wait=True)，只要 _init_retrieval 卡在 embedding 加载上，agent 的
+        #   第一个回合就一起挂住。现在总预算有界，超时的子系统按不可用处理并继续
+        #   （BM25 兜底仍可用）。
+        _init_budget = 120.0
+        executor = ThreadPoolExecutor(max_workers=2)
+        futures = {
+            executor.submit(self._init_store): "store",
+            executor.submit(self._init_retrieval): "retrieval",
+        }
+        done: set[str] = set()
+        try:
+            try:
+                for future in as_completed(futures, timeout=_init_budget):
+                    name = futures[future]
+                    done.add(name)
+                    try:
+                        future.result()
+                    except Exception as e:
+                        logger.warning("Init %s failed: %s", name, e)
+            except TimeoutError:
+                logger.error(
+                    "Init 超过 %.0fs 预算，以下子系统按不可用处理: %s",
+                    _init_budget, ", ".join(sorted(set(futures.values()) - done)) or "未知",
+                )
+        finally:
+            for future in futures:
+                future.cancel()
+            executor.shutdown(wait=False, cancel_futures=True)
 
         try:
             self._init_governance_sync_services()
@@ -273,16 +300,14 @@ class ProviderLifecycleMixin:
         shutdown_background_executor(wait=True)
         # ★ 修复 L1/L2：关闭 recall + query_planner 模块级线程池
         #   原实现仅靠 atexit 注册（planner 甚至无 atexit），进程退出前线程泄漏
+        # 经函数关闭：模块级池会被 _get_recall_executor() 重建，直接 import 变量再
+        # shutdown 关到的是当时的绑定，重建语义上不如把"取当前值+置空"收进一个函数。
+        # query_planner 的池实为 plan_and_search 内的 per-call 局部池，已在其 finally 关闭。
         try:
-            from omnimem.services.recall_service import _recall_executor
-            _recall_executor.shutdown(wait=False)
+            from omnimem.services.recall_service import _shutdown_recall_executor
+            _shutdown_recall_executor()
         except Exception as e:
             logger.debug("recall_executor shutdown failed: %s", e)
-        try:
-            from omnimem.handlers.query_planner import _planner_executor
-            _planner_executor.shutdown(wait=False)
-        except Exception as e:
-            logger.debug("planner_executor shutdown failed: %s", e)
         # ★ 修复 L2：关闭 HybridOrchestrator 检索并行线程池
         try:
             if hasattr(self, "_retriever") and self._retriever:

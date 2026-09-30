@@ -22,15 +22,16 @@ from __future__ import annotations
 
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import TimeoutError as FuturesTimeoutError
 from typing import Any
 
 logger = logging.getLogger(__name__)
 
-# 模块级线程池（复用，不每次新建）
-_planner_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="omnimem-planner")
-
 # 跨子查询命中提升倍率
 _CROSS_QUERY_BOOST = 1.5
+
+# ★ P1-6: 多跳子查询的总时间预算（秒）——宁可少几跳，不可挂住整轮对话
+_SUBQUERY_BUDGET_SEC = 20.0
 
 
 def plan_and_search(
@@ -83,8 +84,13 @@ def plan_and_search(
         return None
 
     # 并行执行子查询
+    # ★ P1-6: 子查询本身走 retriever.search（要拿读锁）。原先用 ``with ThreadPoolExecutor``
+    #   + 无超时 as_completed，等于"池内任务再等池内任务"：只要有一个子查询卡在 embedding
+    #   加载或写锁排队上，整个多跳查询就永久挂起，并连带把外层调用方一起挂住。
+    #   现在总预算有界，超时的子查询直接丢弃（少几跳结果比冻结一轮对话好）。
     all_results: list[list[dict[str, Any]]] = []
-    with ThreadPoolExecutor(max_workers=min(len(sub_queries), 4)) as executor:
+    executor = ThreadPoolExecutor(max_workers=min(len(sub_queries), 4))
+    try:
         future_map = {
             executor.submit(
                 retriever.search, sq,
@@ -92,20 +98,32 @@ def plan_and_search(
             ): sq
             for sq in sub_queries
         }
-        for future in as_completed(future_map):
-            try:
-                results = future.result()
-                if results:
-                    all_results.append(results)
-                    logger.debug(
-                        "QueryPlanner: sub-query '%s' returned %d results",
-                        future_map[future], len(results),
+        try:
+            completed = as_completed(future_map, timeout=_SUBQUERY_BUDGET_SEC)
+            for future in completed:
+                try:
+                    results = future.result(timeout=0)
+                    if results:
+                        all_results.append(results)
+                        logger.debug(
+                            "QueryPlanner: sub-query '%s' returned %d results",
+                            future_map[future], len(results),
+                        )
+                except Exception as e:
+                    logger.warning(
+                        "QueryPlanner: sub-query '%s' failed: %s",
+                        future_map[future], e,
                     )
-            except Exception as e:
-                logger.warning(
-                    "QueryPlanner: sub-query '%s' failed: %s",
-                    future_map[future], e,
-                )
+        except FuturesTimeoutError:
+            logger.warning(
+                "QueryPlanner: 子查询超过 %.0fs 预算，丢弃未完成的 %d 跳",
+                _SUBQUERY_BUDGET_SEC,
+                sum(1 for f in future_map if not f.done()),
+            )
+    finally:
+        for future in future_map:
+            future.cancel()
+        executor.shutdown(wait=False, cancel_futures=True)
 
     if not all_results:
         logger.debug("QueryPlanner: no sub-query returned results")

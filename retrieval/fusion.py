@@ -39,13 +39,18 @@ class FusionMixin:
         max_tokens: int,
         trace: Any = None,
         fusion_mode: str = "rrf",
+        planner_weights: dict[str, float] | None = None,
     ) -> list[dict[str, Any]]:
-        """融合 + 类型补充 + 时序重排序 + 过滤。"""
+        """融合 + 类型补充 + 时序重排序 + 过滤。
+
+        planner_weights: HMS Planner 局部通道权重（乘数叠加，不写共享 _source_weights）。
+        """
         if fusion_mode == "additive":
             results = self.additive_fuse(
                 query, channel_results,
                 is_garbage=is_garbage,
                 top_k=top_k, max_tokens=max_tokens,
+                planner_weights=planner_weights,
             )
             if trace:
                 trace.add_step("additive_fuse",
@@ -56,6 +61,7 @@ class FusionMixin:
                 query, channel_results,
                 is_garbage=is_garbage, doc_count=doc_count,
                 top_k=top_k, max_tokens=max_tokens,
+                planner_weights=planner_weights,
             )
             if trace:
                 trace.add_step("rrf_fuse",
@@ -81,6 +87,7 @@ class FusionMixin:
         doc_count: int,
         top_k: int,
         max_tokens: int,
+        planner_weights: dict[str, float] | None = None,
     ) -> list[dict[str, Any]]:
         """RRF 融合 + 数据量自适应阈值 + 垃圾查询二次验证 + Rerank + Token 裁剪。"""
         adaptive_min_rrf = 0.035
@@ -111,12 +118,17 @@ class FusionMixin:
         if active_channels <= 1:
             adaptive_min_rrf = min(adaptive_min_rrf, 0.01)
             if active_channels == 1:
-                logger.warning("RRF degraded: only %s channel has results, weight=%.1f",
+                logger.info("RRF degraded: only %s channel has results, weight=%.1f",
                              active_names[0], base_weights[0] if base_weights else 0)
 
         if self._facade._source_weights:
             for i, name in enumerate(active_names):
                 base_weights[i] *= self._facade._source_weights.get(name, 1.0)
+
+        # ★ HMS Planner 局部权重：乘数叠加（优先独立于共享 _source_weights，互不污染）
+        if planner_weights:
+            for i, name in enumerate(active_names):
+                base_weights[i] *= planner_weights.get(name, 1.0)
 
         if not result_lists:
             return []
@@ -157,7 +169,8 @@ class FusionMixin:
 
         if self._facade._reranker and len(fused) > 3:
             # ★ 先截断到 rerank 候选数，避免对 100+ 条做 Cross-Encoder 推理
-            _rerank_candidates = min(30, len(fused))
+            # ★ bge-reranker-base(CPU/XLM-R)延迟护栏：30→10，配合 recall_timeout_ms 升高，防 recall 超时返回空
+            _rerank_candidates = min(10, len(fused))
             fused = self._facade._reranker.rerank(query, fused[:_rerank_candidates], top_k=top_k)
 
         return trim_to_budget(fused, max_tokens)
@@ -241,6 +254,7 @@ class FusionMixin:
         is_garbage: bool,
         top_k: int,
         max_tokens: int,
+        planner_weights: dict[str, float] | None = None,
     ) -> list[dict[str, Any]]:
         """Additive fusion with entity boost (inspired by mem0 three-signal)."""
         from omnimem.retrieval.entity_extractor import EntityExtractor
@@ -254,6 +268,8 @@ class FusionMixin:
             if not results:
                 continue
             weight = channel_weights.get(name, 1.0)
+            if planner_weights:
+                weight *= planner_weights.get(name, 1.0)
             for doc in results:
                 doc_id = doc.get("memory_id", "") or f"hash-{hash(doc.get('content', ''))}"
                 score = doc.get("score", 0.0)
@@ -295,7 +311,8 @@ class FusionMixin:
 
         if self._facade._reranker and len(results) > 3:
             # ★ 先截断到 rerank 候选数
-            _rerank_candidates = min(30, len(results))
+            # ★ bge-reranker-base(CPU/XLM-R)延迟护栏：30→10
+            _rerank_candidates = min(10, len(results))
             results = self._facade._reranker.rerank(query, results[:_rerank_candidates], top_k=top_k)
 
         return trim_to_budget(results[:top_k], max_tokens)
@@ -368,7 +385,13 @@ class FusionMixin:
             if ceiling is not None and float(r.get("score", 0) or 0) >= ceiling:
                 r["score"] = round(ceiling * 0.999, 5)
                 r["boost_capped"] = True
-        return sorted(results, key=lambda x: x.get("score", 0), reverse=True)
+        # ★ lever B: 若 Cross-Encoder 已重排(rerank_score 存在)，最终排序以 rerank 为准；
+        #   否则沿用启发式 score。否则 rrf_fuse 内的 rerank 顺序会被本步按 score 重排冲掉。
+        return sorted(
+            results,
+            key=lambda x: x.get("rerank_score", x.get("score", 0)),
+            reverse=True,
+        )
 
     def supplement_low_recall_types(
         self, query: str, results: list[dict[str, Any]], top_k: int

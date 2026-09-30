@@ -84,6 +84,15 @@ def get_tool_schemas() -> list[dict[str, Any]]:
                         "enum": ["public", "team", "personal", "secret"],
                         "default": "personal",
                     },
+                    "project": {
+                        "type": "string",
+                        "description": (
+                            "Optional project/namespace tag (e.g. the repo or product "
+                            "name). When set, deep 'llm' recall only supplements memories "
+                            "from the SAME project, preventing cross-project confusion "
+                            "on generic queries like 'tech stack' or 'framework'."
+                        ),
+                    },
                 },
                 "required": ["content"],
             },
@@ -129,6 +138,14 @@ def get_tool_schemas() -> list[dict[str, Any]]:
                             "Valid types: fact, preference, correction, skill, "
                             "procedural, event, action, reasoning, knowledge, "
                             "workflow, project, convention, maintenance, user_profile"
+                        ),
+                    },
+                    "project": {
+                        "type": "string",
+                        "description": (
+                            "Optional project/namespace tag. In 'llm' mode, restricts the "
+                            "store-supplement channel to memories of the SAME project, "
+                            "eliminating cross-project drift on generic queries."
                         ),
                     },
                 },

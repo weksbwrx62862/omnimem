@@ -57,7 +57,18 @@ def convert_file(
     """读取上游导出文件 -> 原生信封；给定 output_path 时落盘。"""
     import json
 
-    data = json.loads(Path(input_path).read_text(encoding="utf-8"))
+    raw = Path(input_path).read_text(encoding="utf-8")
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as e:
+        # 本函数只服务上游记忆库的导出文件（mem0/letta/zep/graphiti/cognee）。
+        # 以前这里抛裸的 JSONDecodeError，看不出"传错文件类型"还是"文件损坏"。
+        raise ValueError(
+            f"import_file 只接受上游记忆库导出的 JSON，当前文件不是合法 JSON：{input_path}"
+            f"（{e.msg}，第 {e.lineno} 行第 {e.colno} 列）。"
+            f"支持来源：{', '.join(SUPPORTED_SOURCES)}；"
+            f"若要把 Markdown/纯文本变成记忆，请直接用 memorize / import_memories。"
+        ) from e
     envelope = convert_source(data, source=source, **kwargs)
     if output_path is not None:
         out = Path(output_path)

@@ -810,7 +810,7 @@ def main() -> None:
                     remaining -= extra
                 if remaining <= 0:
                     break
-    logger.info("评测题目数: %d (limit=%d, 类型数=%d)", len(eval_data), limit, n_types)
+    logger.info("评测题目数: %d (limit=%d, 类型数=%d)", len(eval_data), limit, len(type_counter))
 
     # 逐题评测
     all_results: list[dict[str, Any]] = []
@@ -853,6 +853,15 @@ def main() -> None:
 
         t_q_total = time.perf_counter() - t_q_start
         all_results.append(result)
+
+        # ★ 逐题追加写盘：评测可中断且保留已完成进度（诊断长跑用）
+        details_append_path = output_dir / "details.jsonl"
+        try:
+            with open(details_append_path, "a", encoding="utf-8") as _f:
+                _f.write(json.dumps(result, ensure_ascii=False) + "\n")
+        except Exception:
+            logger.warning("逐题写盘失败（不影响内存结果）: %s", details_append_path)
+
 
         # ★ 立即打印本题结果（print 不走 logger 缓冲）
         _qid_short = qid[:12]

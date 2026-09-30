@@ -10,6 +10,26 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+
+def resolve_default_data_dir(explicit: Path | None = None) -> Path:
+    """★ P2-3g: 默认数据目录的唯一解析顺序（显式 → $HERMES_HOME → ~/.hermes → ~/.omnimem）。
+
+    插件被 Hermes 加载时数据实际写在 ``$HERMES_HOME/omnimem``（生产即
+    ``~/.hermes/omnimem``，governance/api.py、_inherit_global_model_paths 等 5 处
+    都按这个约定），而 doctor 原先硬编码 ``~/.omnimem`` —— 于是它检查的是另一个
+    （近乎空的）实例：报 palace 0.1 MB，真实实例 254 MB。
+    """
+    if explicit is not None:
+        return Path(explicit)
+    hermes_home = os.environ.get("HERMES_HOME", "").strip()
+    if hermes_home:
+        return Path(hermes_home) / "omnimem"
+    hermes_dir = Path.home() / ".hermes" / "omnimem"
+    if hermes_dir.exists():
+        return hermes_dir
+    return Path.home() / ".omnimem"
+
+
 _CONFIG_SCHEMA = {
     "save_interval": {"type": (int, float), "min": 1, "max": 3600, "default": 15},
     "retrieval_mode": {"type": str, "choices": ["rag", "hybrid", "vector", "bm25"], "default": "rag"},
@@ -57,6 +77,10 @@ _CONFIG_SCHEMA = {
     # ★ OPT: 检索超时降级 — recall 整体超时 + 策略切换
     "recall_timeout_ms": {"type": int, "min": 100, "max": 30000, "default": 5000},
     "recall_strategy": {"type": str, "choices": ["hybrid", "keyword", "embedding"], "default": "hybrid"},
+    # archived 记忆召回策略: downweight=降权保留(sealed), exclude=彻底排除
+    "archive_recall_policy": {"type": str, "choices": ["downweight", "exclude"], "default": "downweight"},
+    # 项目召回严格隔离: True 时指定 project 查询仅返回同名 project 记忆(空标签也排除)
+    "project_recall_strict": {"type": bool, "default": False},
     # ★ OPT: Pipeline 调度器 — L2/L3 自动触发
     "pipeline_every_n_conversations": {"type": int, "min": 1, "max": 100, "default": 5},
     "pipeline_enable_warmup": {"type": bool, "default": True},
@@ -101,6 +125,17 @@ _CONFIG_SCHEMA = {
     "min_relevance_score": {"type": float, "min": 0.0, "max": 1.0, "default": 0.35},
     # ★ 缺陷3: 偏好记忆查询相关性门控开关
     "preference_relevance_gate": {"type": bool, "default": True},
+    # ★ P2-3a: 热度门控 —— 只有融合分数达到该下限、或与查询有词法重叠的命中
+    #   才计入遗忘曲线热度。默认 0.12 取自生产副本探针实测（见修复报告）：
+    #   相关/无关两类查询的融合分数分布几乎完全重叠（relevant p25/50/75 =
+    #   0.102/0.112/0.130，irrelevant = 0.077/0.100/0.120），所以纯分数阈值分不开，
+    #   必须与词法重叠联合判定。0.12 这组参数可保住 5/5 的相关 top1、
+    #   同时挡掉 32/42 的无关命中。必须严格高于 rrf_min_score，否则等于没门控。
+    "heat_min_score": {"type": float, "min": 0.0, "max": 1.0, "default": 0.12},
+    # ★ P2-3e: skill 预注入开关。此前框架导入是坏的（agent.skill_commands 里没有那些符号，
+    # ImportError 被 logger.debug 吞掉），修好后启用即真生效：首条消息扫描全部 SKILL.md
+    # （实测 555 个）并按关键词重叠注入正文。属可观测的行为变更，默认保持线上现状=关闭。
+    "skill_preinject_enabled": {"type": bool, "default": False},
     "circuit_breaker_threshold": {"type": int, "min": 1, "max": 100, "default": 3},
     "circuit_breaker_cooldown_seconds": {"type": (int, float), "min": 1, "max": 3600, "default": 60},
     "max_sync_turn_entries": {"type": int, "min": 10, "max": 100000, "default": 1000},
@@ -164,10 +199,46 @@ class OmniMemConfig:
         self._values: dict[str, Any] = dict(DEFAULTS)
         self._last_mtime: float = 0.0
         self._load()
+        self._inherit_global_model_paths()
         # 禁止空 api_key：未配置或显式置空时强制生成随机 32 字节 hex
         if not self._values.get("api_key"):
             self._values["api_key"] = secrets.token_hex(32)
             self.save()
+
+    # 模型路径类配置：本地缺失时必须从全局 OmniMem home 继承。
+    # 不继承的后果：_CachedEmbeddingFunction 回落到内置模型名 all-MiniLM-L6-v2，
+    # 而生产配置用的是 paraphrase-multilingual-MiniLM-L12-v2 —— 两个不同模型、
+    # 同为 384 维，会静默写进同一个向量空间；若本机也没有内置模型，则整条向量
+    # 索引被跳过（日志只留一句 SKIPPED，检索悄悄退化成 BM25）。
+    _GLOBAL_INHERIT_KEYS = ("embedding_model_path", "reranker_model_path")
+
+    def _inherit_global_model_paths(self) -> None:
+        """本地 config 缺模型路径时，从 ~/.hermes/omnimem/config.yaml 继承。
+
+        典型场景：SDK 用全新临时 storage_dir 起库（测试/迁移/导入管道），本地只有
+        DEFAULTS，模型路径为空。继承后新库与生产库共用同一模型，向量空间一致。
+        路径不存在时只告警不采用，避免把坏路径写进配置。
+        """
+        missing = [k for k in self._GLOBAL_INHERIT_KEYS if not self._values.get(k)]
+        if not missing:
+            return
+        global_cfg = Path.home() / ".hermes" / "omnimem" / "config.yaml"
+        try:
+            if not global_cfg.exists() or global_cfg.resolve() == self._config_path.resolve():
+                return
+            import yaml
+
+            flat = _flatten_dict(yaml.safe_load(global_cfg.read_text(encoding="utf-8")) or {})
+        except Exception as e:
+            logger.warning("Global model-path inherit skipped: %s", e)
+            return
+        for key in missing:
+            value = flat.get(key)
+            if value and Path(str(value)).is_dir():
+                self._values[key] = value
+                logger.info("OmniMem: %s inherited from global config -> %s", key, value)
+            elif value:
+                logger.warning("OmniMem: global %s points at a missing path, ignored: %s", key, value)
 
     def reload(self, force: bool = False) -> bool:
         """检测配置文件是否变更，若变更则重新加载。返回是否发生重载。"""

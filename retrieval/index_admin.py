@@ -73,18 +73,12 @@ class IndexAdminMixin:
         batch_size = max(1, batch_size)
         max_workers = max(1, max_workers)
 
-        # 1. 清空现有向量索引
-        try:
-            if hasattr(facade._vector, "reset"):
-                facade._vector.reset()
-            else:
-                for entry in entries:
-                    mid = entry.get("memory_id", "")
-                    if mid:
-                        facade._vector.delete(mid)
-        except Exception as e:
-            logger.warning("Vector reset/delete failed in rebuild: %s", e)
-
+        # 1. ★ 不再预先清空向量索引：原实现在算 embedding 之前就把 entries 里的每个 id
+        #   逐个 delete（facade._vector 并没有 reset()，走的是 else 分支），随后
+        #   rebuild_vectors_parallel 一旦失败（模型加载锁超时→批次静默返回短列表→数量校验
+        #   判失败）就一条都不写：**一次失败的重建会把可用索引清空**（副本实测
+        #   vectors 975→193，检索 0 命中）。写入路径本身就是 upsert（按 id 覆盖），重建
+        #   不需要先删——留着旧数据最多是"未更新"，删了再写失败就是"全丢"。
         # 2. 并行重建向量索引
         vec_count = 0
         try:
@@ -93,6 +87,11 @@ class IndexAdminMixin:
             )
         except Exception as e:
             logger.warning("rebuild_vectors_parallel failed: %s", e)
+        if not vec_count:
+            logger.error(
+                "OmniMem: 向量重建未写入任何条目（entries=%d），已放弃并保持现有索引原样",
+                len(entries),
+            )
 
         # 3. BM25 增量更新
         bm25_count = 0
@@ -133,6 +132,10 @@ class IndexAdminMixin:
                 facade._vector.delete(old_id)
             except Exception as e:
                 logger.warning("Vector delete sync_turn %s failed: %s", old_id, e)
+        # ★ 修复 S1（2026-09-28）：队列状态落盘，使 FIFO 淘汰能力跨 gateway 重启保持。
+        # 不落盘则重启后 _sync_turn_ids 归零，上面的 while 永不触发、索引只增不减。
+        if hasattr(facade, "persist_sync_turn_ids"):
+            facade.persist_sync_turn_ids()
 
     def index_update(self, user_content: str, _assistant_content: str) -> None:
         """后台异步索引更新（从 sync_turn 调用）。"""

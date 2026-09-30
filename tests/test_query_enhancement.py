@@ -116,7 +116,7 @@ class TestQueryExpansionBM25:
         captured_bm25_queries: list[str | None] = []
         original_dispatch = orchestrator.dispatch_channels
 
-        def _capture_dispatch(query, top_k, allowed_channels, trace, bm25_query=None):
+        def _capture_dispatch(query, top_k, allowed_channels, trace, bm25_query=None, planner_weights=None):
             captured_bm25_queries.append(bm25_query)
             # 返回空结果以简化流程
             return {"bm25": [{"memory_id": "m1", "content": "test", "score": 0.5}]}

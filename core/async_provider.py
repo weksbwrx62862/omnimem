@@ -50,7 +50,10 @@ class AsyncOmniMemProvider:
 
     async def prefetch(self, query: str, *, session_id: str = "") -> str:
         """异步预检索。"""
-        loop = asyncio.get_event_loop()
+        # ★ P2-3c：本类所有取 loop 的地方都在协程内，用 get_running_loop()。
+        #   asyncio.get_event_loop() 在没有当前 loop 的线程上已废弃（3.12 起告警、
+        #   3.14 起直接 RuntimeError），而且会悄悄造/复用一条不属于这里的 loop。
+        loop = asyncio.get_running_loop()
         return await loop.run_in_executor(
             self._executor,
             lambda: self._provider.prefetch(query, session_id=session_id),
@@ -58,7 +61,7 @@ class AsyncOmniMemProvider:
 
     async def system_prompt_block(self) -> str:
         """异步获取系统提示块。"""
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         return await loop.run_in_executor(
             self._executor,
             self._provider.system_prompt_block,
@@ -71,7 +74,7 @@ class AsyncOmniMemProvider:
         **kwargs: Any,
     ) -> str:
         """异步处理工具调用。"""
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         return await loop.run_in_executor(
             self._executor,
             self._provider.handle_tool_call,
@@ -88,7 +91,7 @@ class AsyncOmniMemProvider:
         session_id: str = "",
     ) -> None:
         """异步同步单轮对话。"""
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         await loop.run_in_executor(
             self._executor,
             lambda: self._provider.sync_turn(
@@ -103,7 +106,7 @@ class AsyncOmniMemProvider:
         **kwargs: Any,
     ) -> None:
         """异步 turn 开始钩子。"""
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         await loop.run_in_executor(
             self._executor,
             self._provider.on_turn_start,
@@ -114,7 +117,7 @@ class AsyncOmniMemProvider:
 
     async def on_session_end(self, messages: list[dict[str, Any]]) -> None:
         """异步会话结束钩子。"""
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         await loop.run_in_executor(
             self._executor,
             self._provider.on_session_end,
@@ -123,7 +126,7 @@ class AsyncOmniMemProvider:
 
     async def on_pre_compress(self, messages: list[dict[str, Any]]) -> str:
         """异步压缩前钩子。"""
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         return await loop.run_in_executor(
             self._executor,
             self._provider.on_pre_compress,
@@ -160,7 +163,7 @@ class AsyncOmniMemProvider:
 
     async def run_governance_audit(self) -> dict[str, Any]:
         """异步运行治理审计。"""
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         return await loop.run_in_executor(
             self._executor,
             lambda: self._provider._auditor.run_full_audit(limit=1000)
@@ -170,7 +173,7 @@ class AsyncOmniMemProvider:
 
     async def get_health_status(self) -> dict[str, Any]:
         """异步获取健康状态。"""
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         return await loop.run_in_executor(
             self._executor,
             lambda: self._provider._auditor.quick_health_check()

@@ -8,10 +8,12 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from typing import Any
 
-from omnimem.handlers.deps import extract_deps
+from omnimem.handlers.deps import HandlerDependencies, extract_deps
 from omnimem.services.recall_service import RecallService, _extract_query_keywords
+from omnimem.utils.logging import sanitize_for_log
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +28,7 @@ def _validate_recall_args(args: dict[str, Any]) -> str | None:
         return "query is required and must be a non-empty string"
 
     mode = args.get("mode", "rag")
-    if mode not in {"rag", "llm", "associative"}:
+    if mode not in {"rag", "llm", "associative", "agentic"}:
         return f"invalid mode: {mode}"
 
     max_tokens = args.get("max_tokens", 1500)
@@ -49,25 +51,69 @@ def _validate_recall_args(args: dict[str, Any]) -> str | None:
     return None
 
 
+def _audit_recall(
+    deps: HandlerDependencies,
+    args: dict[str, Any],
+    result: dict[str, Any],
+    started_at: float,
+) -> None:
+    """★ P2-3f: 为 RecallService 未覆盖的 recall 结局补审计。
+
+    status == "found" 由 RecallService 自身审计（含命中数），这里只写提前返回的路径
+    （参数校验失败 / no_results），保证「每一次 omni_recall 调用都留下痕迹」。
+    审计写入失败绝不阻断检索。
+    """
+    if result.get("status") == "found":
+        return
+    if deps.audit_logger is None:
+        return
+    try:
+        deps.audit_logger.log(
+            "recall",
+            details={
+                "query": sanitize_for_log(args.get("query", ""), 200),
+                "mode": args.get("mode", "rag"),
+                "status": result.get("status", ""),
+                "reason": result.get("reason", result.get("message", "")),
+                "hits": len(result.get("memories") or []),
+                "elapsed_ms": round((time.perf_counter() - started_at) * 1000, 1),
+            },
+            result="error" if result.get("status") == "error" else "no_results",
+            instance_id=deps.instance_id,
+        )
+    except Exception as e:
+        logger.warning("OmniMem: recall 审计写入失败（不阻断检索）: %s", e)
+
+
 def handle_recall(provider: Any, args: dict[str, Any]) -> str:
     """主动检索记忆 — 经 ContextManager 精炼后返回精简摘要。"""
+    started_at = time.perf_counter()
+    deps = extract_deps(provider)
+
     validation_error = _validate_recall_args(args)
     if validation_error:
-        return json.dumps({"status": "error", "reason": validation_error})
+        result = {"status": "error", "reason": validation_error}
+        _audit_recall(deps, args, result, started_at)
+        return json.dumps(result)
 
-    deps = extract_deps(provider)
     service = RecallService(deps=deps)
     result = service.handle(args)
+    _audit_recall(deps, args, result, started_at)
     return json.dumps(result, ensure_ascii=False)
 
 
 async def async_handle_recall(provider: Any, args: dict[str, Any]) -> str:
     """异步主动检索记忆。"""
+    started_at = time.perf_counter()
+    deps = extract_deps(provider)
+
     validation_error = _validate_recall_args(args)
     if validation_error:
-        return json.dumps({"status": "error", "reason": validation_error})
+        result = {"status": "error", "reason": validation_error}
+        _audit_recall(deps, args, result, started_at)
+        return json.dumps(result)
 
-    deps = extract_deps(provider)
     service = RecallService(deps=deps)
     result = await service.async_handle(args)
+    _audit_recall(deps, args, result, started_at)
     return json.dumps(result, ensure_ascii=False)

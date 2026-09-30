@@ -157,6 +157,10 @@ class OmniMemAPIHandler(BaseHTTPRequestHandler):
 
     def _check_admin(self) -> bool:
         """校验敏感操作的管理令牌，通过返回 True，否则已发送错误响应。"""
+        # ★ fail-closed: 中间件未初始化（嵌入式/测试直装 Handler）时拒绝而非崩溃连接
+        if self._admin_auth_middleware is None:
+            self._send_json(403, {"error": "Forbidden"})
+            return False
         admin = self._admin_auth_middleware.validate(dict(self.headers))
         if admin is not True:
             code, body = admin
@@ -191,7 +195,10 @@ class OmniMemAPIHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self._add_cors_headers()
         self.end_headers()
-        self.wfile.write(body)
+        try:
+            self.wfile.write(body)
+        except BrokenPipeError:
+            pass  # 客户端已断开连接，服务端不抛异常
 
     def do_OPTIONS(self):
         self.send_response(204)

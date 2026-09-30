@@ -192,3 +192,44 @@ def test_add_batch_optimized_embedding_exception_fallback(retriever: VectorRetri
     assert ids == ["fb1"]
     assert documents == ["fallback"]
     assert metadatas == [{"_default": "1"}]
+
+
+# ── rebuild_vectors_parallel：失败不得毁掉现有索引 ──
+
+
+def _chroma_retriever(tmp_path: Path) -> tuple[VectorRetriever, _FakeChromaDBStore]:
+    v = VectorRetriever(data_dir=tmp_path)
+    fake = _FakeChromaDBStore()
+    v._store = fake
+    v._initialized = True
+    return v, fake
+
+
+def test_rebuild_aborts_before_writing_when_embedding_unavailable(tmp_path: Path) -> None:
+    """嵌入后端不可用时，重建必须在任何写入之前中止（调用方已不再预清空）。"""
+    v, fake = _chroma_retriever(tmp_path)
+    v._embedding_fn = lambda docs: []
+
+    assert v.rebuild_vectors_parallel([{"memory_id": "m1", "content": "内容"}]) == 0
+    fake._collection.upsert.assert_not_called()
+
+
+def test_rebuild_rescues_short_parallel_batches_by_recomputing(tmp_path: Path) -> None:
+    """并行 batch 因模型首次加载锁而返回短列表时，串行补算应救回整轮重建。
+
+    副本实测：ids=1020 / embeddings=828 时旧实现直接放弃，而索引已被清空。
+    """
+    v, fake = _chroma_retriever(tmp_path)
+    state = {"calls": 0}
+
+    def _emb(docs):
+        state["calls"] += 1
+        if state["calls"] == 2:  # 并行阶段的一批撞加载锁 → 静默 []
+            return []
+        return [[0.1] * 4 for _ in docs]
+
+    v._embedding_fn = _emb
+    entries = [{"memory_id": f"m{i}", "content": f"内容{i}"} for i in range(2)]
+
+    assert v.rebuild_vectors_parallel(entries, batch_size=1, max_workers=2) == 2
+    assert fake._collection.upsert.call_count == 1

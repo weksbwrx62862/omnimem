@@ -1,12 +1,14 @@
-"""L2 结构化记忆模块测试。"""
+"""L2 结构化记忆模块测试 — 包括 WingRoom / DrawerCloset / ThreeLevelIndex / WriteOp / Saga 补偿。"""
 
 from __future__ import annotations
 
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
-from omnimem.memory.drawer_closet import DrawerClosetStore
+import pytest
+from omnimem.memory.drawer_closet import DrawerClosetStore, WriteOp
 from omnimem.memory.index import ThreeLevelIndex
 from omnimem.memory.wing_room import WingRoomManager
 
@@ -294,3 +296,185 @@ class TestThreeLevelIndex(unittest.TestCase):
         for i in range(10):
             result = self.index.get(f"batch-{i}")
             self.assertIsNotNone(result, f"batch-{i} should exist")
+
+
+# ═══════════════════════════════════════════════════════════════
+# WriteOp 缓冲测试
+# ═══════════════════════════════════════════════════════════════
+
+class TestWriteOpBuffer(unittest.TestCase):
+    """验证写入缓冲从 partial 改为 WriteOp 后的行为。"""
+
+    def setUp(self) -> None:
+        self.tmpdir = tempfile.mkdtemp()
+        self.store = DrawerClosetStore(Path(self.tmpdir), write_buffer_threshold=20)
+
+    def test_add_stores_writeop_in_buffer(self) -> None:
+        mid = self.store.add(wing="personal", room="test", content="测试写入缓冲")
+        self.assertEqual(len(self.store._write_buffer), 2)
+        self.assertEqual(self.store._pending_disk_writes, 2)
+        drawer_file = self.store._palace_dir / "personal" / "fact" / "test" / "drawer" / f"{mid}.md"
+        self.assertFalse(drawer_file.exists())
+        self.store.flush()
+        self.assertEqual(len(self.store._write_buffer), 0)
+        self.assertTrue(drawer_file.exists())
+        self.assertIn("测试写入缓冲", drawer_file.read_text(encoding="utf-8"))
+
+    def test_flush_write_buffer_writes_files(self) -> None:
+        mid = self.store.add(wing="personal", room="test", content="flush 测试")
+        self.store.flush()
+        drawer_files = list(Path(self.tmpdir).rglob(f"drawer/{mid}.md"))
+        closet_files = list(Path(self.tmpdir).rglob(f"closet/{mid}.md"))
+        self.assertEqual(len(drawer_files), 1)
+        self.assertEqual(len(closet_files), 1)
+        drawer_text = drawer_files[0].read_text(encoding="utf-8")
+        closet_text = closet_files[0].read_text(encoding="utf-8")
+        self.assertIn("flush 测试", drawer_text)
+        self.assertIn("flush 测试", closet_text)
+
+    def test_auto_flush_on_threshold(self) -> None:
+        store = DrawerClosetStore(Path(self.tmpdir), write_buffer_threshold=3)
+        mids = []
+        for i in range(2):
+            mid = store.add(wing="personal", room=f"r{i}", content=f"内容{i}")
+            mids.append(mid)
+            self.assertEqual(len(store._write_buffer), (i + 1) * 2,
+                             f"第{i+1}次 add 后 buffer 应保留")
+        mid3 = store.add(wing="personal", room="r2", content="内容2")
+        self.assertEqual(len(store._write_buffer), 0, "达到阈值后 buffer 应清空")
+        drawer_file = Path(self.tmpdir) / "personal" / "fact" / "r2" / "drawer" / f"{mid3}.md"
+        self.assertTrue(drawer_file.exists(), "达到阈值后文件应落盘")
+
+    def test_read_after_flush(self) -> None:
+        mid = self.store.add(wing="personal", room="test", content="持久化读取测试")
+        self.store.flush()
+        result = self.store.get(mid)
+        self.assertIsNotNone(result)
+        self.assertEqual(result["content"], "持久化读取测试")
+
+    def test_writeop_is_serializable_dataclass(self) -> None:
+        self.store.add(wing="personal", room="test", content="序列化检查")
+        for op in self.store._write_buffer:
+            self.assertIsInstance(op, WriteOp)
+            self.assertTrue(hasattr(op, "op_type"))
+            self.assertTrue(hasattr(op, "path"))
+            self.assertTrue(hasattr(op, "content"))
+            self.assertTrue(hasattr(op, "memory_type"))
+            self.assertTrue(hasattr(op, "confidence"))
+            self.assertTrue(hasattr(op, "privacy"))
+            self.assertTrue(hasattr(op, "stored_at"))
+
+
+# ═══════════════════════════════════════════════════════════════
+# Saga 补偿集成测试
+# ═══════════════════════════════════════════════════════════════
+
+class TestDrawerClosetSagaCompensation:
+    """验证 DrawerClosetStore.add() 的 Saga 补偿语义。"""
+
+    def setup_method(self) -> None:
+        self.tmpdir = tempfile.mkdtemp()
+        self.palace_dir = Path(self.tmpdir) / "palace"
+        self.store = DrawerClosetStore(
+            palace_dir=self.palace_dir,
+            write_buffer_threshold=20,
+        )
+
+    def test_normal_write_success(self) -> None:
+        memory_id = self.store.add(
+            wing="test_wing", room="test_room", content="测试内容", memory_type="fact",
+        )
+        assert memory_id, "memory_id 不应为空"
+        assert isinstance(memory_id, str)
+        assert len(memory_id) > 0
+        assert memory_id in self.store._closet_index, "closet_index 应包含 memory_id"
+        assert memory_id in self.store._id_to_path, "id_to_path 应包含 memory_id"
+
+        meta = self.store._meta_store.get(memory_id)
+        assert meta is not None, "MetaStore 应能查到记录"
+        assert meta["memory_id"] == memory_id
+        assert meta["wing"] == "test_wing"
+        assert meta["room"] == "test_room"
+        assert meta["type"] == "fact"
+
+        self.store.flush()
+        drawer_path = self.store._id_to_path[memory_id]
+        assert drawer_path.exists(), f"drawer 文件应存在: {drawer_path}"
+        drawer_text = drawer_path.read_text(encoding="utf-8")
+        assert "测试内容" in drawer_text
+
+        closet_path = drawer_path.parent.parent / "closet" / f"{memory_id}.md"
+        assert closet_path.exists(), f"closet 文件应存在: {closet_path}"
+
+    def test_meta_store_failure_compensation(self) -> None:
+        with patch.object(
+            self.store._meta_store, "add",
+            side_effect=RuntimeError("mock meta store failure"),
+        ):
+            memory_id = self.store.add(
+                wing="test_wing", room="test_room", content="补偿测试内容", memory_type="fact",
+            )
+        assert memory_id, "memory_id 不应为空"
+        assert memory_id not in self.store._closet_index, "compensate 应从 closet_index 中移除 memory_id"
+        meta = self.store._meta_store.get(memory_id)
+        assert meta is None, "MetaStore 不应保留该记录"
+
+    def test_compensation_when_buffer_not_flushed(self) -> None:
+        self.store._WRITE_BUFFER_THRESHOLD = 1000
+        with patch.object(
+            self.store._meta_store, "add",
+            side_effect=RuntimeError("mock meta store failure"),
+        ):
+            memory_id = self.store.add(
+                wing="w1", room="r1", content="未 flush 补偿测试", memory_type="t1",
+            )
+        assert memory_id, "memory_id 不应为空"
+        assert memory_id not in self.store._closet_index, "closet_index 应被清理"
+        assert memory_id not in self.store._id_to_path, "id_to_path 应被清理"
+        type_set = self.store._type_index.get("t1", set())
+        assert memory_id not in type_set, "type_index 中 t1 集合应不含 memory_id"
+        wing_set = self.store._wing_index.get("w1", set())
+        assert memory_id not in wing_set, "wing_index 中 w1 集合应不含 memory_id"
+        files = list(self.palace_dir.rglob(f"{memory_id}.md"))
+        assert files == [], "未 flush 时不应有文件落盘"
+
+    def test_compensation_after_flush(self) -> None:
+        store = DrawerClosetStore(palace_dir=self.palace_dir, write_buffer_threshold=1)
+        first_id = store.add(
+            wing="w_flush", room="r_flush", content="第一条已 flush 内容", memory_type="fact",
+        )
+        first_drawer = store._id_to_path[first_id]
+        assert first_drawer.exists(), "第一条 drawer 文件应已落盘"
+
+        with patch.object(
+            store._meta_store, "add",
+            side_effect=RuntimeError("mock meta store failure after flush"),
+        ):
+            second_id = store.add(
+                wing="w_flush", room="r_flush", content="第二条将触发补偿的内容", memory_type="fact",
+            )
+
+        second_drawer = self.palace_dir / "w_flush" / "fact" / "r_flush" / "drawer" / f"{second_id}.md"
+        second_closet = self.palace_dir / "w_flush" / "fact" / "r_flush" / "closet" / f"{second_id}.md"
+        assert not second_drawer.exists(), f"compensate 应删除已落盘的 drawer 文件: {second_drawer}"
+        assert not second_closet.exists(), f"compensate 应删除已落盘的 closet 文件: {second_closet}"
+        assert second_id not in store._closet_index, "第二条 closet_index 应被清理"
+        assert second_id not in store._id_to_path, "第二条 id_to_path 应被清理"
+        assert first_id in store._closet_index, "第一条索引不应被误清理"
+        assert first_drawer.exists(), "第一条文件不应被误删"
+        first_meta = store._meta_store.get(first_id)
+        assert first_meta is not None, "第一条 MetaStore 记录应保留"
+
+    def test_compensation_cleans_all_indexes(self) -> None:
+        with patch.object(
+            self.store._meta_store, "add",
+            side_effect=RuntimeError("mock meta store failure"),
+        ):
+            memory_id = self.store.add(wing="w1", room="r1", content="c1", memory_type="t1")
+        assert memory_id not in self.store._closet_index, "closet_index 应被清理"
+        assert memory_id not in self.store._id_to_path, "id_to_path 应被清理"
+        t1_set = self.store._type_index.get("t1", set())
+        assert memory_id not in t1_set, "type_index['t1'] 不应含 memory_id"
+        w1_set = self.store._wing_index.get("w1", set())
+        assert memory_id not in w1_set, "wing_index['w1'] 不应含 memory_id"
+        assert self.store._meta_store.get(memory_id) is None, "MetaStore 不应保留补偿后的记录"

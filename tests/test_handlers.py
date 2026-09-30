@@ -584,10 +584,20 @@ class TestHandleGovern(unittest.TestCase):
 
     def test_govern_archive(self) -> None:
         """归档操作。"""
+        # archive 现校验存在性，需让 store.get 返回有效记忆
+        self.provider._store.get = MagicMock(return_value={"memory_id": "mem-001", "content": "x"})
         result = handle_govern(self.provider, {"action": "archive", "target": "mem-001"})
         data = json.loads(result)
         self.assertEqual(data["status"], "sealed")
         self.provider._forgetting.archive.assert_called_once_with("mem-001")
+
+    def test_govern_archive_not_found(self) -> None:
+        """归档不存在的记忆应返回 not_found 而非假成功。"""
+        self.provider._store.get = MagicMock(return_value=None)
+        result = handle_govern(self.provider, {"action": "archive", "target": "no-such-id"})
+        data = json.loads(result)
+        self.assertEqual(data["status"], "not_found")
+        self.provider._forgetting.archive.assert_not_called()
 
     def test_govern_reactivate(self) -> None:
         """重新激活操作。"""

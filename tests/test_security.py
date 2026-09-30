@@ -13,9 +13,7 @@ import threading
 import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
-from urllib.error import HTTPError
-from urllib.request import Request, urlopen
-
+from urllib.request import Request
 from omnimem.core.import_export import MemoryExporter, MemoryImporter
 from omnimem.governance.encryption import EncryptionUnavailableError, MemoryEncryption
 from omnimem.mcp_server import OmniMemMCPServer
@@ -207,6 +205,7 @@ class _RunningServerMixin:
         self.server = HTTPServer(("127.0.0.1", 0), OmniMemAPIHandler)
         host, port = self.server.server_address
         self.base_url = f"http://{host}:{port}"
+        self._port = port
         self.server_thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.server_thread.start()
 
@@ -217,13 +216,22 @@ class _RunningServerMixin:
             self.server_thread.join(timeout=2)
 
     def _request(self, method: str, path: str, body: bytes | None = None, headers: dict | None = None):
-        url = self.base_url + path
-        req = Request(url, data=body, method=method)
-        headers = headers or {}
-        for key, value in headers.items():
-            req.add_header(key, value)
-        with urlopen(req, timeout=5) as resp:
-            return resp.status, resp.read(), resp.headers
+        from http.client import HTTPConnection
+        host = self.base_url.replace("http://", "").split(":")[0]
+        port = self._port
+        conn = HTTPConnection(host, port, timeout=5)
+        try:
+            conn.request(method, path, body=body, headers=headers or {})
+            resp = conn.getresponse()
+            resp_body = resp.read()
+            conn.close()
+            return resp.status, resp_body, resp.headers
+        except Exception:
+            try:
+                conn.close()
+            except Exception:
+                pass
+            raise
 
 
 class TestRestApiSecurityHardening(_RunningServerMixin, unittest.TestCase):
@@ -233,17 +241,16 @@ class TestRestApiSecurityHardening(_RunningServerMixin, unittest.TestCase):
     def test_export_requires_admin_token(self):
         self._start_server(api_key="api123", admin_token="admin123")
         # 仅 API Key 应返回 403
-        with self.assertRaises(HTTPError) as ctx:
-            self._request(
-                "POST",
-                "/api/export",
-                body=json.dumps({"output_path": "/tmp/x.json"}).encode(),
-                headers={
-                    "Content-Type": "application/json",
-                    "Authorization": "Bearer api123",
-                },
-            )
-        self.assertEqual(ctx.exception.code, 403)
+        status, _, _ = self._request(
+            "POST",
+            "/api/export",
+            body=json.dumps({"output_path": "/tmp/x.json"}).encode(),
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": "Bearer api123",
+            },
+        )
+        self.assertEqual(status, 403)
 
         # 同时提供 Admin Token 才能成功
         status, body, _ = self._request(
@@ -260,29 +267,27 @@ class TestRestApiSecurityHardening(_RunningServerMixin, unittest.TestCase):
 
     def test_import_requires_admin_token(self):
         self._start_server(api_key="api123", admin_token="admin123")
-        with self.assertRaises(HTTPError) as ctx:
-            self._request(
-                "POST",
-                "/api/import",
-                body=json.dumps({"input_path": "/tmp/x.json"}).encode(),
-                headers={
-                    "Content-Type": "application/json",
-                    "Authorization": "Bearer api123",
-                },
-            )
-        self.assertEqual(ctx.exception.code, 403)
+        status, _, _ = self._request(
+            "POST",
+            "/api/import",
+            body=json.dumps({"input_path": "/tmp/x.json"}).encode(),
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": "Bearer api123",
+            },
+        )
+        self.assertEqual(status, 403)
 
     def test_body_size_limit(self):
         self._start_server(api_key="")
         huge_body = b'{"content": "' + b"x" * (11 * 1024 * 1024) + b'"}'
-        with self.assertRaises(HTTPError) as ctx:
-            self._request(
-                "POST",
-                "/api/memorize",
-                body=huge_body,
-                headers={"Content-Type": "application/json"},
-            )
-        self.assertEqual(ctx.exception.code, 413)
+        status, _, _ = self._request(
+            "POST",
+            "/api/memorize",
+            body=huge_body,
+            headers={"Content-Type": "application/json"},
+        )
+        self.assertEqual(status, 413)
 
 
 class TestMCPApiKeyMiddleware(unittest.TestCase):

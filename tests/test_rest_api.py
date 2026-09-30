@@ -8,9 +8,7 @@ import threading
 import time
 import unittest
 from unittest.mock import MagicMock
-from urllib.error import HTTPError
-from urllib.request import Request, urlopen
-
+from urllib.request import Request
 from omnimem.rest_api import AuthMiddleware, OmniMemAPIHandler, RateLimiter
 
 
@@ -34,6 +32,7 @@ class RunningServerMixin:
         self.server = HTTPServer(("127.0.0.1", 0), OmniMemAPIHandler)
         host, port = self.server.server_address
         self.base_url = f"http://{host}:{port}"
+        self._port = port
         self.server_thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.server_thread.start()
 
@@ -46,13 +45,20 @@ class RunningServerMixin:
 
     def _request(self, method: str, path: str, body: bytes | None = None, headers: dict | None = None):
         """发送 HTTP 请求并返回 (status, body, headers) 三元组。"""
-        url = self.base_url + path
-        req = Request(url, data=body, method=method)
-        headers = headers or {}
-        for key, value in headers.items():
-            req.add_header(key, value)
-        with urlopen(req, timeout=5) as resp:
-            return resp.status, resp.read(), resp.headers
+        from http.client import HTTPConnection
+        conn = HTTPConnection("127.0.0.1", self._port, timeout=5)
+        try:
+            conn.request(method, path, body=body, headers=headers or {})
+            resp = conn.getresponse()
+            resp_body = resp.read()
+            conn.close()
+            return resp.status, resp_body, resp.headers
+        except Exception:
+            try:
+                conn.close()
+            except Exception:
+                pass
+            raise
 
 
 class TestAuthMiddleware(unittest.TestCase):
@@ -135,11 +141,11 @@ class TestRestApiSecurity(RunningServerMixin, unittest.TestCase):
 
     def test_invalid_api_key_returns_401(self):
         self._start_server(api_key="secret123")
-        with self.assertRaises(HTTPError) as ctx:
-            self._request("GET", "/api/health", headers={"Authorization": "Bearer wrong"})
-        self.assertEqual(ctx.exception.code, 401)
-        body = json.loads(ctx.exception.read().decode())
-        self.assertEqual(body, {"error": "Unauthorized"})
+        status, body, _ = self._request(
+            "GET", "/api/health", headers={"Authorization": "Bearer wrong"}
+        )
+        self.assertEqual(status, 401)
+        self.assertEqual(json.loads(body.decode()), {"error": "Unauthorized"})
 
     def test_rate_limit_returns_429(self):
         self._start_server(api_key="", rate_limit=2)
@@ -147,62 +153,57 @@ class TestRestApiSecurity(RunningServerMixin, unittest.TestCase):
         self.assertEqual(self._request("GET", "/api/health")[0], 200)
         self.assertEqual(self._request("GET", "/api/health")[0], 200)
         # 第三次请求应触发限速
-        with self.assertRaises(HTTPError) as ctx:
-            self._request("GET", "/api/health")
-        self.assertEqual(ctx.exception.code, 429)
-        body = json.loads(ctx.exception.read().decode())
-        self.assertEqual(body, {"error": "Rate limit exceeded"})
+        status, body, _ = self._request("GET", "/api/health")
+        self.assertEqual(status, 429)
+        self.assertEqual(json.loads(body.decode()), {"error": "Rate limit exceeded"})
 
     def test_invalid_json_returns_400(self):
         self._start_server(api_key="")
-        with self.assertRaises(HTTPError) as ctx:
-            self._request(
-                "POST",
-                "/api/health",
-                body=b"not json",
-                headers={"Content-Type": "application/json", "Content-Length": "8"},
-            )
-        self.assertEqual(ctx.exception.code, 400)
-        body = json.loads(ctx.exception.read().decode())
-        self.assertEqual(body, {"error": "Invalid JSON"})
+        status, body, _ = self._request(
+            "POST",
+            "/api/health",
+            body=b"not json",
+            headers={"Content-Type": "application/json", "Content-Length": "8"},
+        )
+        self.assertEqual(status, 400)
+        self.assertEqual(json.loads(body.decode()), {"error": "Invalid JSON"})
 
     def test_cors_default_no_origin_header(self):
         self._start_server(cors_origins=[])
-        req = Request(self.base_url + "/api/health", method="GET")
-        with urlopen(req, timeout=5) as resp:
-            self.assertIsNone(resp.headers.get("Access-Control-Allow-Origin"))
+        status, _, headers = self._request("GET", "/api/health")
+        self.assertEqual(status, 200)
+        self.assertIsNone(headers.get("Access-Control-Allow-Origin"))
 
     def test_cors_configured_matching_origin(self):
         self._start_server(cors_origins=["http://example.com"])
-        req = Request(
-            self.base_url + "/api/health",
-            method="GET",
+        status, _, headers = self._request(
+            "GET",
+            "/api/health",
             headers={"Origin": "http://example.com"},
         )
-        with urlopen(req, timeout=5) as resp:
-            self.assertEqual(resp.headers.get("Access-Control-Allow-Origin"), "http://example.com")
+        self.assertEqual(status, 200)
+        self.assertEqual(headers.get("Access-Control-Allow-Origin"), "http://example.com")
 
     def test_cors_configured_non_matching_origin_not_set(self):
         self._start_server(cors_origins=["http://example.com"])
-        req = Request(
-            self.base_url + "/api/health",
-            method="GET",
+        status, _, headers = self._request(
+            "GET",
+            "/api/health",
             headers={"Origin": "http://attacker.com"},
         )
-        with urlopen(req, timeout=5) as resp:
-            self.assertIsNone(resp.headers.get("Access-Control-Allow-Origin"))
+        self.assertEqual(status, 200)
+        self.assertIsNone(headers.get("Access-Control-Allow-Origin"))
 
     def test_options_request_returns_cors_headers_when_configured(self):
         self._start_server(cors_origins=["http://example.com"])
-        req = Request(
-            self.base_url + "/api/health",
-            method="OPTIONS",
+        status, _, headers = self._request(
+            "OPTIONS",
+            "/api/health",
             headers={"Origin": "http://example.com"},
         )
-        with urlopen(req, timeout=5) as resp:
-            self.assertEqual(resp.status, 204)
-            self.assertEqual(resp.headers.get("Access-Control-Allow-Origin"), "http://example.com")
-            self.assertIn("POST", resp.headers.get("Access-Control-Allow-Methods", ""))
+        self.assertEqual(status, 204)
+        self.assertEqual(headers.get("Access-Control-Allow-Origin"), "http://example.com")
+        self.assertIn("POST", headers.get("Access-Control-Allow-Methods", ""))
 
 
 if __name__ == "__main__":

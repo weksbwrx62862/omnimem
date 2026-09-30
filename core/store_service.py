@@ -16,6 +16,8 @@ import logging
 from collections.abc import Callable
 from typing import Any
 
+from omnimem.perception.engine import has_rememberable_payload, is_framework_boilerplate
+
 logger = logging.getLogger(__name__)
 
 
@@ -76,6 +78,12 @@ class MemoryStoreService:
 
     # ─── Signal-driven storage ───────────────────────────────
 
+    def _is_noise(self, core: str, user_content: str) -> bool:
+        """框架前言（cron 说明文字）或无实义载荷（`）]\"` 残句）→ 不该进库。"""
+        if is_framework_boilerplate(core) or is_framework_boilerplate(user_content):
+            return True
+        return not has_rememberable_payload(core)
+
     def store_correction(self, signals: Any, user_content: str) -> str | None:
         """存储纠错记忆 — 精炼版：只存纠正目标而非整段对话。
 
@@ -83,6 +91,9 @@ class MemoryStoreService:
             memory_id if stored, None otherwise
         """
         core = signals.correction_target or self.extract_core_fact(user_content)
+        if self._is_noise(core, user_content):
+            logger.info("StoreService: 丢弃纠错噪声 %r", core[:40])
+            return None
         result = self._store.add(
             wing="personal",
             room="correction",
@@ -97,6 +108,9 @@ class MemoryStoreService:
     def store_reinforcement(self, signals: Any, user_content: str) -> str | None:
         """存储正反馈记忆 — 精炼版：只存强化目标。"""
         core = signals.reinforcement_target or self.extract_core_fact(user_content)
+        if self._is_noise(core, user_content):
+            logger.info("StoreService: 丢弃强化噪声 %r", core[:40])
+            return None
         result = self._store.add(
             wing="personal",
             room="reinforcement",
@@ -113,6 +127,9 @@ class MemoryStoreService:
     def store_fact(self, signals: Any, user_content: str) -> str | None:
         """存储一般事实 — 精炼版：用感知引擎提炼的 fact_content。"""
         content = signals.fact_content or self.extract_core_fact(user_content)
+        if self._is_noise(content, user_content):
+            logger.info("StoreService: 丢弃事实噪声 %r", content[:40])
+            return None
         mem_type = "preference" if signals.has_preference else "fact"
         result = self._store.add(
             wing="personal",

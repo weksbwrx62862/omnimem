@@ -1,6 +1,8 @@
 """ForgettingCurve — 阶段管理 Mixin。"""
 
 import logging
+import threading
+import time
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -8,6 +10,37 @@ from omnimem.governance.forgetting_core import HEAT_LEVELS
 from omnimem.utils.migration import SchemaMigrator
 
 logger = logging.getLogger("governance.forgetting")
+
+# ── 2026-09-16 修复（F1+F3）：record_access 的锁重试与失败计数 ────────────────
+# 背景：该方法的写失败此前只记 WARNING、不重试、不上报，
+#       导致 access_log 静默停更 47 天、forgetting_state 缺 87% 记忆。
+_ACCESS_RETRY_COUNT = 5          # 重试次数（含首次）
+_ACCESS_RETRY_DELAY = 0.2        # 基础退避秒数（0.2/0.4/0.6/0.8）
+_ACCESS_FAIL_ALERT_AT = 3        # 连续失败达到该次数 → 升级为 ERROR
+
+_access_fail_lock = threading.Lock()
+_access_fail_streak = 0
+
+
+def _bump_access_failures() -> int:
+    """连续失败计数 +1，返回当前连续次数。"""
+    global _access_fail_streak
+    with _access_fail_lock:
+        _access_fail_streak += 1
+        return _access_fail_streak
+
+
+def _reset_access_failures() -> None:
+    """成功后清零连续失败计数。"""
+    global _access_fail_streak
+    with _access_fail_lock:
+        _access_fail_streak = 0
+
+
+def get_access_failure_streak() -> int:
+    """供健康检查读取当前连续失败次数（0 = 健康）。"""
+    with _access_fail_lock:
+        return _access_fail_streak
 
 
 class _ForgettingStages:
@@ -152,40 +185,72 @@ class _ForgettingStages:
 
         ★ 改造：现在同时写入 access_log 表，支持时间窗口查询。
         ★ 自适应增强：同时记录 memory_type 到 forgetting_state。
+        ★ 2026-09-16 修复（F1+F3）：加「database is locked」重试 + 连续失败计数。
+          此前该失败只记 WARNING、不重试、不上报，导致 access_log 静默停更 47 天
+          （forgetting_state 缺 87% 记忆、晋升 cron 连续 6 轮空转）。
 
         Args:
             memory_id: 记忆 ID
             memory_type: 记忆类型（如 fact, preference, reasoning, action）
         """
-        with self._lock:
-            now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(timezone.utc).isoformat()
+
+        def _do():
             assert self._conn is not None
-            try:
-                existing = self._conn.execute(
-                    "SELECT recall_count FROM forgetting_state WHERE memory_id = ?",
-                    (memory_id,),
-                ).fetchone()
-                if existing is not None:
-                    new_count = (existing[0] or 0) + 1
-                    self._conn.execute(
-                        "UPDATE forgetting_state SET stage = 'active', last_accessed = ?, recall_count = ?, memory_type = ? WHERE memory_id = ?",
-                        (now, new_count, memory_type, memory_id),
-                    )
-                else:
-                    self._conn.execute(
-                        """INSERT OR REPLACE INTO forgetting_state
-                           (memory_id, stage, last_accessed, created_at, recall_count, memory_type)
-                           VALUES (?, 'active', ?, ?, 1, ?)""",
-                        (memory_id, now, now, memory_type),
-                    )
+            existing = self._conn.execute(
+                "SELECT recall_count FROM forgetting_state WHERE memory_id = ?",
+                (memory_id,),
+            ).fetchone()
+            if existing is not None:
+                new_count = (existing[0] or 0) + 1
                 self._conn.execute(
-                    "INSERT INTO access_log (memory_id, accessed_at) VALUES (?, ?)",
-                    (memory_id, now),
+                    "UPDATE forgetting_state SET stage = 'active', last_accessed = ?, recall_count = ?, memory_type = ? WHERE memory_id = ?",
+                    (now, new_count, memory_type, memory_id),
                 )
-                self._pending_writes += 1
-                self._maybe_commit()
-            except Exception as e:
-                logger.warning("Access record failed: %s", e)
+            else:
+                self._conn.execute(
+                    """INSERT OR REPLACE INTO forgetting_state
+                       (memory_id, stage, last_accessed, created_at, recall_count, memory_type)
+                       VALUES (?, 'active', ?, ?, 1, ?)""",
+                    (memory_id, now, now, memory_type),
+                )
+            self._conn.execute(
+                "INSERT INTO access_log (memory_id, accessed_at) VALUES (?, ?)",
+                (memory_id, now),
+            )
+            return True
+
+        # ★ F1：带退避的重试（锁冲突是瞬时问题，重试即愈）
+        #   self._lock 只包住单次 SQLite 尝试：退避 sleep 必须在锁外，否则最长
+        #   0.2+0.4+0.6+0.8=2.0s 的等待会把 get_stage/archive/set_heat 等共用这把锁的
+        #   全部治理操作一起串行化，而 record_access 是每条被召回记忆都要调的热路径。
+        last_err = None
+        for attempt in range(_ACCESS_RETRY_COUNT):
+            try:
+                with self._lock:
+                    _do()
+                    self._pending_writes += 1
+                    self._maybe_commit()
+            except Exception as e:  # noqa: BLE001
+                last_err = e
+                msg = str(e).lower()
+                if ("locked" in msg or "busy" in msg) and attempt < _ACCESS_RETRY_COUNT - 1:
+                    time.sleep(_ACCESS_RETRY_DELAY * (attempt + 1))
+                    continue
+                break
+
+            _reset_access_failures()
+            return
+
+        # ★ F3：连续失败升级为 ERROR + 计数（不再静默）
+        n = _bump_access_failures()
+        if n >= _ACCESS_FAIL_ALERT_AT or n == 1:
+            logger.error(
+                "governance.forgetting: record_access FAILED (连续第 %d 次): %s | memory_id=%s",
+                n, last_err, memory_id,
+            )
+        else:
+            logger.warning("governance.forgetting: record_access failed (第 %d 次): %s", n, last_err)
 
     # ── 热度分类 ──────────────────────────────────────────────────────────────
 

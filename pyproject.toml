@@ -79,6 +79,14 @@ nlp = [
     "openai>=1.0.0",
     "httpx>=0.24.0",
 ]
+graph = [
+    "neo4j>=5.0.0",
+]
+multimodal = [
+    "open_clip_torch>=2.20.0",
+    "pillow>=10.0.0",
+    "torch>=2.0.0",
+]
 dev = [
     "pytest>=7.0.0",
     "pytest-asyncio>=0.21.0",
@@ -89,7 +97,7 @@ dev = [
     "pre-commit>=3.0.0",
 ]
 all = [
-    "omnimem[crypto,lora,mcp,langchain,nlp,vector,plur,dev]",
+    "omnimem[crypto,lora,mcp,langchain,nlp,vector,plur,graph,multimodal,dev]",
 ]
 
 [project.urls]

@@ -20,6 +20,10 @@ import json
 import logging
 from typing import Any
 
+# ★ P2-1：原先这里有 sys.setrecursionlimit(5000)，是「外部套件把 MemoryProvider
+#   mock 成 object 导致递归爆栈」的止痛贴，并不解决真实问题。ChromaDB upsert 的
+#   递归溢出在 retrieval/vector_store.py 里已有三段式降级（RecursionError → add →
+#   待回填队列），不需要进程级抬高上限。
 from agent.memory_provider import MemoryProvider
 from omnimem.compat.provider_proxy import ProviderProxyMixin
 from omnimem.core.provider_initializer import ProviderInitializerMixin
@@ -310,14 +314,23 @@ class OmniMemProvider(
                     )
             except Exception as e:
                 logger.warning("Feedback recording failed: %s", e)
-        # 遗忘曲线：召回命中时记录访问
+        # 遗忘曲线：加热由 RecallService._heat_hits 单点负责（★ P2-3a 去重）。
+        # 原先这里再记一次 record_access，同一次命中被计成 +2，遗忘曲线的访问频次
+        # 因此虚高一半。本方法只负责把 RecallService 攒下的批写立即落盘。
         try:
             data = json.loads(result)
             if data.get("status") == "found":
-                for mem in data.get("memories", []):
-                    mid = mem.get("memory_id", "")
-                    if mid:
-                        self._forgetting.record_access(mid)
+                # ★ P1-1 修复：recall 命中后强制 commit，确保 recall_count 递增持久化
+                # _maybe_commit 基于阈值延迟提交，这里强制 flush 立即落盘
+                try:
+                    forgetting = self._forgetting
+                    conn = getattr(forgetting, "_conn", None)
+                    if conn is not None:
+                        conn.commit()
+                        if hasattr(forgetting, "_pending_writes"):
+                            forgetting._pending_writes = 0
+                except Exception as e:
+                    logger.warning("Forgetting commit after record_access failed: %s", e)
         except Exception as e:
             logger.warning("Record access for forgetting curve failed: %s", e)
         return result

@@ -60,9 +60,22 @@ class CrossEncoderReranker:
                 if self._device == "cpu":
                     os.environ.setdefault("CUDA_VISIBLE_DEVICES", "")
 
+                # ★ 必须在 import sentence_transformers 之前设置（与 vector_store.py 同一坑）：
+                #   huggingface_hub 在导入时冻结 HF_ENDPOINT / HF_HUB_OFFLINE，事后改 os.environ
+                #   无效。重排器可能是本进程里第一个导入 hub 的地方，所以这里也得设。
+                if 'HF_ENDPOINT' not in os.environ:
+                    os.environ['HF_ENDPOINT'] = 'https://hf-mirror.com'
+                if self._model_path and os.path.isdir(self._model_path):
+                    os.environ.setdefault('HF_HUB_OFFLINE', '1')
+                    os.environ.setdefault('TRANSFORMERS_OFFLINE', '1')
+
                 from sentence_transformers import CrossEncoder
 
-                self._model = CrossEncoder(model_key, device=self._device)
+                # max_length 只截文本，之后仍会追加 [CLS]/[SEP]，故有效序列长 = max_length + 2。
+                # 不显式传时 sentence-transformers 取 tokenizer.model_max_length（此模型为 514），
+                # 于是位置索引摸到 514 而 position embedding 表只有 514 行 -> 越界。
+                # 实测：512 正常，514 抛 "index 514 is out of bounds for dimension 1"。
+                self._model = CrossEncoder(model_key, device=self._device, max_length=512)
 
                 # ★ 缓存到全局
                 CrossEncoderReranker._global_model = self._model
@@ -96,7 +109,7 @@ class CrossEncoderReranker:
             return results[:top_k]
 
         try:
-            pairs = [(query, r.get("content", "")) for r in results]
+            pairs = [(query, r.get("content") or "") for r in results]
             if self._model is None:
                 return results[:top_k]
             scores = self._model.predict(pairs)
@@ -112,5 +125,8 @@ class CrossEncoderReranker:
                 reranked.append(entry)
             return reranked
         except Exception as e:
-            logger.warning("Reranking failed: %s", e)
+            logger.error(
+                "Reranking failed; returning results in UNRERANKED order (precision degraded). cause=%s",
+                e, exc_info=True,
+            )
             return results[:top_k]

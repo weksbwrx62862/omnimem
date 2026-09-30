@@ -35,6 +35,7 @@ class SecurityValidator:
 
     # ─── Zero-width and invisible characters commonly used for obfuscation ───
     _INVISIBLE_CHARS: set[str] = {
+        "\x00",  # NULL 字节（P1-15 修复：防止 SQLite OperationalError）
         "\u200b",  # ZWSP: Zero-Width Space
         "\u200c",  # ZWNJ: Zero-Width Non-Joiner
         "\u2060",  # WJ: Word Joiner
@@ -144,6 +145,18 @@ class SecurityValidator:
         (r"(导出|输出|显示|打印|泄露).{0,4}(所有|全部).{0,4}(记忆|数据|内容|信息)", "exfil_zh"),
         (r"(假装|扮演|模拟).{0,4}(你是|为).{0,4}(DAN|黑客|恶意|无限制)", "bypass_restrictions_zh"),
         (r"(绕过|突破|无视|忽略).{0,4}(安全|限制|过滤|检查|防护)", "bypass_restrictions_zh"),
+        # ─── OWASP 高危注入检测（P0 修复）───
+        (r"(\b(OR|AND)\b\s+['\"]?\d+['\"]?\s*=\s*['\"]?\d+|UNION\s+SELECT|DROP\s+TABLE|;\s*DELETE\s+FROM|;\s*INSERT\s+INTO|;\s*UPDATE\s+\w+\s+SET)", "sql_injection"),
+        (r"(\.\.[\/\\]){2,}|/etc/passwd|/etc/shadow|/etc/sudoers|/root/\.ssh", "path_traversal"),
+        (r"[;&|`]\s*(cat|ls|rm|nc|curl|wget|bash|sh|python|perl|ruby)\s", "command_injection"),
+        (r"https?://(169\.254\.|localhost|127\.0\.0\.1|0\.0\.0\.0|metadata\.google\.internal|metadata\.azure\.com)", "ssrf"),
+        (r"\{\{.*\}\}|\$\{[^}]*\}", "ssti"),
+        (r"__import__\s*\(|\beval\s*\(|\bexec\s*\(|subprocess\.|os\.system\s*\(|os\.popen\s*\(", "code_injection"),
+        (r"<!DOCTYPE[^>]*>.*<!ENTITY[^>]*SYSTEM", "xxe"),
+        # ─── P1 补充检测 ───
+        (r"<script[^>]*>.*?</script>|javascript:|onerror\s*=|onload\s*=", "xss"),
+        (r"\*\s*\).*\(\s*\||\(\s*\|\s*\([a-z]+\s*=", "ldap_injection"),
+        (r"<!\[CDATA\[", "xml_injection"),
     ]
 
     # ─── Trivial content patterns (content fencing) ───
@@ -158,9 +171,12 @@ class SecurityValidator:
         """从 config/threat_patterns.json 加载威胁模式，支持热更新。
 
         加载策略：
-          1. 外置 JSON 存在且有效 → 使用外置模式（逐条编译校验，无效条目跳过）
-          2. 文件缺失/损坏/为空 → 回退到内置 _THREAT_PATTERNS 并记录 warning
+          1. 外置 JSON 存在且有效 → 合并外置模式与内置 _THREAT_PATTERNS（逐条编译校验，无效条目跳过）
+          2. 文件缺失/损坏/为空 → 仅使用内置 _THREAT_PATTERNS 并记录 warning
           3. force_reload=True 时绕过缓存重新读取（热更新入口）
+
+        ★ P0/P1 扩展：内置 _THREAT_PATTERNS 始终参与匹配（按 pattern 去重），
+          确保新增的 OWASP 注入检测模式即使在外置 JSON 存在时也生效。
         """
         if cls._threat_patterns_cache is not None and not force_reload:
             return cls._threat_patterns_cache
@@ -197,8 +213,17 @@ class SecurityValidator:
         except Exception as e:
             logger.warning("Failed to load threat_patterns.json: %s, using built-in patterns", e)
 
+        # ★ P0/P1 扩展：合并内置模式与外置 JSON 模式，确保新增威胁模式始终生效
+        builtin = list(cls._THREAT_PATTERNS)
         if not patterns:
-            patterns = list(cls._THREAT_PATTERNS)
+            # JSON 缺失/损坏/为空 → 仅使用内置模式
+            patterns = builtin
+        else:
+            # 合并：外置 JSON 模式 + 内置模式（按 pattern 去重，避免重复匹配）
+            seen = {p for p, _ in patterns}
+            for p, pid in builtin:
+                if p not in seen:
+                    patterns.append((p, pid))
         cls._threat_patterns_cache = patterns
         return patterns
 
@@ -502,6 +527,8 @@ class SecurityValidator:
 
         # Normalize and scan threat patterns
         normalized = cls.normalize(content)
+        # ★ P1-6 修复：剥离 C 风格注释，防止 `ignore /* */ all previous` 绕过
+        normalized = re.sub(r"/\*.*?\*/", " ", normalized, flags=re.DOTALL)
         # ★ P1: 使用外置可热更新的威胁模式（缺失时自动回退内置列表）
         for pattern, pid in cls.load_threat_patterns():
             if re.search(pattern, normalized, re.IGNORECASE):

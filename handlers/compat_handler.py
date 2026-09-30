@@ -23,8 +23,13 @@ class CompatHandler:
     def handle(self, args: dict[str, Any]) -> str:
         action = args.get("action", "")
         target = args.get("target", "memory")
-        content = args.get("content", "").strip()
-        old_text = args.get("old_text", "").strip()
+        # 防御 None：args.get(k, default) 在「键存在但值为 None」时返回 None 而非 default，
+        # 而 Hermes 会为未提供的可选参数传 None → None.strip() 抛
+        # AttributeError: 'NoneType' object has no attribute 'strip'（2026-09-17 修复）
+        _c = args.get("content")
+        content = _c.strip() if isinstance(_c, str) else ""
+        _o = args.get("old_text")
+        old_text = _o.strip() if isinstance(_o, str) else ""
 
         if action not in ("add", "replace", "remove"):
             return json.dumps({"error": f"Unknown action '{action}'. Use: add, replace, remove"})

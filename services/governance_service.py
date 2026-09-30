@@ -311,6 +311,8 @@ class GovernanceService:
     def _action_resolve_conflict(self, params: dict[str, Any]) -> str:
         """冲突解决：无 target 时全局扫描，有 target 时检查指定记忆。"""
         target = params.get("target", "")
+        # P1-8 修复：记录操作主体用于审计
+        actor = params.get("user_id", "default")
         if not target or not target.strip():
             scan_results = _scan_memory_conflicts(self.deps)
             if scan_results:
@@ -322,6 +324,14 @@ class GovernanceService:
                     if old_id:
                         self.deps.forgetting.archive(old_id)
                         archived_ids.append(old_id)
+                # P1-8 修复：补审计（全局扫描归档）
+                if self.deps.audit_logger:
+                    self.deps.audit_logger.log(
+                        operation="resolve_conflict",
+                        memory_id=None,
+                        details={"mode": "global_scan", "conflicts_found": len(scan_results), "archived": archived_ids},
+                        actor=actor,
+                    )
                 return json.dumps(
                     {
                         "status": "conflicts_found",
@@ -364,6 +374,14 @@ class GovernanceService:
                     old_id = conflict.existing_id
                     if old_id and old_id != target:
                         self.deps.forgetting.archive(old_id)
+                    # P1-8 修复：补审计（conflict_warning 直接解决）
+                    if self.deps.audit_logger:
+                        self.deps.audit_logger.log(
+                            operation="resolve_conflict",
+                            memory_id=target,
+                            details={"mode": "conflict_warning_direct", "action": resolution.action, "conflicting_with": old_id, "reason": resolution.reason},
+                            actor=actor,
+                        )
                     return json.dumps(
                         {
                             "status": "resolved",
@@ -409,6 +427,14 @@ class GovernanceService:
                 if old_id and old_id != target:
                     self.deps.forgetting.archive(old_id)
                     logger.warning("OmniMem resolve_conflict: archived old entry %s", old_id)
+                # P1-8 修复：补审计（语义搜索路径解决）
+                if self.deps.audit_logger:
+                    self.deps.audit_logger.log(
+                        operation="resolve_conflict",
+                        memory_id=target,
+                        details={"mode": "semantic_search", "action": resolution.action, "conflicting_with": old_id, "conflict_type": conflict.conflict_type, "reason": resolution.reason},
+                        actor=actor,
+                    )
                 return json.dumps(
                     {
                         "status": "resolved",
@@ -523,6 +549,15 @@ class GovernanceService:
         target = params.get("target", "") or params.get("memory_id", "")
         if not target:
             return json.dumps({"status": "error", "error": "archive requires target/memory_id"})
+        # ★ 正确性: 不存在的 memory_id 曾返回 sealed 假成功; 现校验存在性后再归档
+        if self.deps.store is not None:
+            try:
+                if not self.deps.store.get(target):
+                    return json.dumps(
+                        {"status": "not_found", "memory_id": target, "error": f"Memory {target} not found"}
+                    )
+            except Exception:
+                logger.warning("Govern archive: store.get(%s) 校验失败, 继续归档", target, exc_info=True)
         dry_run = params.get("dry_run", False)
         if dry_run:
             return json.dumps(
@@ -874,12 +909,28 @@ class GovernanceService:
         caller_id = params.get("caller_id", "default")
         if self.deps.rbac is not None:
             if not self.deps.rbac.check_permission(caller_id, "govern"):
+                # P1-7 修复：RBAC 越权拒绝补审计
+                if self.deps.audit_logger:
+                    self.deps.audit_logger.log(
+                        operation="rbac_denied",
+                        memory_id=params.get("memory_id"),
+                        details={"action": "assign_role", "user_id": caller_id, "required_permission": "govern"},
+                        result="denied",
+                        actor=caller_id,
+                    )
                 return json.dumps({"status": "blocked", "reason": "govern permission required"})
         user_id = params.get("user_id", "default")
         role_name = params.get("role_name", "")
         if not role_name:
             return json.dumps({"error": "role_name is required"})
         self.deps.rbac.assign_role(user_id, role_name)
+        # P1-10 修复：assign_role 成功补审计
+        if self.deps.audit_logger:
+            self.deps.audit_logger.log(
+                operation="assign_role",
+                details={"user_id": user_id, "role": role_name},
+                actor=caller_id,
+            )
         return json.dumps({"status": "assigned", "user_id": user_id, "role": role_name})
 
     def _action_revoke_role(self, params: dict[str, Any]) -> str:
@@ -887,12 +938,28 @@ class GovernanceService:
         caller_id = params.get("caller_id", "default")
         if self.deps.rbac is not None:
             if not self.deps.rbac.check_permission(caller_id, "govern"):
+                # P1-7 修复：RBAC 越权拒绝补审计
+                if self.deps.audit_logger:
+                    self.deps.audit_logger.log(
+                        operation="rbac_denied",
+                        memory_id=params.get("memory_id"),
+                        details={"action": "revoke_role", "user_id": caller_id, "required_permission": "govern"},
+                        result="denied",
+                        actor=caller_id,
+                    )
                 return json.dumps({"status": "blocked", "reason": "govern permission required"})
         user_id = params.get("user_id", "default")
         role_name = params.get("role_name", "")
         if not role_name:
             return json.dumps({"error": "role_name is required"})
         self.deps.rbac.revoke_role(user_id, role_name)
+        # P1-10 修复：revoke_role 成功补审计
+        if self.deps.audit_logger:
+            self.deps.audit_logger.log(
+                operation="revoke_role",
+                details={"user_id": user_id, "role": role_name},
+                actor=caller_id,
+            )
         return json.dumps({"status": "revoked", "user_id": user_id, "role": role_name})
 
     def _action_add_role(self, params: dict[str, Any]) -> str:
@@ -900,12 +967,28 @@ class GovernanceService:
         caller_id = params.get("caller_id", "default")
         if self.deps.rbac is not None:
             if not self.deps.rbac.check_permission(caller_id, "govern"):
+                # P1-7 修复：RBAC 越权拒绝补审计
+                if self.deps.audit_logger:
+                    self.deps.audit_logger.log(
+                        operation="rbac_denied",
+                        memory_id=params.get("memory_id"),
+                        details={"action": "add_role", "user_id": caller_id, "required_permission": "govern"},
+                        result="denied",
+                        actor=caller_id,
+                    )
                 return json.dumps({"status": "blocked", "reason": "govern permission required"})
         role_name = params.get("role_name", "")
         permissions = params.get("permissions", [])
         if not role_name:
             return json.dumps({"error": "role_name is required"})
         self.deps.rbac.add_role(role_name, permissions)
+        # P1-10 修复：add_role 成功补审计（与 assign/revoke 同类治理操作）
+        if self.deps.audit_logger:
+            self.deps.audit_logger.log(
+                operation="add_role",
+                details={"role": role_name, "permissions": permissions},
+                actor=caller_id,
+            )
         return json.dumps({"status": "created", "role": role_name, "permissions": permissions})
 
     def _action_check_permission(self, params: dict[str, Any]) -> str:
@@ -958,6 +1041,9 @@ class GovernanceService:
 
     def _action_kms_status(self, params: dict[str, Any]) -> str:
         """查看 KMS 状态。"""
+        # ★ 健壮性: 未配置 KMS 时 deps.kms 为 None, 直接访问属性会抛 AttributeError 冒泡给调用方
+        if self.deps.kms is None:
+            return json.dumps({"status": "not_configured", "reason": "KMS not configured"})
         return json.dumps(
             {
                 "status": "ok",
@@ -989,6 +1075,8 @@ class GovernanceService:
         """清理测试残留数据。"""
         dry_run = params.get("dry_run", True)
         test_patterns = params.get("patterns", ["test_", "QUAL-", "BUG-", "zzzzz", "mock"])
+        # P1-9 修复：记录操作主体用于审计
+        actor = params.get("user_id", "default")
         purged = []
         all_entries = self.deps.index.search_all_for_retrieval(limit=5000)
         for entry in all_entries:
@@ -1006,6 +1094,14 @@ class GovernanceService:
                             )
                     except Exception as e:
                         logger.warning("purge_test_data delete failed for %s: %s", memory_id, e)
+        # P1-9 修复：清理操作补审计（dry_run 也记录，便于追溯排查动作）
+        if self.deps.audit_logger:
+            self.deps.audit_logger.log(
+                operation="purge_test_data",
+                details={"dry_run": dry_run, "patterns": test_patterns, "found": len(purged), "purged_ids": [p["memory_id"] for p in purged[:50]]},
+                result="dry_run" if dry_run else "purged",
+                actor=actor,
+            )
         return json.dumps(
             {
                 "status": "dry_run" if dry_run else "purged",

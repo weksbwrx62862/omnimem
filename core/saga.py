@@ -98,28 +98,41 @@ class SagaCoordinator:
         if pending_path and pending_path.exists():
             self._load_pending()
 
-    def execute(self, memory_id: str, steps: list[SagaStep]) -> SagaResult:
+    def execute(self, memory_id: "str | Callable[[], str]", steps: list[SagaStep]) -> SagaResult:
         """执行 Saga 事务。
 
         按顺序执行 steps，任一失败即停止，执行已完成步骤的补偿回调。
         成功执行的步骤返回值会被收集到 SagaResult.step_results 中。
 
         Args:
-            memory_id: 记忆 ID，用于追踪和重试
+            memory_id: 记忆 ID，用于追踪和重试；也可传**惰性取值**的可调用对象。
+                真实 ID 要等 ``store_add`` 跑完才存在，调用方编排步骤时手上是空的；
+                固定传字符串会让 pending 记录落成 ``memory_id="pending"``，
+                那是个无法回放的占位符（重试器不知道该重做哪条记忆）。
             steps: Saga 步骤列表
 
         Returns:
             SagaResult，包含成功/失败状态、步骤详情和各步骤返回值
         """
+        resolver = memory_id if callable(memory_id) else (lambda: memory_id)
+
+        def current_id() -> str:
+            """步骤执行期间刷新 ID（store_add 完成后才拿得到真 ID）。"""
+            try:
+                return str(resolver() or "pending")
+            except Exception:
+                return "pending"
+
+        mid = current_id()
         # 熔断器检查：连续失败过多时暂停执行
         if self._circuit_open:
             logger.warning(
                 "Saga circuit breaker OPEN for %s (consecutive failures=%d) — skipping",
-                memory_id, self._consecutive_failures,
+                mid, self._consecutive_failures,
             )
             return SagaResult(
                 success=False,
-                memory_id=memory_id,
+                memory_id=mid,
                 failed_step="__circuit_breaker__",
                 error=f"circuit breaker open after {self._consecutive_failures} consecutive failures",
             )
@@ -133,16 +146,18 @@ class SagaCoordinator:
                 completed.append(step.name)
                 completed_steps.append(step)
                 step_results[step.name] = result
-                logger.warning("Saga step '%s' OK for %s", step.name, memory_id)
+                mid = current_id()
+                logger.info("Saga step '%s' OK for %s", step.name, mid)
             except Exception as e:
+                mid = current_id()
                 logger.warning(
                     "Saga step '%s' failed for %s: %s",
                     step.name,
-                    memory_id,
+                    mid,
                     e,
                 )
                 # 执行已完成步骤的补偿回调（逆序）
-                self._run_compensations(memory_id, completed_steps)
+                self._run_compensations(mid, completed_steps)
                 # 更新熔断器计数
                 self._consecutive_failures += 1
                 if self._consecutive_failures >= self._circuit_breaker_threshold:
@@ -158,11 +173,11 @@ class SagaCoordinator:
                         message=f"Saga 熔断器已触发（连续失败 {self._consecutive_failures} 次）",
                         consecutive_failures=self._consecutive_failures,
                         threshold=self._circuit_breaker_threshold,
-                        memory_id=memory_id,
+                        memory_id=mid,
                         failed_step=step.name,
                     )
                 record = {
-                    "memory_id": memory_id,
+                    "memory_id": mid,
                     "failed_step": step.name,
                     "completed_steps": completed,
                     "error": str(e),
@@ -174,7 +189,7 @@ class SagaCoordinator:
                 set_saga_pending_count(len(self._pending))
                 return SagaResult(
                     success=False,
-                    memory_id=memory_id,
+                    memory_id=mid,
                     completed_steps=completed,
                     failed_step=step.name,
                     error=str(e),
@@ -185,7 +200,7 @@ class SagaCoordinator:
         self._circuit_open = False
         return SagaResult(
             success=True,
-            memory_id=memory_id,
+            memory_id=current_id(),
             completed_steps=completed,
             step_results=step_results,
         )
@@ -237,7 +252,7 @@ class SagaCoordinator:
                 completed.append(step.name)
                 completed_steps.append(step)
                 step_results[step.name] = result
-                logger.warning("Saga async step '%s' OK for %s", step.name, memory_id)
+                logger.info("Saga async step '%s' OK for %s", step.name, memory_id)
             except Exception as e:
                 logger.warning(
                     "Saga async step '%s' failed for %s: %s",

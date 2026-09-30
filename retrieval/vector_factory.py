@@ -17,6 +17,9 @@ logger = logging.getLogger(__name__)
 
 
 def create_vector_store(backend: str = "chromadb", **kwargs: Any) -> VectorStore:
+    # Empty model_path falls back to the default model NAME, i.e. a different (English-only) model
+    # embedding into the same 384-dim collection — dimension-compatible, semantically wrong.
+    model_path = kwargs.pop("model_path", "")
     if backend == "chromadb":
         persist_dir = kwargs.pop("persist_dir", kwargs.pop("data_dir", "/tmp/omnimem/retrieval/chroma"))
         if not isinstance(persist_dir, Path):
@@ -26,7 +29,7 @@ def create_vector_store(backend: str = "chromadb", **kwargs: Any) -> VectorStore
         if embedding_fn is None:
             try:
                 cache_path = persist_dir.parent / "embedding_cache.json"
-                embedding_fn = _CachedEmbeddingFunction(cache_path=cache_path)
+                embedding_fn = _CachedEmbeddingFunction(cache_path=cache_path, model_path=model_path)
             except Exception as e:
                 logger.warning("vector_factory create embedding_fn failed: %s", e)
         return ChromaDBStore(
@@ -46,7 +49,7 @@ def create_vector_store(backend: str = "chromadb", **kwargs: Any) -> VectorStore
                 persist_dir = Path(persist_dir)
             try:
                 cache_path = persist_dir.parent / "embedding_cache.json"
-                embedding_fn = _CachedEmbeddingFunction(cache_path=cache_path)
+                embedding_fn = _CachedEmbeddingFunction(cache_path=cache_path, model_path=model_path)
             except Exception as e:
                 logger.warning("vector_factory create embedding_fn for qdrant failed: %s", e)
         return QdrantStore(
@@ -64,7 +67,7 @@ def create_vector_store(backend: str = "chromadb", **kwargs: Any) -> VectorStore
         if embedding_fn is None:
             try:
                 cache_path = persist_dir.parent / "embedding_cache.json"
-                embedding_fn = _CachedEmbeddingFunction(cache_path=cache_path)
+                embedding_fn = _CachedEmbeddingFunction(cache_path=cache_path, model_path=model_path)
             except Exception as e:
                 logger.warning("vector_factory create embedding_fn for faiss failed: %s", e)
         return FAISSStore(

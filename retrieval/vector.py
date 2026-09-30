@@ -9,8 +9,12 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import os
+import re
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FuturesTimeoutError
 from pathlib import Path
 from typing import Any
 
@@ -22,9 +26,15 @@ from omnimem.retrieval.vector_store import (
     ChromaDBStore,
     _CachedEmbeddingFunction,
     _emit,
+    read_vector_pending,
+    vector_pending_path,
 )
 
 logger = logging.getLogger(__name__)
+
+# 排空待回填队列的互斥锁：队列文件是进程级共享资源，warmup 线程与 doctor/手工调用
+# 可能同时 drain。用非阻塞获取，抢不到就本轮跳过（积压仍在，下轮继续）。
+_DRAIN_LOCK = threading.Lock()
 
 
 class VectorRetriever:
@@ -158,6 +168,7 @@ class VectorRetriever:
                     backend=self._backend,
                     persist_dir=self._data_dir / "chroma",
                     data_dir=self._data_dir / "chroma",
+                    model_path=self._embedding_model_path,
                 )
         self._initialized = True
 
@@ -248,6 +259,204 @@ class VectorRetriever:
             parent_id = meta.get("_parent_id", "")
             if parent_id:
                 self._chunk_ids.setdefault(parent_id, []).append(doc_id)
+
+    # ── ★ P1-2: 待回填向量队列的消费者 ──
+
+    def _pending_path(self) -> Path | None:
+        """当前向量后端的待回填队列路径；后端不支持时返回 None。
+
+        ★ 必须先把 store 拉起来：``self._store`` 是 ``_ensure_initialized()`` 懒建的，
+          而 warmup 在**任何检索发生之前**就调 count/drain_vector_pending。原先 store
+          为 None 时这里直接返回 None，于是 count 报 0、drain 空转返回，积压永远不会
+          被消费（线上 6001 条待回填就是这样一直躺着的）。
+        """
+        if self._store is None:
+            try:
+                self._ensure_initialized()
+            except Exception as e:
+                logger.warning("初始化向量后端失败，无法定位待回填队列: %s: %s", type(e).__name__, e)
+                return None
+        getter = getattr(self._store, "pending_path", None)
+        if callable(getter):
+            try:
+                return getter()
+            except Exception:
+                logger.debug("store.pending_path() 调用失败", exc_info=True)
+                return None
+        persist_dir = getattr(self._store, "_persist_dir", None)
+        return vector_pending_path(persist_dir) if persist_dir else None
+
+    def _processing_path(self, path: Path) -> Path:
+        return path.with_name(path.name + ".processing")
+
+    @staticmethod
+    def _count_lines(path: Path) -> int:
+        if not path.exists():
+            return 0
+        try:
+            with path.open(encoding="utf-8") as fh:
+                return sum(1 for line in fh if line.strip())
+        except Exception as e:
+            logger.warning("统计待回填向量队列失败 %s: %s", path.name, e)
+            return 0
+
+    def count_vector_pending(self) -> int:
+        """队列里还有多少条降级写入未被补回（损坏行也计数，便于告警）。
+
+        ★ 计入 ``.processing``：排空过程会先把队列改名接管，若只数正牌文件，
+          一次长排空期间监控会看到积压"降到 0"，实际条目正躺在改名后的文件里。
+        """
+        path = self._pending_path()
+        if path is None:
+            return 0
+        return self._count_lines(path) + self._count_lines(self._processing_path(path))
+
+    def _recover_stranded_processing(self, processing: Path, path: Path) -> None:
+        """把上一轮被杀/崩溃留下的 ``.processing`` 并回队列。
+
+        排空在嵌入途中被 kill（warmup 跑在 daemon 线程上，解释器退出即被强杀）会把
+        整批积压遗留在 ``.processing``，而没有任何启动路径会再读它；下一次 drain 的
+        ``os.replace(path, processing)`` 会把它直接覆盖——积压静默消失。
+        """
+        if not processing.exists():
+            return
+        stranded = self._count_lines(processing)
+        try:
+            if not path.exists():
+                os.replace(processing, path)
+            else:
+                with processing.open(encoding="utf-8") as src, path.open("a", encoding="utf-8") as dst:
+                    for line in src:
+                        if line.strip():
+                            dst.write(line)
+                processing.unlink(missing_ok=True)
+            logger.warning(
+                "回收孤悬的待回填向量队列 %s（%d 条）→ %s",
+                processing.name,
+                stranded,
+                path.name,
+            )
+        except OSError as e:
+            logger.error("回收孤悬队列 %s 失败: %s", processing, e)
+
+    def drain_vector_pending(self, limit: int = 2000) -> dict[str, int]:
+        """把 ``vector_index_pending.jsonl`` 里的降级写入重新补进向量索引。
+
+        流程（先整体改名再处理，避免"边读边清"把新写入的条目一起抹掉）：
+
+        1. 回收上一轮被杀留下的 ``.processing`` 残骸；``path`` → ``path.processing``
+           原子改名；处理期间新的降级写入自然落到新文件；
+        2. 去重读入，取前 ``limit`` 条重放；``add_batch`` 若再次失败，写方自己会把它们
+           重新记回队列，所以这里不重复回写；
+        3. 超出 ``limit`` 的剩余条目原样追加回队列，下一轮继续。
+        """
+        stats = {"pending": 0, "replayed": 0, "deferred": 0, "failed": 0}
+        path = self._pending_path()
+        if path is None:
+            return stats
+
+        if not _DRAIN_LOCK.acquire(blocking=False):
+            stats["pending"] = self.count_vector_pending()
+            logger.info("待回填向量排空已在进行中，本轮跳过（积压 %d 条）", stats["pending"])
+            return stats
+
+        processing = self._processing_path(path)
+        try:
+            self._recover_stranded_processing(processing, path)
+            if not path.exists():
+                return stats
+            try:
+                os.replace(path, processing)
+            except OSError as e:
+                logger.warning("无法接管待回填向量队列 %s: %s", path, e)
+                return stats
+
+            try:
+                records = read_vector_pending(processing)
+                stats["pending"] = len(records)
+                if not records:
+                    return stats
+
+                batch, deferred = records[:limit], records[limit:]
+                docs = [
+                    {
+                        "memory_id": str(r.get("id", "")),
+                        "content": str(r.get("document", "")),
+                        **(r.get("metadata") or {}),
+                    }
+                    for r in batch
+                ]
+                try:
+                    self.add_batch(docs)
+                    stats["replayed"] = len(docs)
+                except Exception as e:
+                    # add_batch 在抵达 store 之前失败（例如 store 未初始化），
+                    # 此时写方没有机会重新记账，必须自己回写，否则这批记忆永久丢失。
+                    stats["failed"] = len(batch)
+                    logger.warning("待回填向量重放失败，退回队列: %s", e)
+                    deferred = batch + deferred
+
+                if deferred:
+                    self._requeue_vector_pending(deferred, path)
+                    stats["deferred"] = len(deferred)
+
+                if stats["replayed"]:
+                    self.flush()
+                    logger.info(
+                        "待回填向量队列排空: 重放 %d 条，延后 %d 条（原积压 %d 条）",
+                        stats["replayed"], stats["deferred"], stats["pending"],
+                    )
+                return stats
+            finally:
+                try:
+                    processing.unlink(missing_ok=True)
+                except OSError:
+                    logger.debug("清理 %s 失败", processing, exc_info=True)
+        finally:
+            _DRAIN_LOCK.release()
+
+    @staticmethod
+    def _requeue_vector_pending(records: list[dict[str, Any]], path: Path) -> None:
+        """把未处理的队列条目追加回队列（append-only，损坏不可逆）。"""
+        import json
+
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with path.open("a", encoding="utf-8") as fh:
+                for record in records:
+                    fh.write(json.dumps(record, ensure_ascii=False) + "\n")
+        except Exception:
+            logger.warning("待回填向量队列回写失败，丢弃 %d 条", len(records), exc_info=True)
+
+    def queue_vector_backfill(
+        self,
+        content: str,
+        memory_id: str,
+        metadata: dict[str, Any] | None = None,
+        reason: str = "saga_gap",
+    ) -> bool:
+        """★ P1-4：把「主存储已写成功、检索层没写上」的记忆投递到待回填队列。
+
+        写方（ChromaDBStore._record_unindexed）只在自己失败时记账；当 saga 因为
+        更早的步骤失败而根本没走到向量写入时，没人记账 —— 这条记忆就永久不可语义召回。
+        这里补上那只手，队列与消费者仍是 P1-2 那一份。
+        """
+        if not memory_id or not content:
+            return False
+        path = self._pending_path()
+        if path is None:
+            return False
+        self._requeue_vector_pending(
+            [{
+                "ts": time.time(),
+                "id": memory_id,
+                "document": content,
+                "metadata": metadata or {},
+                "reason": reason,
+            }],
+            path,
+        )
+        return True
 
     def add_batch_optimized(self, entries: list[dict[str, Any]]) -> None:
         self._ensure_initialized()
@@ -430,6 +639,69 @@ class VectorRetriever:
             logger.warning("VectorRetriever: count() failed", exc_info=True)
             return 0
 
+    # ★ P1-11：count() 数的是**向量行**，长记忆会被切成多条 chunk
+    #   （见 _prepare_batch 里 f"{memory_id}_chunk{hash}"），所以 chunk 数永远不等于
+    #   「多少条记忆有向量」。覆盖率判据必须走下面这两个方法，不能用 count()。
+    def stored_vector_ids(self) -> set[str] | None:
+        """返回向量库里存的原始 id 集合（含 chunk id）；后端不支持枚举时返回 None。"""
+        self._ensure_initialized()
+        if self._store is None:
+            return None
+        try:
+            all_ids = getattr(self._store, "all_ids", None)
+            if callable(all_ids):
+                return {str(i) for i in all_ids()}
+            collection = getattr(self._store, "_collection", None)
+            if collection is not None:
+                return {str(i) for i in collection.get(include=[])["ids"]}
+        except Exception:
+            logger.warning("VectorRetriever: stored_vector_ids() 失败", exc_info=True)
+            return None
+        logger.warning("VectorRetriever: 后端 %s 不支持枚举 id，覆盖率只能退回标量口径",
+                       type(self._store).__name__)
+        return None
+
+    def covered_memory_ids(self) -> set[str] | None:
+        """按**记忆**去重后的已向量化 id 集合（剥掉 ``_chunk*`` 后缀）。"""
+        stored = self.stored_vector_ids()
+        if stored is None:
+            return None
+        return {self._strip_chunk_suffix(i) for i in stored}
+
+    @staticmethod
+    def _strip_chunk_suffix(vector_id: str) -> str:
+        return re.sub(r"_chunk[0-9a-f]{4,}$", "", vector_id)
+
+    def orphan_vector_ids(self, known_memory_ids: set[str]) -> list[str]:
+        """向量库里记忆已不在 ``known_memory_ids`` 中的原始 id（chunk 级）。
+
+        重建走的是 upsert，永远不回收这类残留，只能显式删。``known_memory_ids`` 必须是
+        **全表** id（含 superseded），调用方给不出可信基线时应该传空集——这里对空集
+        一律返回空列表，绝不因为「基线里查不到」就把整库判成孤儿。
+        """
+        if not known_memory_ids:
+            return []
+        stored = self.stored_vector_ids()
+        if stored is None:
+            return []
+        return sorted(vid for vid in stored if self._strip_chunk_suffix(vid) not in known_memory_ids)
+
+    def delete_stored_ids(self, vector_ids: list[str]) -> int:
+        """按向量库里的原始 id（含 chunk id）删除。
+
+        后端（Chroma/FAISS）的 delete 不回报实际删除数，所以返回的是**请求**删除的条数，
+        只用于日志；失败返回 0。
+        """
+        self._ensure_initialized()
+        if self._store is None or not vector_ids:
+            return 0
+        try:
+            self._store.delete(list(vector_ids))
+            return len(vector_ids)
+        except Exception:
+            logger.warning("VectorRetriever: delete_stored_ids 失败", exc_info=True)
+            return 0
+
     def warmup(self) -> None:
         """预热：启动时预加载模型和初始化 ChromaDB，避免首次搜索延迟。"""
         logger.info("VectorRetriever warmup: initializing...")
@@ -544,6 +816,7 @@ class VectorRetriever:
         entries: list[dict[str, Any]],
         batch_size: int = 32,
         max_workers: int = 4,
+        budget_sec: float = 1800.0,
     ) -> int:
         """分批并行重建向量索引。
 
@@ -567,6 +840,14 @@ class VectorRetriever:
         if not all_ids:
             return 0
 
+        # ★ 先在调用线程同步跑一次嵌入，把模型加载的代价/失败判定收在扇出之前。
+        #   P1-6 给模型加载锁加了 5s 有界等待：重建一上来就派 4 个 worker 抢同一把冷锁，
+        #   超时的 batch 经 embed_texts 静默返回 []，数量校验判整轮重建失败（副本实测
+        #   ids=1020 / embeddings=828）。这里提前失败，让调用方有机会保住原索引。
+        if not self.embed_texts(["omnimem 向量重建预热"]):
+            logger.error("向量重建中止：嵌入后端不可用（未写入任何条目）")
+            return 0
+
         # 按 batch_size 切分
         batches: list[tuple[list[str], list[str], list[dict[str, str]]]] = []
         for i in range(0, len(all_ids), batch_size):
@@ -580,17 +861,31 @@ class VectorRetriever:
             return self.embed_texts(docs)
 
         all_embeddings: list[list[float]] = []
+        # ★ P1-6: 原先 ``with ThreadPoolExecutor`` 在退出时隐式 shutdown(wait=True)，
+        #   而调用方（rebuild_all_from_entries）正持有引擎写锁 —— 一个 batch 卡在
+        #   embedding 上就会把写锁钉住，进而冻住每一轮对话的检索。改为总预算有界，
+        #   超时即放弃剩余 batch（下面的数量校验会把这次重建判为失败并留日志）。
+        budget_sec = max(60.0, float(budget_sec))
+        started = time.monotonic()
+        executor = ThreadPoolExecutor(max_workers=min(max_workers, len(batches)))
         try:
             if max_workers <= 1 or len(batches) <= 1:
                 for batch in batches:
                     all_embeddings.extend(_embed_batch(batch))
             else:
-                with ThreadPoolExecutor(max_workers=min(max_workers, len(batches))) as executor:
-                    for emb_batch in executor.map(_embed_batch, batches):
-                        all_embeddings.extend(emb_batch)
+                remaining = budget_sec - (time.monotonic() - started)
+                for emb_batch in executor.map(_embed_batch, batches, timeout=remaining):
+                    all_embeddings.extend(emb_batch)
+        except FuturesTimeoutError:
+            logger.warning(
+                "Vector parallel rebuild 超过 %.0fs 预算，丢弃剩余 batch（已得 %d/%d）",
+                budget_sec, len(all_embeddings), len(all_ids),
+            )
         except Exception as e:
             logger.warning("Vector parallel rebuild embedding failed: %s", e)
             return 0
+        finally:
+            executor.shutdown(wait=False, cancel_futures=True)
 
         if len(all_embeddings) != len(all_ids):
             logger.warning(
@@ -598,7 +893,20 @@ class VectorRetriever:
                 len(all_ids),
                 len(all_embeddings),
             )
-            return 0
+            # ★ 串行补算一次再放弃。并行 worker 撞到的多是「模型首次加载」这一过桥成本：
+            #   此刻模型已在主线程加载完，串行 embed 不再争锁，能把一轮注定作废的重建
+            #   救回来（否则调用方只能保留旧索引，覆盖率缺口一直挂着）。
+            if time.monotonic() - started < budget_sec:
+                all_embeddings = []
+                for batch in batches:
+                    all_embeddings.extend(_embed_batch(batch))
+            if len(all_embeddings) != len(all_ids):
+                logger.error(
+                    "向量重建 embedding 仍不完整（ids=%d, embeddings=%d），放弃写入并保持现有索引",
+                    len(all_ids),
+                    len(all_embeddings),
+                )
+                return 0
 
         # 批量写入
         try:

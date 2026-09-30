@@ -27,6 +27,7 @@ from omnimem.retrieval.executor import (
 )
 from omnimem.retrieval.fusion import FusionMixin
 from omnimem.retrieval.index_admin import IndexAdminMixin
+from omnimem.retrieval.planner import CHANNEL_SKIP_THRESHOLD, QueryPlanner
 from omnimem.retrieval.query_quality import is_garbage_query
 from omnimem.retrieval.synonym_expander import SynonymExpander
 from omnimem.retrieval.vector_store import _emit
@@ -46,8 +47,10 @@ class HybridOrchestrator(FusionMixin, QueryCacheMixin, IndexAdminMixin):
         self._facade = facade
         self._synonym_expander = SynonymExpander(facade._synonym_map)
         self._executor = self._create_executor()
-        # ★ Task 2: 从 config 读取 updated_boost，默认 0.3
+        # ★ HMS Planner（规则版）：查询意图 → 通道差异化权重
         config = getattr(facade, "_config", None)
+        self._planner = QueryPlanner()
+        self._planner_enabled = bool(config.get("planner_enabled", True)) if config else True
         if config is not None:
             self._updated_boost = float(config.get("updated_boost", self._DEFAULT_UPDATED_BOOST))
         else:
@@ -60,6 +63,41 @@ class HybridOrchestrator(FusionMixin, QueryCacheMixin, IndexAdminMixin):
         # ★ 缺陷2/3: 相关性地板 + 偏好门控
         self._min_relevance_score = float(config.get("min_relevance_score", 0.35)) if config else 0.35
         self._preference_gate_enabled = bool(config.get("preference_relevance_gate", True)) if config else True
+        # ★ HMS Session-local 算子：会话内位置邻近增强（后处理，独立开关）
+        from omnimem.retrieval.session_local import SessionLocalOperator
+        self._session_local = SessionLocalOperator(
+            sigma_hours=float(config.get("session_local_sigma_hours", 24.0)) if config else 24.0,
+            enabled=bool(config.get("session_local_enabled", True)) if config else True,
+        )
+        # ★ HMS Verifier：证据充分性验证（缺失告警）
+        from omnimem.retrieval.verifier import EvidenceVerifier
+        self._verifier = EvidenceVerifier(
+            coverage_threshold=float(config.get("verifier_coverage_threshold", 0.4)) if config else 0.4,
+            enabled=bool(config.get("verifier_enabled", True)) if config else True,
+        )
+        # ★ HMS 证据组织器（Gated：仅聚合类查询触发）
+        from omnimem.retrieval.organizer import EvidenceOrganizer
+        self._organizer = EvidenceOrganizer(
+            enabled=bool(config.get("organizer_enabled", True)) if config else True,
+        )
+        # ★ HMS 冲突检测器
+        from omnimem.retrieval.contradiction import ContradictionDetector
+        self._contradiction = ContradictionDetector(
+            enabled=bool(config.get("contradiction_enabled", True)) if config else True,
+        )
+        # ★ HMS 提及/发生时间分离
+        from omnimem.retrieval.temporal_separation import annotate_results
+        self._annotate_times = annotate_results
+        self._temporal_separation_enabled = bool(config.get("temporal_separation_enabled", True)) if config else True
+        # ★ HMS 规范实体消歧（Entity-bridge）
+        from omnimem.retrieval.canonical_entity import CanonicalEntityResolver
+        canonical_file = config.get("canonical_entity_file") if config else None
+        self._canonical = CanonicalEntityResolver(canonical_file)
+        # ★ HMS Self-Evolution：检索失败模式自愈
+        from omnimem.retrieval.self_healing import SelfHealingMonitor
+        self._self_healing = SelfHealingMonitor(
+            enabled=bool(config.get("self_healing_enabled", True)) if config else True,
+        )
 
     def _create_executor(self) -> ThreadPoolExecutor:
         """获取检索线程池（★ P2: 全进程共享，max_workers 可通过配置调整）。"""
@@ -78,7 +116,10 @@ class HybridOrchestrator(FusionMixin, QueryCacheMixin, IndexAdminMixin):
     def shutdown(self) -> None:
         """释放共享线程池引用（最后一个实例释放时真正关闭）。"""
         if self._executor is not None:
-            _release_shared_executor(wait=True)
+            # ★ P1-6: 原先 wait=True 会在 join 一个仍在加载模型/查询向量库的 worker 时
+            #   永久阻塞（表现为 gateway 关闭或重建索引时整进程挂死）。release_shared_executor
+            #   现在本身有界（默认最多等 10s，超时放弃并让 worker 自行退出）。
+            _release_shared_executor()
             self._executor = None
 
     # ── 通道级检索 ──
@@ -86,6 +127,21 @@ class HybridOrchestrator(FusionMixin, QueryCacheMixin, IndexAdminMixin):
     def vector_search(self, query: str, top_k: int) -> list[dict[str, Any]]:
         """向量检索通道。"""
         return self._facade._vector.search(query, top_k=top_k)
+
+    def _vector_channel_timeout(self, timeout_sec: float) -> float:
+        """vector 通道实际需要等待的上限。
+
+        ★ 冷启动修复：vector 通道要等 embedding 模型就绪（首次加载 ~14s），其他通道
+        仍用标准超时。模型就绪后二次查询仅需 0.01s，无副作用。
+        ★ P1-6: 就绪探测本身也是有界的（_CachedEmbeddingFunction 现在任何退出路径都会
+        置位就绪事件，加载失败会立刻返回 False 而不是让调用方等满超时）。
+        """
+        ceiling = max(timeout_sec, 30.0)
+        emb_fn = getattr(self._facade._vector, "_embedding_fn", None)
+        if emb_fn is not None and hasattr(emb_fn, "wait_ready"):
+            if not emb_fn.wait_ready(timeout=ceiling):
+                return ceiling
+        return timeout_sec
 
     def bm25_search(self, query: str, top_k: int) -> list[dict[str, Any]]:
         """BM25 检索通道（含同义词扩展）。"""
@@ -115,6 +171,7 @@ class HybridOrchestrator(FusionMixin, QueryCacheMixin, IndexAdminMixin):
         allowed_channels: set[str] | None,
         trace: Any,
         bm25_query: str | None = None,
+        planner_weights: dict[str, float] | None = None,
     ) -> dict[str, list[dict[str, Any]]]:
         """执行多通道并行检索，按 recall_strategy 分流 + 超时降级。
 
@@ -124,7 +181,16 @@ class HybridOrchestrator(FusionMixin, QueryCacheMixin, IndexAdminMixin):
             allowed_channels: 限制检索通道集合
             trace: 追踪对象
             bm25_query: BM25 通道增强查询（含同义扩展词），为 None 时使用原始 query
+            planner_weights: HMS Planner 输出的通道权重乘数（局部，不写共享状态）。
+                权重 < CHANNEL_SKIP_THRESHOLD 的通道直接跳过，避免低价值通道引入噪声。
         """
+        def _planner_skips(name: str) -> bool:
+            """Planner 权重低于阈值的通道应裁剪。"""
+            return bool(
+                planner_weights is not None
+                and planner_weights.get(name, 1.0) < CHANNEL_SKIP_THRESHOLD
+            )
+
         # BM25 使用增强后的查询，其他通道使用原始查询
         effective_bm25_query = bm25_query if bm25_query is not None else query
         channel_results: dict[str, list[dict[str, Any]]] = {}
@@ -132,24 +198,39 @@ class HybridOrchestrator(FusionMixin, QueryCacheMixin, IndexAdminMixin):
 
         if facade._recall_strategy == "keyword":
             if "bm25" in facade._channels and (not allowed_channels or "bm25" in allowed_channels):
-                channel_results["bm25"] = self.bm25_search(effective_bm25_query, top_k)
+                if not _planner_skips("bm25"):
+                    channel_results["bm25"] = self.bm25_search(effective_bm25_query, top_k)
         elif facade._recall_strategy == "embedding":
             if "vector" in facade._channels and (not allowed_channels or "vector" in allowed_channels):
                 if facade._vector_breaker.should_skip():
                     logger.warning("CircuitBreaker OPEN: skipping vector search, no results")
                     _emit("[OmniMem] ⚠ 向量检索不可用，已降级到关键词模式")
                 else:
+                    # ★ P1-6: 这条分支原先直接同步调用 vector_search()，既无超时也不探测
+                    #   模型就绪 —— 只有 recall_strategy=embedding 的实例会永久挂起。
+                    #   现在与下方 hybrid 分支共用同一套有界等待。
+                    timeout_sec = facade._recall_timeout_ms / 1000.0
+                    future = self._executor.submit(self.vector_search, query, top_k)
                     try:
-                        channel_results["vector"] = self.vector_search(query, top_k)
+                        channel_results["vector"] = future.result(
+                            timeout=self._vector_channel_timeout(timeout_sec)
+                        )
                         facade._vector_breaker.record_success()
-                    except Exception:
+                    except Exception as e:
+                        channel_results["vector"] = []
+                        future.cancel()
                         facade._vector_breaker.record_failure()
+                        logger.warning(
+                            "vector 通道失败/超时，降级为空结果: %s", e
+                        )
         else:
             timeout_sec = facade._recall_timeout_ms / 1000.0
             futures: dict[str, Any] = {}
 
             for name, (retriever, _weight) in facade._channels.items():
                 if allowed_channels and name not in allowed_channels:
+                    continue
+                if _planner_skips(name):
                     continue
                 if name == "vector" and facade._vector_breaker.should_skip():
                     logger.warning(
@@ -167,11 +248,19 @@ class HybridOrchestrator(FusionMixin, QueryCacheMixin, IndexAdminMixin):
                     futures[name] = self._executor.submit(retriever.search, query, top_k=top_k)
 
             if facade._catalog and (not allowed_channels or "catalog" in allowed_channels):
-                futures["catalog"] = self._executor.submit(self.catalog_search, query, top_k)
+                if not _planner_skips("catalog"):
+                    futures["catalog"] = self._executor.submit(self.catalog_search, query, top_k)
 
             for name, future in futures.items():
                 try:
-                    channel_results[name] = future.result(timeout=timeout_sec)
+                    # ★ 冷启动修复：vector 通道等待 embedding 模型就绪（首次加载 ~14s），
+                    #   其他通道仍用标准超时。模型就绪后二次查询仅需 0.01s，无副作用。
+                    eff_timeout = (
+                        self._vector_channel_timeout(timeout_sec)
+                        if name == "vector"
+                        else timeout_sec
+                    )
+                    channel_results[name] = future.result(timeout=eff_timeout)
                     if name == "vector":
                         facade._vector_breaker.record_success()
                 except (TimeoutError, Exception) as e:
@@ -250,6 +339,16 @@ class HybridOrchestrator(FusionMixin, QueryCacheMixin, IndexAdminMixin):
         if cached is not None:
             return cached
 
+        # ★ HMS Planner：查询意图 → 通道差异化权重（局部，不污染共享 _source_weights）
+        planner_weights: dict[str, float] | None = None
+        if self._planner_enabled:
+            plan = self._planner.plan(query)
+            if not plan.is_default:
+                planner_weights = plan.channel_weights
+                if plan.top_k_scale < 1.0:
+                    top_k = max(1, int(top_k * plan.top_k_scale))
+                    max_tokens = max(64, int(max_tokens * plan.top_k_scale))
+
         # ★ Task 3.1: 查询同义扩展 — 仅影响 BM25 通道
         bm25_query = query
         if self._query_expansion_enabled:
@@ -265,12 +364,62 @@ class HybridOrchestrator(FusionMixin, QueryCacheMixin, IndexAdminMixin):
             if any(sig in query_lower for sig in pref_signals):
                 bm25_query = bm25_query + " prefer like enjoy"
 
-        channel_results = self.dispatch_channels(query, top_k, allowed_channels, trace, bm25_query=bm25_query)
+        channel_results = self.dispatch_channels(query, top_k, allowed_channels, trace, bm25_query=bm25_query, planner_weights=planner_weights)
         results = self.fuse_and_filter(
             query, channel_results,
             is_garbage=is_garbage, doc_count=doc_count,
             top_k=top_k, max_tokens=max_tokens, trace=trace,
+            planner_weights=planner_weights,
         )
+
+        # ★ HMS Session-local 算子：会话内位置邻近增强（融合后后处理）
+        if results and self._session_local.enabled:
+            try:
+                results = self._session_local.enhance(results)
+            except Exception as e:
+                logger.debug("Session-local 增强跳过（非致命）: %s", e)
+
+        # ★ HMS 提及/发生时间分离：时间标注（供组织器/冲突检测使用）
+        if results and self._temporal_separation_enabled:
+            try:
+                results = self._annotate_times(results)
+            except Exception as e:
+                logger.debug("时间分离标注跳过（非致命）: %s", e)
+
+        # ★ HMS 证据组织器（Gated：仅聚合类查询触发；冲突检测后附加）
+        if results and self._organizer.enabled and self._organizer.should_organize(query):
+            try:
+                results = self._organizer.organize(results)
+            except Exception as e:
+                logger.debug("证据组织跳过（非致命）: %s", e)
+
+        # ★ HMS 冲突检测：附加冲突组到结果首条
+        if results and self._contradiction.enabled:
+            try:
+                conflicts = self._contradiction.detect(results)
+                if conflicts:
+                    results = list(results)
+                    results[0]["_conflicts"] = conflicts
+            except Exception as e:
+                logger.debug("冲突检测跳过（非致命）: %s", e)
+
+        # ★ HMS Verifier：证据充分性验证（缺失告警，附加到结果）
+        if self._verifier.enabled and not is_garbage:
+            try:
+                intent = getattr(self._planner.plan(query), "intent", "general") if self._planner_enabled else "general"
+                coverage = self._verifier.verify(query, results, intent=intent)
+                if not coverage.adequate and results:
+                    results = list(results)
+                    results[0]["_coverage"] = coverage.to_dict()
+            except Exception as e:
+                logger.debug("Verifier 验证跳过（非致命）: %s", e)
+
+        # ★ HMS Self-Evolution：检索失败模式自愈（最后一步后处理）
+        if results and self._self_healing.enabled and not is_garbage:
+            try:
+                results = self._self_healing.heal(query, results)
+            except Exception as e:
+                logger.debug("Self-Healing 跳过（非致命）: %s", e)
         self.set_cache(cache_key, results)
 
         # ★ COUNT 查询：恢复原始权重，防止污染后续检索（修复 C7：加锁恢复）
@@ -326,6 +475,22 @@ class HybridOrchestrator(FusionMixin, QueryCacheMixin, IndexAdminMixin):
             logger.debug("HybridRetriever async query cache hit: %s", query[:50])
             return cached
 
+        # ★ HMS Planner：查询意图 → 通道差异化权重（局部，不污染共享 _source_weights）
+        planner_weights: dict[str, float] | None = None
+        if self._planner_enabled:
+            plan = self._planner.plan(query)
+            if not plan.is_default:
+                planner_weights = plan.channel_weights
+                if plan.top_k_scale < 1.0:
+                    top_k = max(1, int(top_k * plan.top_k_scale))
+                    max_tokens = max(64, int(max_tokens * plan.top_k_scale))
+
+        def _planner_skips(name: str) -> bool:
+            return bool(
+                planner_weights is not None
+                and planner_weights.get(name, 1.0) < CHANNEL_SKIP_THRESHOLD
+            )
+
         # ★ Task 3.1: 查询同义扩展 — 仅影响 BM25 通道
         bm25_query = query
         if self._query_expansion_enabled:
@@ -345,7 +510,8 @@ class HybridOrchestrator(FusionMixin, QueryCacheMixin, IndexAdminMixin):
 
         if facade._recall_strategy == "keyword":
             if "bm25" in facade._channels and (not allowed_channels or "bm25" in allowed_channels):
-                channel_results["bm25"] = await _asyncio.to_thread(self.bm25_search, bm25_query, top_k)
+                if not _planner_skips("bm25"):
+                    channel_results["bm25"] = await _asyncio.to_thread(self.bm25_search, bm25_query, top_k)
         elif facade._recall_strategy == "embedding":
             if "vector" in facade._channels and (not allowed_channels or "vector" in allowed_channels):
                 if facade._vector_breaker.should_skip():
@@ -365,6 +531,8 @@ class HybridOrchestrator(FusionMixin, QueryCacheMixin, IndexAdminMixin):
             for name, (retriever, _weight) in facade._channels.items():
                 if allowed_channels and name not in allowed_channels:
                     continue
+                if _planner_skips(name):
+                    continue
                 if name == "vector" and facade._vector_breaker.should_skip():
                     logger.warning(
                         "CircuitBreaker OPEN: skipping async vector search, degrading to BM25+Catalog only"
@@ -381,7 +549,8 @@ class HybridOrchestrator(FusionMixin, QueryCacheMixin, IndexAdminMixin):
                     async_tasks[name] = _asyncio.to_thread(retriever.search, query, top_k=top_k)
 
             if facade._catalog and (not allowed_channels or "catalog" in allowed_channels):
-                async_tasks["catalog"] = _asyncio.to_thread(self.catalog_search, query, top_k)
+                if not _planner_skips("catalog"):
+                    async_tasks["catalog"] = _asyncio.to_thread(self.catalog_search, query, top_k)
 
             if async_tasks:
                 task_names = list(async_tasks.keys())
@@ -415,6 +584,7 @@ class HybridOrchestrator(FusionMixin, QueryCacheMixin, IndexAdminMixin):
             doc_count=doc_count,
             top_k=top_k,
             max_tokens=max_tokens,
+            planner_weights=planner_weights,
         )
 
         if trace:
@@ -429,6 +599,55 @@ class HybridOrchestrator(FusionMixin, QueryCacheMixin, IndexAdminMixin):
         results = self.apply_type_boost(results, updated_boost=self._updated_boost,
                                         query=query, entity_boost_weight=self._entity_boost_weight)
         results = self._apply_temporal_rerank(query, results)
+
+        # ★ HMS Session-local 算子（异步路径同样生效）
+        if results and self._session_local.enabled:
+            try:
+                results = self._session_local.enhance(results)
+            except Exception as e:
+                logger.debug("Async Session-local 增强跳过（非致命）: %s", e)
+
+        # ★ HMS 提及/发生时间分离（异步路径）
+        if results and self._temporal_separation_enabled:
+            try:
+                results = self._annotate_times(results)
+            except Exception as e:
+                logger.debug("Async 时间分离标注跳过（非致命）: %s", e)
+
+        # ★ HMS 证据组织器（异步路径）
+        if results and self._organizer.enabled and self._organizer.should_organize(query):
+            try:
+                results = self._organizer.organize(results)
+            except Exception as e:
+                logger.debug("Async 证据组织跳过（非致命）: %s", e)
+
+        # ★ HMS 冲突检测（异步路径）
+        if results and self._contradiction.enabled:
+            try:
+                conflicts = self._contradiction.detect(results)
+                if conflicts:
+                    results = list(results)
+                    results[0]["_conflicts"] = conflicts
+            except Exception as e:
+                logger.debug("Async 冲突检测跳过（非致命）: %s", e)
+
+        # ★ HMS Verifier：证据充分性验证（异步路径）
+        if self._verifier.enabled and not is_garbage:
+            try:
+                intent = getattr(self._planner.plan(query), "intent", "general") if self._planner_enabled else "general"
+                coverage = self._verifier.verify(query, results, intent=intent)
+                if not coverage.adequate and results:
+                    results = list(results)
+                    results[0]["_coverage"] = coverage.to_dict()
+            except Exception as e:
+                logger.debug("Async Verifier 验证跳过（非致命）: %s", e)
+
+        # ★ HMS Self-Evolution：检索失败模式自愈（异步路径）
+        if results and self._self_healing.enabled and not is_garbage:
+            try:
+                results = self._self_healing.heal(query, results)
+            except Exception as e:
+                logger.debug("Async Self-Healing 跳过（非致命）: %s", e)
         self.set_cache(cache_key, results)
 
         if trace and results:

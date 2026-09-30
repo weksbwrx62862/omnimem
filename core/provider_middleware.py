@@ -23,8 +23,22 @@ class ProviderMiddlewareMixin:
         return _get_tool_schemas()
 
     def handle_tool_call(self, tool_name: str, args: dict[str, Any], **kwargs: Any) -> str:
+        router = getattr(self, "_tool_router", None)
+        if router is None:
+            logger.error(
+                "OmniMem tool %s failed: _tool_router not initialized (provider half-initialized)",
+                tool_name,
+            )
+            return json.dumps(
+                {
+                    "error": (
+                        "OmniMem 未完成初始化（_tool_router 缺失）——initialize() 中途失败被吞掉；"
+                        "请重启 gateway 并检查 OmniMem 初始化日志"
+                    )
+                }
+            )
         try:
-            return self._tool_router.route(tool_name, args)
+            return router.route(tool_name, args)
         except Exception as e:
             logger.error("OmniMem tool %s failed: %s", tool_name, e)
             return json.dumps({"error": str(e)})
@@ -203,14 +217,29 @@ class ProviderMiddlewareMixin:
         if self._skill_index_built:
             return
         self._skill_index_built = True
+        # ★ P2-3e: 下面的框架导入修好后这条休眠路径会真正生效——首条消息即扫描全部
+        # SKILL.md（实测 555 个）并按关键词重叠注入正文，既有一次性扫描开销也改变
+        # 提示词内容。因此默认关闭，与线上现状保持一致，由用户显式开启。
+        if not self._config.get("skill_preinject_enabled", False):
+            return
+        # 框架跨包依赖显式化。
+        # 原实现从 agent.skill_commands 导入 _parse_frontmatter/get_all_skills_dirs/
+        # iter_skill_index_files —— 这三个符号在活框架里都不存在（真实出处是
+        # agent.skill_utils，且公开名是 parse_frontmatter），ImportError 被下面的
+        # logger.debug 吞掉，导致 skill 预注入从未生效。
         try:
-
-            from agent.skill_commands import (
-                _parse_frontmatter,
+            from agent.skill_utils import (
                 get_all_skills_dirs,
                 iter_skill_index_files,
+                parse_frontmatter as _parse_frontmatter,
             )
+        except ImportError as e:
+            logger.warning(
+                "OmniMem: skill 预注入不可用（框架 agent.skill_utils 接口变更）: %s", e
+            )
+            return
 
+        try:
             skills_dirs = get_all_skills_dirs()
             seen_names = set()
             for scan_dir in skills_dirs:
@@ -241,7 +270,7 @@ class ProviderMiddlewareMixin:
                     except Exception:
                         continue
         except Exception as e:
-            logger.debug("OmniMem skill index build failed: %s", e)
+            logger.warning("OmniMem: skill 索引构建失败: %s", e)
 
     def _try_skill_preinject(self, user_message: str) -> str:
         """Try to find and pre-inject a matching skill's content."""
@@ -362,14 +391,34 @@ class ProviderMiddlewareMixin:
 
         return result
 
-    def on_memory_write(self, action: str, target: str, content: str) -> None:
-        """内置记忆写入时：冲突检测。"""
+    def on_memory_write(
+        self,
+        action: str,
+        target: str,
+        content: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        """内置记忆写入时：冲突检测。
+
+        ★ P1-5：框架按 ``on_memory_write`` 的签名决定怎么传 metadata
+        （``agent/memory_manager.py`` 的 ``_provider_memory_write_metadata_mode``
+        用 ``inspect.signature`` 探测：有 ``metadata`` 形参 → keyword，
+        无参且位置参数 ≥4 → positional，否则 legacy 即**不传**）。原先我们的签名
+        只有 3 个位置参数，落在 legacy 分支：写入来源（write_origin / session_id /
+        tool_name / old_text）静默丢失，冲突告警指不出是哪一次写入撞了既有记忆。
+        """
         if action == "add":
             conflict = self._conflict_resolver.check(content)
             if conflict.has_conflict:
+                origin = ", ".join(
+                    f"{key}={metadata[key]}"
+                    for key in ("write_origin", "session_id", "tool_name")
+                    if metadata and metadata.get(key)
+                )
                 logger.warning(
-                    "OmniMem: conflict detected with existing memory: %s",
+                    "OmniMem: conflict detected with existing memory: %s%s",
                     conflict.existing_memory,
+                    f" (来源 {origin})" if origin else "",
                 )
 
     @staticmethod

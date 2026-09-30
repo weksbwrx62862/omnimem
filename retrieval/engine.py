@@ -24,6 +24,7 @@
 from __future__ import annotations
 
 import asyncio as _asyncio
+import json
 import logging
 import time
 from collections import deque
@@ -38,7 +39,7 @@ from omnimem.retrieval.query_quality import is_garbage_query, trim_to_budget
 from omnimem.retrieval.registry import DEFAULT_REGISTRY, RetrieverRegistry
 from omnimem.retrieval.reranker import CrossEncoderReranker
 from omnimem.retrieval.rrf import RRFFusion
-from omnimem.retrieval.rw_lock import FairReadWriteLock
+from omnimem.retrieval.rw_lock import FairReadWriteLock, LockTimeoutError
 from omnimem.retrieval.vector import VectorRetriever
 from omnimem.retrieval.vector_store import _emit
 from omnimem.utils.cache import MultiLevelCache
@@ -48,6 +49,10 @@ logger = logging.getLogger(__name__)
 # 向后兼容：保留原模块级名称
 _is_garbage_query = is_garbage_query
 _trim_to_budget = trim_to_budget
+
+# ★ P1-6: 检索等读锁的上限（秒）。写锁会被 index_update（每轮后台索引）或全量重建持有，
+#   原先无界等待的表现是"gateway 每轮对话一起挂住"。超时即本轮降级为无记忆。
+_SEARCH_LOCK_WAIT_SEC = 15.0
 
 
 class HybridRetriever:
@@ -119,7 +124,10 @@ class HybridRetriever:
         vec = VectorRetriever(
             backend=vector_backend,
             data_dir=self._data_dir,
-            embedding_model_path=embedding_model_path,
+            # A caller that passes config but no explicit path must not fall through to the
+            # built-in model NAME: that is a different model with the same 384 dims, so it
+            # embeds silently into a collection built by the configured snapshot.
+            embedding_model_path=embedding_model_path or _cfg("embedding_model_path", ""),
             embedding_provider=embedding_provider,
             vector_store=vector_store,
         )
@@ -168,6 +176,13 @@ class HybridRetriever:
             cooldown=float(self._circuit_breaker_cooldown_seconds),
         )
         self._sync_turn_ids: deque[str] = deque()
+        # ★ 修复 S1（2026-09-28）：sync_turn 生命周期状态跨重启持久化。
+        # 原实现只把 id 放在内存 deque 里，gateway 重启后 deque 归零 →
+        # cleanup_sync_turn_entries() 的 while 永不触发 → 旧 sync-* 条目在
+        # 向量/BM25 索引里只增不减（实测残留 101 条，抢占召回 top-k 坑位）。
+        self._sync_turn_ids_path = Path(self._data_dir) / "sync_turn_ids.json"
+        self._restore_sync_turn_ids()
+        self._reconcile_legacy_sync_entries()
         if enable_catalog and index and wing_room:
             try:
                 from omnimem.retrieval.catalog import CatalogRetriever
@@ -185,6 +200,64 @@ class HybridRetriever:
 
         # 初始化编排器
         self._orchestrator = HybridOrchestrator(self)
+
+    # ── sync_turn 索引生命周期（★ 修复 S1，2026-09-28）───────────────
+    # 背景：sync_turn 条目是「最近对话轮次」的临时索引，靠 FIFO 队列限制总量
+    # （max_sync_turn_entries）。原实现把队列只放在内存里，gateway 重启即失忆，
+    # 淘汰逻辑失效 → 遗留条目永久占据向量/BM25 索引的 top-k 坑位
+    # （实测：101 条残留，query「A股涨停池 打板 实测」的 top-1 就是一条残留）。
+    # 修法：队列落盘 + 启动对账（清掉队列不认识的 sync-* 遗留）。
+
+    def _restore_sync_turn_ids(self) -> None:
+        """从磁盘恢复 sync_turn id 队列（跨重启保持淘汰能力）。"""
+        try:
+            if self._sync_turn_ids_path.exists():
+                data = json.loads(self._sync_turn_ids_path.read_text(encoding="utf-8"))
+                if isinstance(data, list):
+                    self._sync_turn_ids = deque(str(x) for x in data if x)
+                    logger.info("sync_turn 状态恢复：%d 条", len(self._sync_turn_ids))
+        except Exception as e:
+            logger.warning("sync_turn 状态恢复失败（按空队列继续）: %s", e)
+
+    def persist_sync_turn_ids(self) -> None:
+        """把 sync_turn id 队列原子落盘（tmp + replace）。"""
+        try:
+            p = self._sync_turn_ids_path
+            p.parent.mkdir(parents=True, exist_ok=True)
+            tmp = p.with_name(p.name + ".tmp")
+            tmp.write_text(json.dumps(list(self._sync_turn_ids)), encoding="utf-8")
+            tmp.replace(p)
+        except Exception as e:
+            logger.warning("sync_turn 状态落盘失败（忽略）: %s", e)
+
+    def _reconcile_legacy_sync_entries(self) -> None:
+        """启动对账：索引里存在、但状态队列不认识的 sync_turn 条目 = 历史遗留 → 删除。
+
+        向量与 BM25 两侧都清；只清队列里没记录的 id，不碰本轮已登记的条目。
+        """
+        try:
+            known = set(self._sync_turn_ids)
+            docs = getattr(self._bm25, "_documents", None) or []
+            stale = []
+            for d in docs:
+                mid = str(d.get("memory_id", "")) if isinstance(d, dict) else ""
+                if mid.startswith("sync-") and mid not in known:
+                    stale.append(mid)
+            if not stale:
+                return
+            for sid in stale:
+                try:
+                    self._bm25.delete(sid)
+                except Exception:
+                    pass
+                try:
+                    self._vector.delete(sid)
+                except Exception:
+                    pass
+            logger.info("sync_turn 遗留对账：清理 %d 条历史残留", len(stale))
+            self.persist_sync_turn_ids()
+        except Exception as e:
+            logger.warning("sync_turn 遗留对账失败（忽略）: %s", e)
 
     @staticmethod
     def _load_synonyms() -> dict[str, list[str]]:
@@ -247,16 +320,96 @@ class HybridRetriever:
             _emit(f"[OmniMem] ⚠ 混合检索引擎预热失败: {e}")
 
     def vector_count(self) -> int:
-        """返回向量检索通道中的条目数。"""
+        """返回向量检索通道中的条目数。
+
+        ★ P1-11：这是**向量行**数，长记忆会被切成多条 chunk，所以它恒不等于
+        「多少条记忆有向量」。覆盖率高低的判据请用 ``vector_covered_memory_ids``，
+        这个数只适合打日志。
+        """
         try:
             return self._vector.count()
         except Exception as e:
             logger.warning("HybridRetriever.vector_count failed: %s", e)
             return -1
 
+    def vector_covered_memory_ids(self) -> set[str] | None:
+        """★ P1-11：已向量化的**记忆** id 集合（chunk 后缀已剥掉）。
+
+        返回 None 表示后端不支持枚举 id（如 Qdrant 的 point id 是派生 UUID），
+        调用方必须知道自己拿不到覆盖率口径，不能把「无法判断」当成「没问题」。
+        """
+        try:
+            return self._vector.covered_memory_ids()
+        except Exception as e:
+            logger.warning("HybridRetriever.vector_covered_memory_ids failed: %s", e)
+            return None
+
+    def vector_stored_ids(self) -> set[str] | None:
+        """★ P1-11：向量库里的原始 id（chunk 级），用于清扫孤儿向量。"""
+        try:
+            return self._vector.stored_vector_ids()
+        except Exception as e:
+            logger.warning("HybridRetriever.vector_stored_ids failed: %s", e)
+            return None
+
+    def vector_orphan_ids(self, known_memory_ids: set[str]) -> list[str]:
+        """★ P1-11：向量库里「索引中已查不到这条记忆」的原始 id 列表。"""
+        try:
+            return self._vector.orphan_vector_ids(known_memory_ids)
+        except Exception as e:
+            logger.warning("HybridRetriever.vector_orphan_ids failed: %s", e)
+            return []
+
+    def delete_vectors_by_ids(self, vector_ids: list[str]) -> int:
+        """★ P1-11：按向量库原始 id 删除，返回请求删除的条数（0 表示无操作）。"""
+        if not vector_ids:
+            return 0
+        self._rw_lock.acquire_write()
+        try:
+            return self._vector.delete_stored_ids(vector_ids)
+        except Exception as e:
+            logger.warning("HybridRetriever.delete_vectors_by_ids failed: %s", e)
+            return 0
+        finally:
+            self._rw_lock.release_write()
+
     def vector_search(self, content: str, top_k: int = 10) -> list[dict[str, Any]]:
         """直接向量检索。"""
         return self._vector.search(content, top_k=top_k)
+
+    def count_vector_pending(self) -> int:
+        """★ P1-2: 还有多少条降级写入等着被补进向量索引。"""
+        try:
+            return self._vector.count_vector_pending()
+        except Exception as e:
+            logger.debug("count_vector_pending failed: %s", e)
+            return 0
+
+    def drain_vector_pending(self, limit: int = 2000) -> dict[str, int]:
+        """★ P1-2: 排空待回填向量队列（持写锁，与检索互斥）。"""
+        self._rw_lock.acquire_write()
+        try:
+            return self._vector.drain_vector_pending(limit=limit)
+        finally:
+            self._rw_lock.release_write()
+
+    def queue_vector_backfill(
+        self,
+        content: str,
+        memory_id: str,
+        metadata: dict[str, Any] | None = None,
+        reason: str = "saga_gap",
+    ) -> bool:
+        """★ P1-4: 检索层没写上的记忆进待回填队列，而不是连带把主存储删掉。"""
+        try:
+            return bool(
+                self._vector.queue_vector_backfill(
+                    content, memory_id=memory_id, metadata=metadata, reason=reason
+                )
+            )
+        except Exception as e:
+            logger.warning("HybridRetriever.queue_vector_backfill failed: %s", e)
+            return False
 
     def persist_embedding_cache(self) -> None:
         """持久化嵌入缓存到磁盘。"""
@@ -397,7 +550,13 @@ class HybridRetriever:
     ) -> list[dict[str, Any]]:
         """混合检索：向量 + BM25 + RRF 融合。"""
         allowed_channels = set(channels_only) if channels_only else None
-        self._rw_lock.acquire_read()
+        # ★ P1-6: 读锁等待有界。拿不到（例如全量重建正持写锁）时返回空结果，
+        #   让这一轮对话降级为"没有记忆"，而不是把 gateway 钉在 futex 上。
+        try:
+            self._rw_lock.acquire_read(timeout=_SEARCH_LOCK_WAIT_SEC)
+        except LockTimeoutError as e:
+            logger.warning("检索降级：等待读锁超过 %.0fs → %s", _SEARCH_LOCK_WAIT_SEC, e)
+            return []
         try:
             return self._orchestrator.search(
                 query, max_tokens, mode, top_k,
@@ -418,7 +577,11 @@ class HybridRetriever:
     ) -> list[dict[str, Any]]:
         """异步混合检索。"""
         allowed_channels = set(channels_only) if channels_only else None
-        self._rw_lock.acquire_read()
+        try:
+            self._rw_lock.acquire_read(timeout=_SEARCH_LOCK_WAIT_SEC)
+        except LockTimeoutError as e:
+            logger.warning("异步检索降级：等待读锁超过 %.0fs → %s", _SEARCH_LOCK_WAIT_SEC, e)
+            return []
         try:
             return await self._orchestrator.async_search(
                 query, max_tokens, mode, top_k,

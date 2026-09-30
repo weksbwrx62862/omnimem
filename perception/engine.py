@@ -21,6 +21,37 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+# 框架自述正文：cron / 反思注入的说明文字，不是用户事实。
+# 2026-09-29 噪声审计：index 694 条里 74 条是这段前言被当作 `确认: …`（type=preference）落库的。
+BOILERPLATE_MARKERS = (
+    "[IMPORTANT: You are running as",
+    "You are running as a scheduled cron job",
+    "[IMPORTANT: Background process",
+    "background processes completed for this session",
+)
+
+# 记忆标签前缀："偏好: X" / "确认: X" / "纠正: X" / "称呼偏好: X" / "姓名: X"
+_LABEL_PREFIX = re.compile(r"^(偏好|确认|纠正|称呼偏好|姓名)\s*[:：]\s*")
+_HAS_SUBSTANCE = re.compile(r"[0-9A-Za-z\u4e00-\u9fff]")
+
+
+def is_framework_boilerplate(text: str) -> bool:
+    """正文是否为框架自己的说明文字（cron 前言等）——这类内容不该变成记忆。"""
+    return bool(text) and any(marker in text for marker in BOILERPLATE_MARKERS)
+
+
+def has_rememberable_payload(content: str) -> bool:
+    """抽取产物是否值得落库：剥掉标签前缀后必须含实义字符，且不能是标签套娃。
+
+    拦的是 `偏好: ）]\"` 这类标点残句与 `纠正: 偏好: …` 链——
+    正则 `(.{2,30}?})` 允许载荷只有标点，于是垃圾进了库。
+    """
+    payload = (content or "").strip()
+    inner = _LABEL_PREFIX.sub("", payload, count=1).strip()
+    if not _HAS_SUBSTANCE.search(inner):
+        return False
+    return not _LABEL_PREFIX.match(inner)
+
 
 @dataclass
 class PerceptionSignals:
@@ -366,7 +397,11 @@ class PerceptionEngine:
                 extracted = m.group(1).strip()
                 # 姓名类允许1个字（如"徐"），其他至少2字
                 min_len = 1 if label == "姓名" else 2
-                if extracted and len(extracted) >= min_len:
+                if (
+                    extracted
+                    and len(extracted) >= min_len
+                    and has_rememberable_payload(extracted)
+                ):
                     return f"{label}: {extracted}" if label else extracted
 
         # 策略2: 提取含信号词的句子

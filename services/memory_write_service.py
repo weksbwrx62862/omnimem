@@ -26,6 +26,7 @@ from omnimem.memory.wing_room import _PRIVACY_TO_WING
 from omnimem.services.memory_service import MemoryService
 from omnimem.utils.event_publisher import get_event_publisher
 from omnimem.utils.logging import sanitize_for_log
+from omnimem.utils.metrics import get_alert_manager
 from omnimem.utils.security import SecurityValidator
 
 logger = logging.getLogger(__name__)
@@ -210,6 +211,7 @@ class MemoryWriteService:
         confidence = args.get("confidence", 3)
         scope = args.get("scope", "personal")
         privacy = args.get("privacy", "personal")
+        project = (args.get("project", "") or "").strip()
 
         # ★ R25修复BUG-1：直接从 privacy 映射到 wing
         wing = self.deps.wing_room.resolve_wing_from_privacy(privacy, memory_type)
@@ -409,6 +411,7 @@ class MemoryWriteService:
             vc=vc,
             entities=_extract_entities_for_storage(content),
             stored_at=now,
+            project=project,
         )
 
         if not saga_result.success:
@@ -418,6 +421,35 @@ class MemoryWriteService:
                 saga_result.failed_step,
                 saga_result.error,
             )
+
+        # ★ 主存储写入失败 ⇒ 立刻返回结构化错误，绝不进入成功流水线。
+        #   memory_id 由 store_add 步骤内部生成，它失败时仍是空串；此时若继续走
+        #   后台提交 / 遗忘曲线登记 / trace 派生 / memory_stored 事件，等于把没写
+        #   进去的数据报成 status="stored"（且下游会以空 ID 建派生边、对 "" 做切片）。
+        #   仅后续步骤（index_add/retriever_add/kg_extract…）失败时不在此列：
+        #   那条记忆已经真实落盘，按 P1-4 契约返回 stored + 保留 drawer + 待回填。
+        if not saga_result.success and not memory_id:
+            get_alert_manager().fire(
+                name="memorize_primary_write_failed",
+                severity="critical",
+                message=f"memorize 主存储写入失败：{saga_result.error}",
+                failed_step=saga_result.failed_step,
+                memory_type=memory_type,
+                wing=wing,
+                room=room,
+            )
+            return {
+                "status": "error",
+                "memory_id": "",
+                "reason": (
+                    f"主存储写入失败（step={saga_result.failed_step}）：{saga_result.error}"
+                ),
+                "wing": wing,
+                "room": room,
+                "type": memory_type,
+                "privacy": privacy,
+                "confidence": confidence,
+            }
 
         # ★ 异步化：非关键路径提交到后台线程
         executor = self.bg_executor or get_background_executor()
@@ -440,7 +472,12 @@ class MemoryWriteService:
             executor.submit(self._bg_provenance_record, memory_id, provenance)
 
         if self.deps.forgetting:
-            executor.submit(self._bg_forgetting_record, memory_id)
+            # ★ 治本：曲线登记改为同步。此前经 executor.submit 异步执行，
+            #   而 index 是同步 flush —— 网关重启/退出时后台任务被丢弃，
+            #   导致记忆已落 index 却未进曲线（健康检查持续报"缺失回填"）。
+            #   record_access 已每次写即提交（F2 _BATCH_THRESHOLD=1），同步开销很小；
+            #   _bg_forgetting_record 内部 try/except 且从不抛出，故不会因曲线失败中断 memorize。
+            self._bg_forgetting_record(memory_id)
 
         # ★ OPT: 记录溯源链 L0 对话 → L1 原子事实
         if self.deps.trace_chain:
@@ -474,6 +511,16 @@ class MemoryWriteService:
 
         # ★ R25修复Minor-3：写入后确保向量索引就绪
         self.deps.retriever.flush()
+
+        # ★ 批2b修复：三层索引仅在 _BATCH_THRESHOLD(=5) 攒够时才 commit，
+        #   单次写入后未提交的 WAL 写事务会在常驻网关上跨轮次悬挂，
+        #   阻塞外部短进程写入（实测 08:45→09:29 持锁 14min）。
+        #   与 retriever.flush 同处主线程写后边界，提交索引事务并释放写锁。
+        if self.deps.index is not None:
+            try:
+                self.deps.index.flush()
+            except Exception as e:
+                logger.warning("OmniMem memorize index flush failed: %s", e)
 
         # ★ R24修复EXT-5：写入后创建 event 记录
         _event_worthy_types = {"session", "project", "workflow", "skill", "convention"}
@@ -516,6 +563,7 @@ class MemoryWriteService:
             "privacy": privacy,
             "confidence": confidence,
             "kv_cached": auto_preloaded,
+            "project": project,
         }
 
         # ★ Task 2: secret 级记忆透明化加密状态

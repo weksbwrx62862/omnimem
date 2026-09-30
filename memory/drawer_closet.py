@@ -96,7 +96,7 @@ class DrawerClosetStore:
 
         # ★ P0方案一：MetaStore SQLite 元数据存储（并行双写）
         # 保留 Drawer 文件作为冷备份，元数据主查询走 SQLite
-        self._meta_store = MetaStore(palace_dir / ".meta")
+        self._meta_store = MetaStore(palace_dir / ".meta", palace_dir=palace_dir)
         # ★ P0修复：Saga 协调器，保证 Drawer/MetaStore 双写事务一致性
         self._saga = SagaCoordinator(pending_path=palace_dir / ".meta" / "saga_pending.json")
 
@@ -233,6 +233,8 @@ class DrawerClosetStore:
 
         # secret 级不在 MetaStore 中保留明文 content_preview，避免通过 FTS 泄露
         meta_content_preview = "" if privacy == "secret" else content[:500]
+        # ★ 项目命名空间：从 kwargs 提取 project，落 MetaStore 以支持按项目硬隔离检索
+        project = kwargs.get("project", "") or ""
         meta_fields = {
             "memory_id": memory_id,
             "wing": wing,
@@ -246,6 +248,7 @@ class DrawerClosetStore:
             "content_preview": meta_content_preview,
             "drawer_path": str(drawer_path),
             "vc": vc,
+            "project": project,
         }
 
         def _write_meta() -> None:
@@ -348,10 +351,11 @@ class DrawerClosetStore:
 
     def get(self, memory_id: str) -> dict[str, Any] | None:
         """根据 ID 获取记忆。优先内存索引，回退 MetaStore + Drawer 文件。"""
-        # 1. 内存索引（热数据）
-        if memory_id in self._closet_index:
-            self._touch(memory_id)
-            return self._decrypt_entry_content(self._closet_index[memory_id])
+        # 1. 内存索引（热数据）★ P1-16 修复：加锁保护 _closet_index 读取
+        with self._index_lock:
+            if memory_id in self._closet_index:
+                self._touch(memory_id)
+                return self._decrypt_entry_content(dict(self._closet_index[memory_id]))
 
         # 2. MetaStore 元数据 + Drawer 原文
         meta_result = self._meta_store.get(memory_id)
@@ -429,8 +433,9 @@ class DrawerClosetStore:
     # ★ Legacy: Drawer 文件查询方法，MetaStore 未命中时回退使用
     def _find_on_disk(self, memory_id: str) -> dict[str, Any] | None:
         """在磁盘上查找记忆，优先用路径索引，回退到 rglob。"""
-        # 策略1：用已知的路径索引
-        known_path = self._id_to_path.get(memory_id)
+        # 策略1：用已知的路径索引 ★ P1-16 修复：加锁读取 _id_to_path
+        with self._index_lock:
+            known_path = self._id_to_path.get(memory_id)
         if known_path and known_path.exists():
             return self._read_drawer(known_path)
 
@@ -438,8 +443,9 @@ class DrawerClosetStore:
         for drawer_file in self._palace_dir.rglob(f"drawer/{memory_id}.md"):
             result = self._read_drawer(drawer_file)
             if result:
-                # 记录路径以供下次快速查找
-                self._id_to_path[memory_id] = drawer_file
+                # 记录路径以供下次快速查找 ★ P1-16 修复：加锁写入 _id_to_path
+                with self._index_lock:
+                    self._id_to_path[memory_id] = drawer_file
                 return result
 
         return None
@@ -463,16 +469,18 @@ class DrawerClosetStore:
         )
         if meta_results:
             enriched = []
-            for mr in meta_results:
-                mid = mr.get("memory_id", "")
-                if mid in self._closet_index:
-                    entry = dict(self._closet_index[mid])
-                    self._touch(mid)
-                else:
-                    entry = dict(mr)
-                enriched.append(self._sanitize_secret_result(entry))
-                if len(enriched) >= limit:
-                    break
+            # ★ P1-16 修复：读取 _closet_index 时加锁，防止并发修改
+            with self._index_lock:
+                for mr in meta_results:
+                    mid = mr.get("memory_id", "")
+                    if mid in self._closet_index:
+                        entry = dict(self._closet_index[mid])
+                        self._touch(mid)
+                    else:
+                        entry = dict(mr)
+                    enriched.append(self._sanitize_secret_result(entry))
+                    if len(enriched) >= limit:
+                        break
             return enriched
 
         return []
@@ -487,26 +495,30 @@ class DrawerClosetStore:
         meta_results = self._meta_store.search_by_content(query, limit=limit)
         if meta_results:
             enriched = []
-            for mr in meta_results:
-                mid = mr.get("memory_id", "")
-                if mid in self._closet_index:
-                    entry = dict(self._closet_index[mid])
-                    self._touch(mid)
-                else:
-                    entry = dict(mr)
-                enriched.append(self._sanitize_secret_result(entry))
-                if len(enriched) >= limit:
-                    break
+            # ★ P1-16 修复：读取 _closet_index 时加锁，防止并发修改
+            with self._index_lock:
+                for mr in meta_results:
+                    mid = mr.get("memory_id", "")
+                    if mid in self._closet_index:
+                        entry = dict(self._closet_index[mid])
+                        self._touch(mid)
+                    else:
+                        entry = dict(mr)
+                    enriched.append(self._sanitize_secret_result(entry))
+                    if len(enriched) >= limit:
+                        break
             return enriched
 
         return []
 
     def get_all_for_indexing(self) -> list[dict[str, Any]]:
         """获取所有记忆（用于检索引擎索引）。"""
-        return [
-            self._sanitize_secret_result(dict(entry))
-            for entry in self._closet_index.values()
-        ]
+        # ★ P1-16 修复：读取 _closet_index 时加锁
+        with self._index_lock:
+            return [
+                self._sanitize_secret_result(dict(entry))
+                for entry in self._closet_index.values()
+            ]
 
     def warm_up(self, entries: list[dict[str, Any]]) -> None:
         """从外部数据源（如 ThreeLevelIndex）预热内存索引和 MetaStore。
@@ -541,7 +553,9 @@ class DrawerClosetStore:
         if self._privacy_manager is None:
             return "error"
         # 定位 drawer 文件：路径索引优先，rglob 回退
-        path = self._id_to_path.get(memory_id)
+        # ★ P1-16 修复：读取 _id_to_path 时加锁
+        with self._index_lock:
+            path = self._id_to_path.get(memory_id)
         if path is None or not path.exists():
             path = None
             for p in self._palace_dir.rglob(f"{memory_id}.md"):
@@ -658,7 +672,9 @@ class DrawerClosetStore:
 
     def _update_drawer_privacy(self, memory_id: str, privacy: str, new_wing: str | None = None) -> None:
         """更新 Drawer 磁盘文件中的 privacy 和 wing 字段。"""
-        drawer_path = self._id_to_path.get(memory_id)
+        # ★ P1-16 修复：读取 _id_to_path 时加锁（RLock 可重入，调用方持锁时安全）
+        with self._index_lock:
+            drawer_path = self._id_to_path.get(memory_id)
         if not drawer_path or not drawer_path.exists():
             return
         try:
@@ -683,12 +699,13 @@ class DrawerClosetStore:
         except Exception as e:
             logger.warning("Failed to update drawer privacy for %s: %s", memory_id, e)
 
-    def _flush_write_buffer(self) -> None:
-        """执行缓冲队列中的所有磁盘写入。"""
+    def _flush_write_buffer(self) -> list[str]:
+        """执行缓冲队列中的所有磁盘写入，返回落盘失败的 memory_id 列表。"""
         with self._index_lock:
             buffer = list(self._write_buffer)
             self._write_buffer.clear()
             self._pending_disk_writes = 0
+        failed: list[str] = []
         for op in buffer:
             try:
                 if op.op_type == "drawer":
@@ -715,13 +732,23 @@ class DrawerClosetStore:
                 else:
                     logger.warning("未知的 WriteOp 类型: %s", op.op_type)
             except Exception as e:
-                logger.warning("Buffered write failed: %s", e)
+                # ★ P1-4：原来只打一句 "Buffered write failed"（连是哪条记忆都没有），
+                #   而 flush() 照旧当作成功 —— 抽屉文件没落盘，上层却已经返回了 memory_id。
+                logger.error("Buffered %s write failed for %s: %s", op.op_type, op.path, e, exc_info=True)
+                failed.append(op.path.stem)
+        return failed
 
-    def flush(self) -> None:
-        """显式刷新所有待写入的磁盘缓冲和 MetaStore。"""
-        if self._write_buffer:
-            self._flush_write_buffer()
+    def flush(self) -> list[str]:
+        """刷新磁盘缓冲和 MetaStore，返回未能落盘的 drawer/closet 记忆 ID。
+
+        返回值而不是抛异常：flush 被 close/中间件/会话收尾等大量路径调用，
+        在那里抛会让清理中断；但失败必须可被调用方看见，不能再伪装成成功。
+        """
+        failed = self._flush_write_buffer() if self._write_buffer else []
         self._meta_store.flush()
+        if failed:
+            logger.error("DrawerCloset flush: %d 条记忆未落盘: %s", len(failed), failed[:20])
+        return failed
 
     async def async_flush(self) -> None:
         """异步刷新所有待写入数据（磁盘缓冲 + MetaStore）。
@@ -773,6 +800,9 @@ class DrawerClosetStore:
             fm_str = "\n".join(f"{k}: {v}" for k, v in front_matter.items())
 
         text = f"---\n{fm_str}---\n\n{content}\n"
+        # ★ P1-4：add() 建目录是在缓冲入队时做的，真正写盘发生在 flush()，
+        #   中间目录可能已被清理/未创建 —— 这里不重建父目录就会 [Errno 2] 静默丢内容。
+        path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text, encoding="utf-8")
 
     def _write_closet(
@@ -801,6 +831,9 @@ class DrawerClosetStore:
             fm_str = "\n".join(f"{k}: {v}" for k, v in front_matter.items())
 
         text = f"---\n{fm_str}---\n\n{content}\n"
+        # ★ P1-4：add() 建目录是在缓冲入队时做的，真正写盘发生在 flush()，
+        #   中间目录可能已被清理/未创建 —— 这里不重建父目录就会 [Errno 2] 静默丢内容。
+        path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text, encoding="utf-8")
 
     def _read_drawer(self, path: Path) -> dict[str, Any] | None:

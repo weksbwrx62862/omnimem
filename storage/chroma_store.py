@@ -44,16 +44,23 @@ class ChromaVectorStore(VectorStore):
         self._persist_dir.mkdir(parents=True, exist_ok=True)
         try:
             import chromadb
-
+        except ImportError as e:
+            # ★ 只有这一步的 ImportError 才真的等价于「chromadb 没装」。
+            logger.warning("chromadb 不可用（ImportError: %s）— ChromaVectorStore 降级", e)
+            self._initialized = True
+            return
+        try:
             self._client = chromadb.PersistentClient(path=str(self._persist_dir))
             self._collection = self._client.get_or_create_collection(
                 name=self._collection_name,
                 metadata={"hnsw:space": "cosine"},
             )
-        except ImportError:
-            logger.warning("chromadb not installed — ChromaVectorStore unavailable")
         except Exception as e:
-            logger.warning("ChromaVectorStore init failed: %s", e)
+            # 原先这里也归到 "chromadb not installed"，会把 PersistentClient 内部的
+            # 嵌套 ImportError（如并发导入污染）报成依赖缺失，掩盖真实故障。
+            logger.warning(
+                "ChromaVectorStore init failed: %s: %s", type(e).__name__, e, exc_info=True
+            )
         self._initialized = True
 
     def add(
