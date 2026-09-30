@@ -6,7 +6,8 @@
 用法:
     from omnimem.sdk import OmniMemSDK
 
-    sdk = OmniMemSDK(storage_dir="~/.omnimem")
+    sdk = OmniMemSDK()                       # 数据目录按 $HERMES_HOME 解析
+    sdk = OmniMemSDK(storage_dir="~/omnimem")  # 显式路径须自行 expanduser，Path() 不会展开 ~
     sdk.memorize("用户喜欢Python", memory_type="preference")
     result = sdk.recall("用户喜欢什么")
     sdk.close()
@@ -22,6 +23,7 @@ from pathlib import Path
 from typing import Any
 
 from omnimem.config import OmniMemConfig
+from omnimem.config._config import resolve_default_data_dir
 from omnimem.core.dedup import SemanticDedupService
 from omnimem.core.saga import SagaCoordinator
 from omnimem.facades.governance import GovernanceFacade
@@ -56,7 +58,10 @@ class OmniMemSDK:
         config: dict[str, Any] | None = None,
     ) -> None:
         if storage_dir is None:
-            storage_dir = Path.home() / ".omnimem"
+            # 与 doctor / provider 共用同一解析顺序（显式 → $HERMES_HOME → ~/.hermes → ~/.omnimem）。
+            # 原先硬编码 ~/.omnimem，使 SDK 写入的实例与插件实际服务的实例不是同一个：
+            # 主库 861 条记忆，而 ~/.omnimem 里只有 5 条测试垃圾。
+            storage_dir = resolve_default_data_dir()
         self._data_dir = Path(storage_dir)
         self._data_dir.mkdir(parents=True, exist_ok=True)
         self._session_id = f"sdk-{uuid.uuid4().hex[:12]}"
