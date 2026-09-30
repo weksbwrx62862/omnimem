@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>OmniMem Dashboard</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">OmniMem <span>Dashboard</span></div>
+    <div class="conn">
+      <input id="cfgBase" class="mono" type="text" placeholder="http://127.0.0.1:8765" size="24" />
+      <input id="cfgKey" class="mono" type="password" placeholder="API key" size="16" />
+      <input id="cfgAdmin" class="mono" type="password" placeholder="admin token (export/import)" size="18" />
+      <button id="btnSave" class="btn">保存</button>
+      <span id="status" class="badge">未连接</span>
+    </div>
+  </header>
+
+  <nav class="tabs">
+    <button data-tab="recall" class="tab active">检索 Recall</button>
+    <button data-tab="memorize" class="tab">写入 Memorize</button>
+    <button data-tab="detail" class="tab">列表 Detail</button>
+    <button data-tab="govern" class="tab">治理 Govern</button>
+    <button data-tab="system" class="tab">系统 System</button>
+  </nav>
+
+  <main>
+    <!-- Recall -->
+    <section id="tab-recall" class="panel">
+      <div class="row">
+        <input id="qText" type="text" placeholder="查询内容…" />
+        <select id="qMode">
+          <option value="hybrid">hybrid</option>
+          <option value="rag">rag</option>
+          <option value="vector">vector</option>
+          <option value="bm25">bm25</option>
+        </select>
+        <label class="chk"><input id="qExplain" type="checkbox" /> explain</label>
+        <button id="btnRecall" class="btn primary">检索</button>
+      </div>
+      <div id="recallOut" class="cards"></div>
+    </section>
+
+    <!-- Memorize -->
+    <section id="tab-memorize" class="panel hidden">
+      <textarea id="mContent" rows="5" placeholder="要记住的内容…"></textarea>
+      <div class="row">
+        <select id="mType">
+          <option value="fact">fact</option>
+          <option value="preference">preference</option>
+          <option value="event">event</option>
+          <option value="entity">entity</option>
+          <option value="procedure">procedure</option>
+        </select>
+        <select id="mPrivacy">
+          <option value="personal">personal</option>
+          <option value="public">public</option>
+          <option value="team">team</option>
+          <option value="secret">secret</option>
+        </select>
+        <label>confidence <input id="mConf" type="number" min="1" max="5" value="3" /></label>
+        <button id="btnMemorize" class="btn primary">写入</button>
+      </div>
+      <pre id="memorizeOut" class="out"></pre>
+    </section>
+
+    <!-- Detail -->
+    <section id="tab-detail" class="panel hidden">
+      <div class="row">
+        <button id="btnDetailList" class="btn primary">加载列表</button>
+      </div>
+      <div id="detailOut" class="cards"></div>
+    </section>
+
+    <!-- Govern -->
+    <section id="tab-govern" class="panel hidden">
+      <div class="row">
+        <select id="gAction"></select>
+        <input id="gArgs" type="text" placeholder='附加参数 JSON，如 {"path":"..."}' size="32" />
+        <button id="btnGovern" class="btn primary">执行</button>
+      </div>
+      <pre id="governOut" class="out"></pre>
+    </section>
+
+    <!-- System -->
+    <section id="tab-system" class="panel hidden">
+      <div class="row">
+        <button id="btnHealth" class="btn">健康检查</button>
+        <button id="btnTools" class="btn">工具列表</button>
+        <button id="btnMetrics" class="btn">Metrics</button>
+      </div>
+      <pre id="systemOut" class="out"></pre>
+    </section>
+  </main>
+
+  <script src="./app.js"></script>
+</body>
+</html>

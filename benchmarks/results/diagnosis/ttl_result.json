@@ -1,0 +1,508 @@
+{
+  "experiment": "ttl_incremental_classification",
+  "spec_task": "Task 4 — TTL 空白验证",
+  "meta": {
+    "num_classes": 4,
+    "train_samples_per_class": {
+      "青鸟单": 17,
+      "朱雀单": 17,
+      "白泽单": 17,
+      "玄豹单": 17
+    },
+    "test_total": 20,
+    "top_k": 5,
+    "llm_model": "deepseek-chat",
+    "duration_sec": 825.4,
+    "storage_dir_policy": "临时目录（系统 temp区），实验后已清理"
+  },
+  "inject_stats": {
+    "total": 68,
+    "stored": 68,
+    "skipped": 0,
+    "skipped_detail": []
+  },
+  "path_a_memory_enhanced": {
+    "accuracy": 0.75,
+    "correct": 15,
+    "total": 20
+  },
+  "path_b_zero_shot_baseline": {
+    "accuracy": 0.25,
+    "correct": 5,
+    "total": 20
+  },
+  "delta_a_minus_b": 0.5,
+  "per_class": {
+    "青鸟单": {
+      "path_a_accuracy": 0.6,
+      "path_b_accuracy": 0.8,
+      "count": 5
+    },
+    "朱雀单": {
+      "path_a_accuracy": 0.6,
+      "path_b_accuracy": 0.0,
+      "count": 5
+    },
+    "白泽单": {
+      "path_a_accuracy": 0.8,
+      "path_b_accuracy": 0.0,
+      "count": 5
+    },
+    "玄豹单": {
+      "path_a_accuracy": 1.0,
+      "path_b_accuracy": 0.2,
+      "count": 5
+    }
+  },
+  "retrieval_quality": {
+    "top_k": 5,
+    "avg_retrieved": 5.0,
+    "avg_same_class_in_topk": 1.45,
+    "zero_same_class_cases": 4
+  },
+  "path_a_errors": [
+    {
+      "gold": "青鸟单",
+      "pred": "玄豹单",
+      "text": "今早跑批的作业超时了，能不能帮忙查下原因",
+      "retrieved_labels": [
+        "朱雀单",
+        "朱雀单",
+        "白泽单",
+        "朱雀单",
+        "朱雀单"
+      ]
+    },
+    {
+      "gold": "青鸟单",
+      "pred": "玄豹单",
+      "text": "集群上的任务昨晚又被调度器杀掉了",
+      "retrieved_labels": [
+        "朱雀单",
+        "玄豹单",
+        "朱雀单",
+        "玄豹单",
+        "玄豹单"
+      ]
+    },
+    {
+      "gold": "朱雀单",
+      "pred": "白泽单",
+      "text": "商品详情页的大图加载太慢了",
+      "retrieved_labels": [
+        "朱雀单",
+        "朱雀单",
+        "玄豹单",
+        "白泽单",
+        "白泽单"
+      ]
+    },
+    {
+      "gold": "朱雀单",
+      "pred": "白泽单",
+      "text": "这个选项卡切换的时候有白屏",
+      "retrieved_labels": [
+        "白泽单",
+        "白泽单",
+        "白泽单",
+        "白泽单",
+        "白泽单"
+      ]
+    },
+    {
+      "gold": "白泽单",
+      "pred": "玄豹单",
+      "text": "这个采购申请单流转卡了三天了",
+      "retrieved_labels": [
+        "玄豹单",
+        "青鸟单",
+        "青鸟单",
+        "朱雀单",
+        "青鸟单"
+      ]
+    }
+  ],
+  "records": [
+    {
+      "gold": "青鸟单",
+      "text": "今早跑批的作业超时了，能不能帮忙查下原因",
+      "pred_a": "玄豹单",
+      "pred_b": "玄豹单",
+      "reply_a_raw": "玄豹单",
+      "reply_b_raw": "玄豹单",
+      "a_correct": false,
+      "b_correct": false,
+      "retrieved_count": 5,
+      "retrieved_labels": [
+        "朱雀单",
+        "朱雀单",
+        "白泽单",
+        "朱雀单",
+        "朱雀单"
+      ],
+      "retrieved_same_class": 0
+    },
+    {
+      "gold": "青鸟单",
+      "text": "Doris 的导入任务卡住了，表里没数据",
+      "pred_a": "青鸟单",
+      "pred_b": "青鸟单",
+      "reply_a_raw": "青鸟单",
+      "reply_b_raw": "青鸟单",
+      "a_correct": true,
+      "b_correct": true,
+      "retrieved_count": 5,
+      "retrieved_labels": [
+        "青鸟单",
+        "白泽单",
+        "青鸟单",
+        "玄豹单",
+        "玄豹单"
+      ],
+      "retrieved_same_class": 2
+    },
+    {
+      "gold": "青鸟单",
+      "text": "想调整一下这个 Spark 任务的并行度",
+      "pred_a": "青鸟单",
+      "pred_b": "青鸟单",
+      "reply_a_raw": "青鸟单",
+      "reply_b_raw": "青鸟单",
+      "a_correct": true,
+      "b_correct": true,
+      "retrieved_count": 5,
+      "retrieved_labels": [
+        "朱雀单",
+        "青鸟单",
+        "白泽单",
+        "朱雀单",
+        "玄豹单"
+      ],
+      "retrieved_same_class": 1
+    },
+    {
+      "gold": "青鸟单",
+      "text": "集群上的任务昨晚又被调度器杀掉了",
+      "pred_a": "玄豹单",
+      "pred_b": "青鸟单",
+      "reply_a_raw": "玄豹单",
+      "reply_b_raw": "青鸟单",
+      "a_correct": false,
+      "b_correct": true,
+      "retrieved_count": 5,
+      "retrieved_labels": [
+        "朱雀单",
+        "玄豹单",
+        "朱雀单",
+        "玄豹单",
+        "玄豹单"
+      ],
+      "retrieved_same_class": 0
+    },
+    {
+      "gold": "青鸟单",
+      "text": "消费积压越来越大，实时大盘延迟了",
+      "pred_a": "青鸟单",
+      "pred_b": "青鸟单",
+      "reply_a_raw": "青鸟单",
+      "reply_b_raw": "青鸟单",
+      "a_correct": true,
+      "b_correct": true,
+      "retrieved_count": 5,
+      "retrieved_labels": [
+        "朱雀单",
+        "白泽单",
+        "白泽单",
+        "朱雀单",
+        "青鸟单"
+      ],
+      "retrieved_same_class": 1
+    },
+    {
+      "gold": "朱雀单",
+      "text": "商品详情页的大图加载太慢了",
+      "pred_a": "白泽单",
+      "pred_b": "青鸟单",
+      "reply_a_raw": "白泽单",
+      "reply_b_raw": "青鸟单",
+      "a_correct": false,
+      "b_correct": false,
+      "retrieved_count": 5,
+      "retrieved_labels": [
+        "朱雀单",
+        "朱雀单",
+        "玄豹单",
+        "白泽单",
+        "白泽单"
+      ],
+      "retrieved_same_class": 2
+    },
+    {
+      "gold": "朱雀单",
+      "text": "这个选项卡切换的时候有白屏",
+      "pred_a": "白泽单",
+      "pred_b": "青鸟单",
+      "reply_a_raw": "白泽单",
+      "reply_b_raw": "青鸟单",
+      "a_correct": false,
+      "b_correct": false,
+      "retrieved_count": 5,
+      "retrieved_labels": [
+        "白泽单",
+        "白泽单",
+        "白泽单",
+        "白泽单",
+        "白泽单"
+      ],
+      "retrieved_same_class": 0
+    },
+    {
+      "gold": "朱雀单",
+      "text": "想把间距从八改成十二，视觉验收不过",
+      "pred_a": "朱雀单",
+      "pred_b": "青鸟单",
+      "reply_a_raw": "朱雀单",
+      "reply_b_raw": "青鸟单",
+      "a_correct": true,
+      "b_correct": false,
+      "retrieved_count": 5,
+      "retrieved_labels": [
+        "朱雀单",
+        "玄豹单",
+        "青鸟单",
+        "白泽单",
+        "玄豹单"
+      ],
+      "retrieved_same_class": 1
+    },
+    {
+      "gold": "朱雀单",
+      "text": "小程序里这张卡片的阴影渲染异常",
+      "pred_a": "朱雀单",
+      "pred_b": "青鸟单",
+      "reply_a_raw": "朱雀单",
+      "reply_b_raw": "青鸟单",
+      "a_correct": true,
+      "b_correct": false,
+      "retrieved_count": 5,
+      "retrieved_labels": [
+        "白泽单",
+        "朱雀单",
+        "青鸟单",
+        "玄豹单",
+        "朱雀单"
+      ],
+      "retrieved_same_class": 2
+    },
+    {
+      "gold": "朱雀单",
+      "text": "深色主题下文字对比度不够，看不清",
+      "pred_a": "朱雀单",
+      "pred_b": "玄豹单",
+      "reply_a_raw": "朱雀单",
+      "reply_b_raw": "玄豹单",
+      "a_correct": true,
+      "b_correct": false,
+      "retrieved_count": 5,
+      "retrieved_labels": [
+        "朱雀单",
+        "朱雀单",
+        "白泽单",
+        "朱雀单",
+        "玄豹单"
+      ],
+      "retrieved_same_class": 3
+    },
+    {
+      "gold": "白泽单",
+      "text": "离职交接清单需要哪些人签字",
+      "pred_a": "白泽单",
+      "pred_b": "青鸟单",
+      "reply_a_raw": "白泽单",
+      "reply_b_raw": "青鸟单",
+      "a_correct": true,
+      "b_correct": false,
+      "retrieved_count": 5,
+      "retrieved_labels": [
+        "朱雀单",
+        "白泽单",
+        "朱雀单",
+        "白泽单",
+        "玄豹单"
+      ],
+      "retrieved_same_class": 2
+    },
+    {
+      "gold": "白泽单",
+      "text": "这个采购申请单流转卡了三天了",
+      "pred_a": "玄豹单",
+      "pred_b": "青鸟单",
+      "reply_a_raw": "玄豹单",
+      "reply_b_raw": "青鸟单",
+      "a_correct": false,
+      "b_correct": false,
+      "retrieved_count": 5,
+      "retrieved_labels": [
+        "玄豹单",
+        "青鸟单",
+        "青鸟单",
+        "朱雀单",
+        "青鸟单"
+      ],
+      "retrieved_same_class": 0
+    },
+    {
+      "gold": "白泽单",
+      "text": "想把这次故障复盘沉淀成一篇文档",
+      "pred_a": "白泽单",
+      "pred_b": "青鸟单",
+      "reply_a_raw": "白泽单",
+      "reply_b_raw": "青鸟单",
+      "a_correct": true,
+      "b_correct": false,
+      "retrieved_count": 5,
+      "retrieved_labels": [
+        "朱雀单",
+        "白泽单",
+        "白泽单",
+        "白泽单",
+        "白泽单"
+      ],
+      "retrieved_same_class": 4
+    },
+    {
+      "gold": "白泽单",
+      "text": "合同续签要走什么审批链路",
+      "pred_a": "白泽单",
+      "pred_b": "青鸟单",
+      "reply_a_raw": "白泽单",
+      "reply_b_raw": "青鸟单",
+      "a_correct": true,
+      "b_correct": false,
+      "retrieved_count": 5,
+      "retrieved_labels": [
+        "白泽单",
+        "白泽单",
+        "朱雀单",
+        "朱雀单",
+        "朱雀单"
+      ],
+      "retrieved_same_class": 2
+    },
+    {
+      "gold": "白泽单",
+      "text": "新版发布流程的说明在哪能找到",
+      "pred_a": "白泽单",
+      "pred_b": "青鸟单",
+      "reply_a_raw": "白泽单",
+      "reply_b_raw": "青鸟单",
+      "a_correct": true,
+      "b_correct": false,
+      "retrieved_count": 5,
+      "retrieved_labels": [
+        "朱雀单",
+        "白泽单",
+        "玄豹单",
+        "玄豹单",
+        "白泽单"
+      ],
+      "retrieved_same_class": 2
+    },
+    {
+      "gold": "玄豹单",
+      "text": "B2 机房的门禁读卡器坏了",
+      "pred_a": "玄豹单",
+      "pred_b": "青鸟单",
+      "reply_a_raw": "玄豹单",
+      "reply_b_raw": "青鸟单",
+      "a_correct": true,
+      "b_correct": false,
+      "retrieved_count": 5,
+      "retrieved_labels": [
+        "玄豹单",
+        "玄豹单",
+        "白泽单",
+        "朱雀单",
+        "朱雀单"
+      ],
+      "retrieved_same_class": 2
+    },
+    {
+      "gold": "玄豹单",
+      "text": "想再买两台绘图仪放实验室",
+      "pred_a": "玄豹单",
+      "pred_b": "青鸟单",
+      "reply_a_raw": "玄豹单",
+      "reply_b_raw": "青鸟单",
+      "a_correct": true,
+      "b_correct": false,
+      "retrieved_count": 5,
+      "retrieved_labels": [
+        "朱雀单",
+        "朱雀单",
+        "玄豹单",
+        "玄豹单",
+        "朱雀单"
+      ],
+      "retrieved_same_class": 2
+    },
+    {
+      "gold": "玄豹单",
+      "text": "到货的内存条和主板不兼容",
+      "pred_a": "玄豹单",
+      "pred_b": "青鸟单",
+      "reply_a_raw": "玄豹单",
+      "reply_b_raw": "青鸟单",
+      "a_correct": true,
+      "b_correct": false,
+      "retrieved_count": 5,
+      "retrieved_labels": [
+        "朱雀单",
+        "朱雀单",
+        "朱雀单",
+        "玄豹单",
+        "朱雀单"
+      ],
+      "retrieved_same_class": 1
+    },
+    {
+      "gold": "玄豹单",
+      "text": "链路聚合口偶尔丢包",
+      "pred_a": "玄豹单",
+      "pred_b": "青鸟单",
+      "reply_a_raw": "玄豹单",
+      "reply_b_raw": "青鸟单",
+      "a_correct": true,
+      "b_correct": false,
+      "retrieved_count": 5,
+      "retrieved_labels": [
+        "白泽单",
+        "玄豹单",
+        "青鸟单",
+        "白泽单",
+        "朱雀单"
+      ],
+      "retrieved_same_class": 1
+    },
+    {
+      "gold": "玄豹单",
+      "text": "弱电井里的光纤被老鼠咬断了",
+      "pred_a": "玄豹单",
+      "pred_b": "玄豹单",
+      "reply_a_raw": "玄豹单",
+      "reply_b_raw": "玄豹单",
+      "a_correct": true,
+      "b_correct": true,
+      "retrieved_count": 5,
+      "retrieved_labels": [
+        "青鸟单",
+        "白泽单",
+        "玄豹单",
+        "青鸟单",
+        "青鸟单"
+      ],
+      "retrieved_same_class": 1
+    }
+  ],
+  "conclusion": "记忆增强路径准确率 75% 高于直接问 LLM 的 25%（提升 50%）。说明记忆检索提供了有效的上下文信号，TTL 能力部分来自记忆而非模型参数，但增益仅限检索式 few-shot，非参数化学习。"
+}

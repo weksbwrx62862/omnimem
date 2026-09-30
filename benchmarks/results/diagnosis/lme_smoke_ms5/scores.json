@@ -1,0 +1,41 @@
+{
+  "mode": "full",
+  "total_questions": 1,
+  "config": {
+    "max_sessions": 5,
+    "user_only": false
+  },
+  "qa_accuracy": {
+    "overall": 0.0,
+    "by_type": {
+      "knowledge-update": {
+        "accuracy": 0.0,
+        "correct": 0,
+        "total": 1
+      }
+    },
+    "task_averaged": 0.0
+  },
+  "retrieval_quality": {
+    "overall_session_hit_rate": 0.0,
+    "overall_turn_hit_rate": 0.0,
+    "overall_avg_coverage": 0.0,
+    "by_type": {
+      "knowledge-update": {
+        "session_hit_rate": 0.0,
+        "turn_hit_rate": 0.0,
+        "avg_coverage": 0.0,
+        "session_hits": 0,
+        "turn_hits": 0,
+        "total_evaluable": 1
+      }
+    }
+  },
+  "performance": {
+    "avg_ingest_time_s": 76.11,
+    "avg_retrieval_time_s": 30.04,
+    "avg_ingest_count": 196.0,
+    "total_ingest_time_s": 76.11,
+    "total_retrieval_time_s": 30.04
+  }
+}

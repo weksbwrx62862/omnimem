@@ -92,18 +92,26 @@ mypy_*.txt
 ANALYSIS_REPORT*.md
 
 # Temporary fix scripts
-# ★ 修复：原 _*.py 误伤 __init__.py（包入口从未入库），改为单下划线前缀
-# ★ 修复2：再排除真实源文件 _config.py / _compat.py（误伤致 clone 后 import 崩溃）
-# ★ 修复3：再排除 importers/_base.py —— 同一误伤第三次发生（importers/__init__.py
-#   在模块级 `from . import _base`，漏掉它 clone 后必然 ImportError）。
-#   根因是下面这条规则**未锚定到仓库根**，会匹配任意子包里的 _<name>.py；
-#   今后新增此类源文件都必须同样补一行 !path/to/_name.py（或把规则改成 /_[!_]*.py）。
-_[!_]*.py
-!config/_config.py
-!handlers/_compat.py
-!importers/_base.py
+# ★ 锚定到仓库根。原规则 `_[!_]*.py` 未锚定，会匹配任意子包里的 _<name>.py，
+#   已三次造成 clone 后 ImportError（_config.py / _compat.py / importers/_base.py
+#   各需补一行 !）。这里要挡的只是仓库根的临时脚本——插件加载器会把根目录
+#   每个 .py 都 exec 一遍（apps/hermes-v021/plugins/plugin_loader.py 的
+#   plugin_dir.glob("*.py")），根目录留临时脚本等于每次加载都跑它们。
+/_[!_]*.py
 fix_*.py
 nul
+
+# 手工备份副本（非源文件，勿入库）
+*.bak-*
+*.bak.*
+
+# 大体积可再生 eval 输入（单文件 >30 MB）
+benchmarks/results/diagnosis/lme_eval_input_*.json
+benchmarks/results/diagnosis/lme_sample_*.json
+
+# 调试残渣与工具缓存
+benchmarks/diagnosis/_debug_sf.py
+.codegraph/
 
 # Claude Code local config
 .claude/

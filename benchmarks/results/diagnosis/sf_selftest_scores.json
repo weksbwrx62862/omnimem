@@ -1,0 +1,62 @@
+{
+  "meta": {
+    "timestamp": "2026-09-08 23:01:10",
+    "elapsed_s": 32.3,
+    "argv": "cases=all limit=0 top_k=10 keep_storage=False",
+    "judge": "检索层 SubEM（阅读层出口：新事实+桥接出现且旧事实不出现/靠后）",
+    "industry_reference": "MemoryAgentBench: 所有方法 SF multi-hop 最高 28%"
+  },
+  "single_hop": {
+    "total": 25,
+    "strict_pass": 0,
+    "subem": 0.0,
+    "answer_substring_hit": 0.32,
+    "failure_modes": {
+      "refine_killed": 17,
+      "bridge_not_retrieved": 8
+    }
+  },
+  "multi_hop": {
+    "total": 25,
+    "strict_pass": 4,
+    "subem": 0.16,
+    "answer_substring_hit": 0.76,
+    "failure_modes": {
+      "refine_killed": 20,
+      "pass": 4,
+      "bridge_not_retrieved": 1
+    }
+  },
+  "multi_hop_2hop": {
+    "total": 20,
+    "strict_pass": 4,
+    "subem": 0.2,
+    "answer_substring_hit": 0.8,
+    "failure_modes": {
+      "refine_killed": 15,
+      "pass": 4,
+      "bridge_not_retrieved": 1
+    }
+  },
+  "multi_hop_3hop": {
+    "total": 5,
+    "strict_pass": 0,
+    "subem": 0.0,
+    "answer_substring_hit": 0.6,
+    "failure_modes": {
+      "refine_killed": 5
+    }
+  },
+  "conflict_arbitration": {
+    "new_fact_write_dedup_killed": 0,
+    "conflict_triggered": 39,
+    "conflict_not_triggered": 11,
+    "conflict_types": {
+      "semantic_contradiction": 39
+    }
+  },
+  "retrieval_layers": {
+    "fusion_new_fact_hit": 50,
+    "refine_dedup_killed": 37
+  }
+}

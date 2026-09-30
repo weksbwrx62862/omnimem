@@ -93,6 +93,10 @@
 >
 > `core/test_engram_bridge.py` 名字带 `test_` 前缀却放在 `core/` 下，被扫描器当成
 > 运行时模块 —— 位置本身可疑，见 §4。
+> **（2026-09-30 已处理：移为 `tests/test_engram_bridge_server.py`；它原先用裸名
+> `from engram_bridge import …` / `from plur_client import …`，只有待在 `core/` 里才成立，
+> 移动后立即 `ModuleNotFoundError`，已改为 `omnimem.core.*` 并去掉 `sys.path.insert` hack。
+> `tests/` 下原有的同名文件内容不同，故改名保留两者，16 条测试现纳入收集。）**
 >
 > 复现两列的命令：
 > ```bash
@@ -294,7 +298,9 @@ requirements-dev.txt` 的干净环境，`packaging`/`cryptography` 均来自 pip
 1. 用 bash 而非 `PYTHONPATH` 表达修复，核心是内联 python 启动器里的
    `sys.path.append("/usr/lib/python3/dist-packages")` —— 必须**排在末尾**才有效。
 2. 默认目标写死为 `tests/`，不能省略：`pyproject.toml` 的 `testpaths = ["tests", "."]`
-   会让裸跑扫到 `core/test_engram_bridge.py` 等非 `tests/` 测试。
+   会让裸跑扫到非 `tests/` 的测试（原例 `core/test_engram_bridge.py` 已于 2026-09-30 移入
+   `tests/`；仍会扫到 `scripts/mock_conflict_test.py`、`examples/` 与
+   `benchmarks/STATE-Bench/tests/*.py`）。
 3. 离线环境变量（`HF_HUB_OFFLINE` / `TRANSFORMERS_OFFLINE` / 三个 telemetry 开关）
    在脚本内 `export`，避免测试触发联网。
 
@@ -475,7 +481,7 @@ requirements-dev.txt` 的干净环境，`packaging`/`cryptography` 均来自 pip
 | 34 | `deep/kg/backends/factory.py` | **仅已提交口径**，且 refs 由工作树的 1 变 **0** —— 唯一引用方是未提交 WIP。`37c5f59` 入库 |
 | 20 | `handlers/_compat.py` | 私有兼容 shim；`.gitignore` 修复2 的受害者，已入库 |
 | 11 | `deep/knowledge_graph.py` | 极小，疑似仅 re-export |
-| ~~318~~ | `core/test_engram_bridge.py` | **仅工作树口径**（未跟踪，clone 里没有）。放在 `core/` 下的旧测试脚本，**不是运行时模块**，建议移出或删除 |
+| ~~318~~ | `core/test_engram_bridge.py` | **仅工作树口径**（未跟踪，clone 里没有）。放在 `core/` 下的旧测试脚本，**不是运行时模块**，建议移出或删除 → **2026-09-30 已移出为 `tests/test_engram_bridge_server.py` 并入库** |
 
 > 已提交状态 19 个 = 工作树 18 个 − `core/test_engram_bridge.py`（未跟踪）
 > \+ `retrieval/planner.py` + `deep/kg/backends/factory.py`。
@@ -500,8 +506,8 @@ requirements-dev.txt` 的干净环境，`packaging`/`cryptography` 均来自 pip
 | 脚本工具 | `scripts/mock_conflict_test.py`、`scripts/omni_dashboard.py`、`scripts/check_dependency_sync.py`、`scripts/omni_import.py`、`doctor.py` |
 | ↳ **例外** | `scripts/scan_test_coverage.py` 虽在 `scripts/` 下，但它是**本文全部数字的可复现来源**，属分析工具而非产品脚本，**建议提交**（见 §3.1） |
 | 示例 | `examples/**`（5 个文件，约 1400 行） |
-| 一次性验证脚本 | 仓库根 20 个：`_verify_m4/m6/m8`、`_verify_phase1/2/3`、`_verify_pool`、`_patch1/2a/2b/3/4`、`_repro2`、`_repro_eval`、`_list_api`、`_t_gate`、`_t_re`、`async_sdk.py`、`doctor.py`、`langchain_memory.py` |
-| 遗留 | `core/test_engram_bridge.py`(318) — 放在 core/ 下的旧测试脚本 |
+| 一次性验证脚本 | 仓库根 20 个：`_verify_m4/m6/m8`、`_verify_phase1/2/3`、`_verify_pool`、`_patch1/2a/2b/3/4`、`_repro2`、`_repro_eval`、`_list_api`、`_t_gate`、`_t_re`、`async_sdk.py`、`doctor.py`、`langchain_memory.py` **（2026-09-30：18 个根级 `_<name>.py` 已出库至 `~/.hermes/_scratch_archive/omnimem-root-20260930/`。原因是 `apps/hermes-v021/plugins/plugin_loader.py` 的 `plugin_dir.glob("*.py")` 会把插件根每个 .py 当兄弟子模块 exec —— `_patch2b/3/4` 抛的 `SystemExit` 不被框架的 `except Exception` 捕获，`_patch1/2a` 会非幂等回写源文件。仓库根现仅剩 10 个真实模块。）** |
+| 遗留 | `core/test_engram_bridge.py`(318) — 放在 core/ 下的旧测试脚本 → **2026-09-30 已移入 `tests/`** |
 | 空壳 | 各 `__init__.py` 聚合导出（`facades`/`associative`/`handlers`/`services`/`context`/`deep`/`perception`/`compat`/`compression`/`internalize`） |
 
 ---
@@ -659,15 +665,24 @@ fresh clone @ HEAD=09b4adf，ext4，TMPDIR 也在 ext4
       `git add tests/test_{fusion_mixin,forgetting_stages,hybrid_orchestrator,query_planner,privacy_audit,dashboard,multimodal_ingest,recall_agentic_wiring}.py`
       即可原样收回（外加未跟踪的 `scripts/omni_dashboard.py`，`test_dashboard.py` 依赖它）。
       收回后须**重跑一次 fresh clone 复验**，别只看工作树。
-- [ ] **`.gitignore` 的 `_[!_]*.py` 应锚定为 `/_[!_]*.py`**（根治，替代不断追加 `!` 例外）。
+- [x] **`.gitignore` 的 `_[!_]*.py` 应锚定为 `/_[!_]*.py`**（根治，替代不断追加 `!` 例外）。
       本轮只是第三次打补丁。**已实测锚定是安全的**：当前被该规则命中的文件共 18 个 ——
       17 个仓库根一次性脚本（`_verify_*`/`_patch*`/`_repro*`/`_t_*`/`_list_api`，锚定后
       **仍然被忽略**，因为 `/` 前缀照样匹配根级）+ 唯一 1 个子包文件
       `benchmarks/diagnosis/_debug_sf.py`（属 §2 范围外的 `benchmarks/**`）。
       即锚定后没有任何在用的源文件会意外变成可跟踪。改动一行即可，但涉及 `.gitignore`
       这个已经出过三次事故的规则，故留待用户确认后再动。
-- [ ] `core/test_engram_bridge.py`（318 行，未跟踪）：名为 `test_*` 却在 `core/` 下，
+      **已处理（2026-09-30）**：规则改为 `/_[!_]*.py`，并删除
+      `!config/_config.py` / `!handlers/_compat.py` / `!importers/_base.py` 三条例外补丁
+      （三者已实测 `ignored=no`、`tracked=yes`）。`_debug_sf.py` 另加显式忽略行，锚定后
+      仍保持忽略。同轮把 18 个根级 `_<name>.py` 实体出库至 `~/.hermes/_scratch_archive/`。
+- [x] `core/test_engram_bridge.py`（318 行，未跟踪）：名为 `test_*` 却在 `core/` 下，
       被覆盖率扫描当成运行时模块。要么移进 `tests/`，要么改名，要么删 —— 需用户定夺。
+      **已处理（2026-09-30）**：移入 `tests/`；因 `tests/test_engram_bridge.py` 已存在且内容
+      因 `tests/test_engram_bridge.py` 已存在且内容不同（原有 29 条函数式 vs 移入的 16 条
+      class 式），改名保留两者为
+      `tests/test_engram_bridge_server.py`。移动立刻暴露它用裸名
+      `from engram_bridge import …` / `from plur_client import …`，已改 `omnimem.core.*`。
 
 ### 3.2 既有 WIP（**不要动**，非本轮产生）
 - 63 个 modified 文件，涉及 `api_fastapi.py`、`mcp_server.py`、`config/_config.py`、
@@ -688,9 +703,10 @@ fresh clone @ HEAD=09b4adf，ext4，TMPDIR 也在 ext4
 
 ## 4. 其他挂起事项
 
-- [ ] **`core/test_engram_bridge.py`（318 行，未跟踪）位置可疑** —— 名为 `test_*` 却在
+- [x] **`core/test_engram_bridge.py`（318 行，未跟踪）位置可疑** —— 名为 `test_*` 却在
       `core/` 下，导致覆盖率扫描把它算作运行时模块（§0 两状态差的那 1 个模块就是它）。
       三选一：移进 `tests/`、改名去掉 `test_` 前缀、或删除。需用户定夺；本轮未动。
+      **已处理（2026-09-30）**：取"移进 `tests/` + 改名"方案，详见 §3.1 同条目。
 - [ ] **"提交后必须做 fresh clone 复验"应写进 `AGENTS.md`/`CLAUDE.md`** —— 本轮的教训
       （§3.1）是：在工作树里跑绿**不能**证明已提交内容是绿的。这条纪律目前只记在本文，
       下次仍会被忘掉。建议固化为一句话规则：*提交测试后，clone 到 ext4 再跑一遍。*

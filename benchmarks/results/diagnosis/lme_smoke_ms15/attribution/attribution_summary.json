@@ -1,0 +1,12 @@
+{
+  "knowledge-update": {
+    "total": 1,
+    "correct": 1,
+    "wrong": 0,
+    "accuracy": 1.0,
+    "wrong_distribution": {},
+    "retrieval_sub": {},
+    "dominant_loss": [],
+    "note": ""
+  }
+}

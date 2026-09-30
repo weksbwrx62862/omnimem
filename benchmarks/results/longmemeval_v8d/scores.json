@@ -1,0 +1,76 @@
+{
+  "mode": "full",
+  "total_questions": 6,
+  "config": {
+    "max_sessions": 5,
+    "user_only": false
+  },
+  "qa_accuracy": {
+    "overall": 0.0,
+    "by_type": {
+      "single-session-user": {
+        "accuracy": 0.0,
+        "correct": 0,
+        "total": 0
+      },
+      "multi-session": {
+        "accuracy": 0.0,
+        "correct": 0,
+        "total": 0
+      },
+      "single-session-preference": {
+        "accuracy": 0.0,
+        "correct": 0,
+        "total": 0
+      },
+      "temporal-reasoning": {
+        "accuracy": 0.0,
+        "correct": 0,
+        "total": 0
+      },
+      "knowledge-update": {
+        "accuracy": 0.0,
+        "correct": 0,
+        "total": 0
+      },
+      "single-session-assistant": {
+        "accuracy": 0.0,
+        "correct": 0,
+        "total": 0
+      }
+    },
+    "task_averaged": 0.0
+  },
+  "retrieval_quality": {
+    "overall_session_hit_rate": 0.0,
+    "overall_turn_hit_rate": 0.0,
+    "overall_avg_coverage": 0.0,
+    "by_type": {
+      "single-session-user": {
+        "note": "no_evaluable_items"
+      },
+      "multi-session": {
+        "note": "no_evaluable_items"
+      },
+      "single-session-preference": {
+        "note": "no_evaluable_items"
+      },
+      "temporal-reasoning": {
+        "note": "no_evaluable_items"
+      },
+      "knowledge-update": {
+        "note": "no_evaluable_items"
+      },
+      "single-session-assistant": {
+        "note": "no_evaluable_items"
+      }
+    }
+  },
+  "performance": {
+    "avg_ingest_time_s": 0,
+    "avg_retrieval_time_s": 0,
+    "avg_ingest_count": 0.0,
+    "total_ingest_time_s": 0,
+    "total_retrieval_time_s": 0
+  }
+}
