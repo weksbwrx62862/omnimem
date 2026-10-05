@@ -11,34 +11,36 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 from omnimem.core.tool_router import (
     ToolRouter,
-    handle_compact,
-    handle_detail,
+    apply_sync_change,
     build_system_prompt,
     get_config_schema,
-    save_config,
-    apply_sync_change,
-    retry_index_add,
-    retry_retriever_add,
-    retry_kg_extract,
+    handle_compact,
+    handle_detail,
     l3_recall,
+    retry_index_add,
+    retry_kg_extract,
+    retry_retriever_add,
     run_prefetch,
     run_queue_prefetch,
+    save_config,
 )
-
 
 # ──────────────────────────────────────────────
 # ToolRouter 路由分发
 # ──────────────────────────────────────────────
 
+
 class TestToolRouter(unittest.TestCase):
     """ToolRouter 路由分发测试。"""
 
     def setUp(self) -> None:
-        self.memorize_fn = MagicMock(return_value=json.dumps({"status": "stored", "memory_id": "m1"}))
+        self.memorize_fn = MagicMock(
+            return_value=json.dumps({"status": "stored", "memory_id": "m1"})
+        )
         self.recall_fn = MagicMock(return_value=json.dumps({"status": "found", "count": 3}))
         self.govern_fn = MagicMock(return_value=json.dumps({"status": "ok"}))
         self.reflect_fn = MagicMock(return_value=json.dumps({"status": "reflected"}))
@@ -113,8 +115,8 @@ class TestToolRouter(unittest.TestCase):
 # handle_compact
 # ──────────────────────────────────────────────
 
-class TestHandleCompact(unittest.TestCase):
 
+class TestHandleCompact(unittest.TestCase):
     def test_default_budget(self) -> None:
         result = json.loads(handle_compact({}))
         self.assertEqual(result["status"], "ready")
@@ -133,8 +135,8 @@ class TestHandleCompact(unittest.TestCase):
 # handle_detail
 # ──────────────────────────────────────────────
 
-class TestHandleDetail(unittest.TestCase):
 
+class TestHandleDetail(unittest.TestCase):
     def setUp(self) -> None:
         self.ctx_mgr = MagicMock()
         self.store = MagicMock()
@@ -143,10 +145,17 @@ class TestHandleDetail(unittest.TestCase):
 
     def test_list_empty(self) -> None:
         self.ctx_mgr.get_injected_items.return_value = []
-        result = json.loads(handle_detail(
-            {"action": "list"}, self.ctx_mgr, self.store,
-            self.forgetting, self.feedback, turn_count=5, last_query=""
-        ))
+        result = json.loads(
+            handle_detail(
+                {"action": "list"},
+                self.ctx_mgr,
+                self.store,
+                self.forgetting,
+                self.feedback,
+                turn_count=5,
+                last_query="",
+            )
+        )
         self.assertEqual(result["status"], "empty")
 
     def test_list_with_items(self) -> None:
@@ -154,10 +163,17 @@ class TestHandleDetail(unittest.TestCase):
             {"memory_id": "m1", "content": "test"},
         ]
         self.store.get.return_value = {"memory_id": "m1"}
-        result = json.loads(handle_detail(
-            {"action": "list"}, self.ctx_mgr, self.store,
-            self.forgetting, self.feedback, turn_count=5, last_query=""
-        ))
+        result = json.loads(
+            handle_detail(
+                {"action": "list"},
+                self.ctx_mgr,
+                self.store,
+                self.forgetting,
+                self.feedback,
+                turn_count=5,
+                last_query="",
+            )
+        )
         self.assertEqual(result["status"], "ok")
         self.assertEqual(result["count"], 1)
 
@@ -168,84 +184,157 @@ class TestHandleDetail(unittest.TestCase):
             {"memory_id": "m2", "content": "orphan"},
         ]
         self.store.get.side_effect = lambda mid: {"memory_id": mid} if mid == "m1" else None
-        result = json.loads(handle_detail(
-            {"action": "list"}, self.ctx_mgr, self.store,
-            self.forgetting, self.feedback, turn_count=5, last_query=""
-        ))
+        result = json.loads(
+            handle_detail(
+                {"action": "list"},
+                self.ctx_mgr,
+                self.store,
+                self.forgetting,
+                self.feedback,
+                turn_count=5,
+                last_query="",
+            )
+        )
         self.assertEqual(result["count"], 1)
 
     def test_get_missing_id(self) -> None:
-        result = json.loads(handle_detail(
-            {"action": "get"}, self.ctx_mgr, self.store,
-            self.forgetting, self.feedback, turn_count=5, last_query=""
-        ))
+        result = json.loads(
+            handle_detail(
+                {"action": "get"},
+                self.ctx_mgr,
+                self.store,
+                self.forgetting,
+                self.feedback,
+                turn_count=5,
+                last_query="",
+            )
+        )
         self.assertEqual(result["status"], "error")
         self.assertIn("memory_id", result["message"])
 
     def test_get_found_with_archived(self) -> None:
         self.ctx_mgr.get_detail_for.return_value = {"status": "found", "memory_id": "m1"}
         self.forgetting.get_stage.return_value = "archived"
-        result = json.loads(handle_detail(
-            {"action": "get", "memory_id": "m1"}, self.ctx_mgr, self.store,
-            self.forgetting, self.feedback, turn_count=5, last_query="q"
-        ))
+        result = json.loads(
+            handle_detail(
+                {"action": "get", "memory_id": "m1"},
+                self.ctx_mgr,
+                self.store,
+                self.forgetting,
+                self.feedback,
+                turn_count=5,
+                last_query="q",
+            )
+        )
         self.assertTrue(result.get("archived"))
         self.feedback.record_click.assert_called_once()
 
     def test_get_found_active(self) -> None:
         self.ctx_mgr.get_detail_for.return_value = {"status": "found", "memory_id": "m2"}
         self.forgetting.get_stage.return_value = "active"
-        result = json.loads(handle_detail(
-            {"action": "get", "memory_id": "m2"}, self.ctx_mgr, self.store,
-            self.forgetting, self.feedback, turn_count=5, last_query=""
-        ))
+        result = json.loads(
+            handle_detail(
+                {"action": "get", "memory_id": "m2"},
+                self.ctx_mgr,
+                self.store,
+                self.forgetting,
+                self.feedback,
+                turn_count=5,
+                last_query="",
+            )
+        )
         self.assertFalse(result.get("archived"))
 
     def test_events_empty(self) -> None:
         self.store.search.return_value = []
-        result = json.loads(handle_detail(
-            {"action": "events", "from_turn": 0, "to_turn": 10},
-            self.ctx_mgr, self.store, self.forgetting, self.feedback,
-            turn_count=10, last_query=""
-        ))
+        result = json.loads(
+            handle_detail(
+                {"action": "events", "from_turn": 0, "to_turn": 10},
+                self.ctx_mgr,
+                self.store,
+                self.forgetting,
+                self.feedback,
+                turn_count=10,
+                last_query="",
+            )
+        )
         self.assertEqual(result["count"], 0)
 
     def test_events_with_turn_filter(self) -> None:
         self.store.search.return_value = [
-            {"memory_id": "e1", "content": "[Turn 3] something", "type": "event",
-             "stored_at": "2026-01-01T00:00:00Z"},
-            {"memory_id": "e2", "content": "[Turn 8] other", "type": "event",
-             "stored_at": "2026-01-01T00:01:00Z"},
-            {"memory_id": "e3", "content": "[Turn 12] outside", "type": "event",
-             "stored_at": "2026-01-01T00:02:00Z"},
+            {
+                "memory_id": "e1",
+                "content": "[Turn 3] something",
+                "type": "event",
+                "stored_at": "2026-01-01T00:00:00Z",
+            },
+            {
+                "memory_id": "e2",
+                "content": "[Turn 8] other",
+                "type": "event",
+                "stored_at": "2026-01-01T00:01:00Z",
+            },
+            {
+                "memory_id": "e3",
+                "content": "[Turn 12] outside",
+                "type": "event",
+                "stored_at": "2026-01-01T00:02:00Z",
+            },
         ]
-        result = json.loads(handle_detail(
-            {"action": "events", "from_turn": 0, "to_turn": 10},
-            self.ctx_mgr, self.store, self.forgetting, self.feedback,
-            turn_count=10, last_query=""
-        ))
+        result = json.loads(
+            handle_detail(
+                {"action": "events", "from_turn": 0, "to_turn": 10},
+                self.ctx_mgr,
+                self.store,
+                self.forgetting,
+                self.feedback,
+                turn_count=10,
+                last_query="",
+            )
+        )
         # Turn 12 outside range, so 2 events
         self.assertEqual(result["count"], 2)
 
     def test_events_query_filter(self) -> None:
         self.store.search.return_value = [
-            {"memory_id": "e1", "content": "[Turn 1] python test", "type": "event",
-             "stored_at": "2026-01-01T00:00:00Z"},
-            {"memory_id": "e2", "content": "[Turn 2] rust test", "type": "event",
-             "stored_at": "2026-01-01T00:01:00Z"},
+            {
+                "memory_id": "e1",
+                "content": "[Turn 1] python test",
+                "type": "event",
+                "stored_at": "2026-01-01T00:00:00Z",
+            },
+            {
+                "memory_id": "e2",
+                "content": "[Turn 2] rust test",
+                "type": "event",
+                "stored_at": "2026-01-01T00:01:00Z",
+            },
         ]
-        result = json.loads(handle_detail(
-            {"action": "events", "from_turn": 0, "to_turn": 10, "query": "python"},
-            self.ctx_mgr, self.store, self.forgetting, self.feedback,
-            turn_count=10, last_query=""
-        ))
+        result = json.loads(
+            handle_detail(
+                {"action": "events", "from_turn": 0, "to_turn": 10, "query": "python"},
+                self.ctx_mgr,
+                self.store,
+                self.forgetting,
+                self.feedback,
+                turn_count=10,
+                last_query="",
+            )
+        )
         self.assertEqual(result["count"], 1)
 
     def test_unknown_action(self) -> None:
-        result = json.loads(handle_detail(
-            {"action": "delete"}, self.ctx_mgr, self.store,
-            self.forgetting, self.feedback, turn_count=5, last_query=""
-        ))
+        result = json.loads(
+            handle_detail(
+                {"action": "delete"},
+                self.ctx_mgr,
+                self.store,
+                self.forgetting,
+                self.feedback,
+                turn_count=5,
+                last_query="",
+            )
+        )
         self.assertIn("error", result)
 
 
@@ -253,8 +342,8 @@ class TestHandleDetail(unittest.TestCase):
 # build_system_prompt
 # ──────────────────────────────────────────────
 
-class TestBuildSystemPrompt(unittest.TestCase):
 
+class TestBuildSystemPrompt(unittest.TestCase):
     def setUp(self) -> None:
         self.core_block = MagicMock()
         self.core_block.identity_block = "AI助手 v1"
@@ -268,33 +357,39 @@ class TestBuildSystemPrompt(unittest.TestCase):
     def test_cache_hit(self) -> None:
         cached = "cached prompt"
         result, tc, val = build_system_prompt(
-            data_dir="/tmp/mem", store=self.store, core_block=self.core_block,
-            context_manager=self.ctx_mgr, config=self.config, turn_count=3,
-            system_prompt_cache_turn=3, system_prompt_cache_value=cached,
-            last_query=""
+            data_dir="/tmp/mem",
+            store=self.store,
+            core_block=self.core_block,
+            context_manager=self.ctx_mgr,
+            config=self.config,
+            turn_count=3,
+            system_prompt_cache_turn=3,
+            system_prompt_cache_value=cached,
+            last_query="",
         )
         self.assertEqual(result, cached)
 
     def test_empty_store(self) -> None:
         self.store.search.return_value = []
         result, tc, val = build_system_prompt(
-            data_dir="/tmp/mem", store=self.store, core_block=self.core_block,
-            context_manager=self.ctx_mgr, config=self.config, turn_count=1,
-            system_prompt_cache_turn=0, system_prompt_cache_value="",
-            last_query=""
+            data_dir="/tmp/mem",
+            store=self.store,
+            core_block=self.core_block,
+            context_manager=self.ctx_mgr,
+            config=self.config,
+            turn_count=1,
+            system_prompt_cache_turn=0,
+            system_prompt_cache_value="",
+            last_query="",
         )
         self.assertIn("Identity", result)
         self.assertIn("AI助手 v1", result)
 
     def test_with_entries(self) -> None:
         self.store.search.side_effect = lambda memory_type, limit: {
-            "preference": [
-                {"content": "喜欢深色主题", "memory_id": "p1", "type": "preference"}
-            ],
+            "preference": [{"content": "喜欢深色主题", "memory_id": "p1", "type": "preference"}],
             "correction": [],
-            "fact": [
-                {"content": "项目使用Python", "memory_id": "f1", "type": "fact"}
-            ],
+            "fact": [{"content": "项目使用Python", "memory_id": "f1", "type": "fact"}],
         }.get(memory_type, [])
 
         self.ctx_mgr.refine_content = MagicMock(side_effect=lambda c, _: c)
@@ -302,23 +397,24 @@ class TestBuildSystemPrompt(unittest.TestCase):
         self.ctx_mgr._fingerprint_similarity = MagicMock(return_value=0.0)
 
         result, tc, val = build_system_prompt(
-            data_dir="/tmp/mem", store=self.store, core_block=self.core_block,
-            context_manager=self.ctx_mgr, config=self.config, turn_count=1,
-            system_prompt_cache_turn=0, system_prompt_cache_value="",
-            last_query=""
+            data_dir="/tmp/mem",
+            store=self.store,
+            core_block=self.core_block,
+            context_manager=self.ctx_mgr,
+            config=self.config,
+            turn_count=1,
+            system_prompt_cache_turn=0,
+            system_prompt_cache_value="",
+            last_query="",
         )
         self.assertIn("Core Memories", result)
         self.assertIn("喜欢深色主题", result)
 
     def test_fingerprint_dedup(self) -> None:
         self.store.search.side_effect = lambda memory_type, limit: {
-            "preference": [
-                {"content": "喜欢Python", "memory_id": "p1", "type": "preference"}
-            ],
+            "preference": [{"content": "喜欢Python", "memory_id": "p1", "type": "preference"}],
             "correction": [],
-            "fact": [
-                {"content": "也喜欢Python", "memory_id": "f1", "type": "fact"}
-            ],
+            "fact": [{"content": "也喜欢Python", "memory_id": "f1", "type": "fact"}],
         }.get(memory_type, [])
 
         self.ctx_mgr.refine_content = MagicMock(return_value="喜欢Python")
@@ -327,10 +423,15 @@ class TestBuildSystemPrompt(unittest.TestCase):
         self.ctx_mgr.get_injected_fingerprints.return_value = set()
 
         result, tc, val = build_system_prompt(
-            data_dir="/tmp/mem", store=self.store, core_block=self.core_block,
-            context_manager=self.ctx_mgr, config=self.config, turn_count=1,
-            system_prompt_cache_turn=0, system_prompt_cache_value="",
-            last_query=""
+            data_dir="/tmp/mem",
+            store=self.store,
+            core_block=self.core_block,
+            context_manager=self.ctx_mgr,
+            config=self.config,
+            turn_count=1,
+            system_prompt_cache_turn=0,
+            system_prompt_cache_value="",
+            last_query="",
         )
         # fact entry should be dedup'd (same fingerprint as preference)
         self.assertIn("[preference]", result)
@@ -341,8 +442,8 @@ class TestBuildSystemPrompt(unittest.TestCase):
 # get_config_schema / save_config
 # ──────────────────────────────────────────────
 
-class TestConfigSchema(unittest.TestCase):
 
+class TestConfigSchema(unittest.TestCase):
     def test_get_non_empty(self) -> None:
         schema = get_config_schema()
         self.assertIsInstance(schema, list)
@@ -368,8 +469,8 @@ class TestConfigSchema(unittest.TestCase):
 # apply_sync_change
 # ──────────────────────────────────────────────
 
-class TestApplySyncChange(unittest.TestCase):
 
+class TestApplySyncChange(unittest.TestCase):
     def setUp(self) -> None:
         self.store = MagicMock()
         self.index = MagicMock()
@@ -377,10 +478,7 @@ class TestApplySyncChange(unittest.TestCase):
         self.forgetting = MagicMock()
 
     def test_delete_operation(self) -> None:
-        change = {
-            "operation": "DELETE",
-            "data": {"memory_id": "sync-del-1"}
-        }
+        change = {"operation": "DELETE", "data": {"memory_id": "sync-del-1"}}
         result = apply_sync_change(change, self.store, self.index, self.retriever, self.forgetting)
         self.assertTrue(result)
         self.forgetting.archive.assert_called_once_with("sync-del-1")
@@ -422,7 +520,7 @@ class TestApplySyncChange(unittest.TestCase):
         self.store.add.side_effect = RuntimeError("db locked")
         change = {
             "operation": "INSERT",
-            "data": {"memory_id": "err-1", "content": "test", "type": "fact"}
+            "data": {"memory_id": "err-1", "content": "test", "type": "fact"},
         }
         result = apply_sync_change(change, self.store, self.index, self.retriever, self.forgetting)
         self.assertFalse(result)
@@ -432,8 +530,8 @@ class TestApplySyncChange(unittest.TestCase):
 # retry_index_add / retry_retriever_add / retry_kg_extract
 # ──────────────────────────────────────────────
 
-class TestRetryHelpers(unittest.TestCase):
 
+class TestRetryHelpers(unittest.TestCase):
     def setUp(self) -> None:
         self.store = MagicMock()
         self.index = MagicMock()
@@ -442,9 +540,14 @@ class TestRetryHelpers(unittest.TestCase):
 
     def test_retry_index_add_success(self) -> None:
         self.store.get.return_value = {
-            "memory_id": "r1", "wing": "personal", "room": "test",
-            "content": "hello", "type": "fact", "confidence": 3,
-            "privacy": "personal", "stored_at": "2026-01-01",
+            "memory_id": "r1",
+            "wing": "personal",
+            "room": "test",
+            "content": "hello",
+            "type": "fact",
+            "confidence": 3,
+            "privacy": "personal",
+            "stored_at": "2026-01-01",
         }
         retry_index_add("r1", self.store, self.index)
         self.index.add.assert_called_once()
@@ -456,9 +559,14 @@ class TestRetryHelpers(unittest.TestCase):
 
     def test_retry_retriever_add_success(self) -> None:
         self.store.get.return_value = {
-            "memory_id": "r1", "wing": "personal", "room": "test",
-            "content": "hello", "type": "fact", "confidence": 3,
-            "privacy": "personal", "stored_at": "2026-01-01",
+            "memory_id": "r1",
+            "wing": "personal",
+            "room": "test",
+            "content": "hello",
+            "type": "fact",
+            "confidence": 3,
+            "privacy": "personal",
+            "stored_at": "2026-01-01",
         }
         retry_retriever_add("r1", self.store, self.retriever)
         self.retriever.add.assert_called_once()
@@ -470,14 +578,18 @@ class TestRetryHelpers(unittest.TestCase):
 
     def test_retry_kg_extract_success(self) -> None:
         self.store.get.return_value = {
-            "memory_id": "r1", "content": "Python is great", "confidence": 5,
+            "memory_id": "r1",
+            "content": "Python is great",
+            "confidence": 5,
         }
         retry_kg_extract("r1", self.store, self.kg)
         self.kg.extract_and_store.assert_called_once()
 
     def test_retry_kg_extract_kg_none(self) -> None:
         self.store.get.return_value = {
-            "memory_id": "r1", "content": "test", "confidence": 3,
+            "memory_id": "r1",
+            "content": "test",
+            "confidence": 3,
         }
         # Should not raise when kg is None
         retry_kg_extract("r1", self.store, None)
@@ -492,8 +604,8 @@ class TestRetryHelpers(unittest.TestCase):
 # l3_recall
 # ──────────────────────────────────────────────
 
-class TestL3Recall(unittest.TestCase):
 
+class TestL3Recall(unittest.TestCase):
     def setUp(self) -> None:
         self.retriever = MagicMock()
         self.store = MagicMock()
@@ -506,9 +618,7 @@ class TestL3Recall(unittest.TestCase):
 
     def test_fallback_to_store(self) -> None:
         self.retriever.search.return_value = []
-        self.store.search_by_content.return_value = [
-            {"content": "测试内容匹配", "memory_id": "f1"}
-        ]
+        self.store.search_by_content.return_value = [{"content": "测试内容匹配", "memory_id": "f1"}]
         out = l3_recall("测试内容", self.retriever, self.store)
         self.assertGreaterEqual(len(out), 1)
         self.assertEqual(out[0].get("_source"), "store_fallback")
@@ -518,8 +628,8 @@ class TestL3Recall(unittest.TestCase):
 # run_prefetch
 # ──────────────────────────────────────────────
 
-class TestRunPrefetch(unittest.TestCase):
 
+class TestRunPrefetch(unittest.TestCase):
     def setUp(self) -> None:
         self.ctx_mgr = MagicMock()
         self.retriever = MagicMock()
@@ -534,10 +644,17 @@ class TestRunPrefetch(unittest.TestCase):
     def test_empty_all(self) -> None:
         self.retriever.search.return_value = []
         result, _ = run_prefetch(
-            query="test", session_id="s1", config={}, retriever=self.retriever,
-            context_manager=self.ctx_mgr, kv_cache=self.kv_cache,
-            knowledge_graph=self.kg, temporal_decay=self.temporal_decay,
-            privacy=self.privacy, prefetch_cache="", prefetch_lock=self.lock,
+            query="test",
+            session_id="s1",
+            config={},
+            retriever=self.retriever,
+            context_manager=self.ctx_mgr,
+            kv_cache=self.kv_cache,
+            knowledge_graph=self.kg,
+            temporal_decay=self.temporal_decay,
+            privacy=self.privacy,
+            prefetch_cache="",
+            prefetch_lock=self.lock,
         )
         self.assertEqual(result, "")
 
@@ -547,48 +664,73 @@ class TestRunPrefetch(unittest.TestCase):
         ]
         self.ctx_mgr.refine_prefetch_results.return_value = "refined_output"
         result, _ = run_prefetch(
-            query="test", session_id="s1", config={}, retriever=self.retriever,
-            context_manager=self.ctx_mgr, kv_cache=self.kv_cache,
-            knowledge_graph=self.kg, temporal_decay=self.temporal_decay,
-            privacy=self.privacy, prefetch_cache="", prefetch_lock=self.lock,
+            query="test",
+            session_id="s1",
+            config={},
+            retriever=self.retriever,
+            context_manager=self.ctx_mgr,
+            kv_cache=self.kv_cache,
+            knowledge_graph=self.kg,
+            temporal_decay=self.temporal_decay,
+            privacy=self.privacy,
+            prefetch_cache="",
+            prefetch_lock=self.lock,
         )
         self.assertEqual(result, "refined_output")
 
     def test_cached_prefetch(self) -> None:
-        cached_data = "___RAW_RESULTS___" + json.dumps([
-            {"content": "cached result", "memory_id": "c1"}
-        ])
+        cached_data = "___RAW_RESULTS___" + json.dumps(
+            [{"content": "cached result", "memory_id": "c1"}]
+        )
         self.ctx_mgr.refine_prefetch_results.return_value = "cached_output"
         result, _ = run_prefetch(
-            query="test", session_id="s1", config={}, retriever=self.retriever,
-            context_manager=self.ctx_mgr, kv_cache=self.kv_cache,
-            knowledge_graph=self.kg, temporal_decay=self.temporal_decay,
-            privacy=self.privacy, prefetch_cache=cached_data, prefetch_lock=self.lock,
+            query="test",
+            session_id="s1",
+            config={},
+            retriever=self.retriever,
+            context_manager=self.ctx_mgr,
+            kv_cache=self.kv_cache,
+            knowledge_graph=self.kg,
+            temporal_decay=self.temporal_decay,
+            privacy=self.privacy,
+            prefetch_cache=cached_data,
+            prefetch_lock=self.lock,
         )
         self.assertEqual(result, "cached_output")
 
     def test_cached_parse_error(self) -> None:
         self.retriever.search.return_value = []
         result, _ = run_prefetch(
-            query="test", session_id="s1", config={}, retriever=self.retriever,
-            context_manager=self.ctx_mgr, kv_cache=self.kv_cache,
-            knowledge_graph=self.kg, temporal_decay=self.temporal_decay,
-            privacy=self.privacy, prefetch_cache="___RAW_RESULTS___INVALID_JSON",
+            query="test",
+            session_id="s1",
+            config={},
+            retriever=self.retriever,
+            context_manager=self.ctx_mgr,
+            kv_cache=self.kv_cache,
+            knowledge_graph=self.kg,
+            temporal_decay=self.temporal_decay,
+            privacy=self.privacy,
+            prefetch_cache="___RAW_RESULTS___INVALID_JSON",
             prefetch_lock=self.lock,
         )
         self.assertEqual(result, "")
 
     def test_kv_cache_hits(self) -> None:
         kv = MagicMock()
-        kv.search_cache.return_value = [
-            {"content": "kv hit", "memory_id": "kv1"}
-        ]
+        kv.search_cache.return_value = [{"content": "kv hit", "memory_id": "kv1"}]
         self.ctx_mgr.refine_prefetch_results.return_value = "kv_output"
         result, _ = run_prefetch(
-            query="test", session_id="s1", config={}, retriever=self.retriever,
-            context_manager=self.ctx_mgr, kv_cache=kv,
-            knowledge_graph=self.kg, temporal_decay=self.temporal_decay,
-            privacy=self.privacy, prefetch_cache="", prefetch_lock=self.lock,
+            query="test",
+            session_id="s1",
+            config={},
+            retriever=self.retriever,
+            context_manager=self.ctx_mgr,
+            kv_cache=kv,
+            knowledge_graph=self.kg,
+            temporal_decay=self.temporal_decay,
+            privacy=self.privacy,
+            prefetch_cache="",
+            prefetch_lock=self.lock,
         )
         self.assertEqual(result, "kv_output")
         # should not call retriever when kv cache hits
@@ -599,8 +741,8 @@ class TestRunPrefetch(unittest.TestCase):
 # run_queue_prefetch
 # ──────────────────────────────────────────────
 
-class TestRunQueuePrefetch(unittest.TestCase):
 
+class TestRunQueuePrefetch(unittest.TestCase):
     def setUp(self) -> None:
         self.retriever = MagicMock()
         self.temporal_decay = MagicMock()
@@ -610,12 +752,14 @@ class TestRunQueuePrefetch(unittest.TestCase):
         self.lock = MagicMock()
 
     def test_returns_serialized(self) -> None:
-        self.retriever.search.return_value = [
-            {"content": "bg result", "memory_id": "bg1"}
-        ]
+        self.retriever.search.return_value = [{"content": "bg result", "memory_id": "bg1"}]
         result = run_queue_prefetch(
-            query="bg", session_id="s1", config={}, retriever=self.retriever,
-            temporal_decay=self.temporal_decay, privacy=self.privacy,
+            query="bg",
+            session_id="s1",
+            config={},
+            retriever=self.retriever,
+            temporal_decay=self.temporal_decay,
+            privacy=self.privacy,
             prefetch_lock=self.lock,
         )
         self.assertTrue(result.startswith("___RAW_RESULTS___"))
@@ -623,8 +767,12 @@ class TestRunQueuePrefetch(unittest.TestCase):
     def test_empty_result(self) -> None:
         self.retriever.search.return_value = []
         result = run_queue_prefetch(
-            query="bg", session_id="s1", config={}, retriever=self.retriever,
-            temporal_decay=self.temporal_decay, privacy=self.privacy,
+            query="bg",
+            session_id="s1",
+            config={},
+            retriever=self.retriever,
+            temporal_decay=self.temporal_decay,
+            privacy=self.privacy,
             prefetch_lock=self.lock,
         )
         self.assertEqual(result, "")
@@ -632,8 +780,12 @@ class TestRunQueuePrefetch(unittest.TestCase):
     def test_exception_returns_empty(self) -> None:
         self.retriever.search.side_effect = RuntimeError("boom")
         result = run_queue_prefetch(
-            query="bg", session_id="s1", config={}, retriever=self.retriever,
-            temporal_decay=self.temporal_decay, privacy=self.privacy,
+            query="bg",
+            session_id="s1",
+            config={},
+            retriever=self.retriever,
+            temporal_decay=self.temporal_decay,
+            privacy=self.privacy,
             prefetch_lock=self.lock,
         )
         self.assertEqual(result, "")

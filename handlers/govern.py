@@ -12,7 +12,6 @@ import re
 from typing import Any
 
 from omnimem.governance.conflict import ConflictResolver
-from omnimem.memory.wing_room import _PRIVACY_TO_WING
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +38,7 @@ _NEGATION_INDICATORS: tuple[str, ...] = (
 # ★ R27优化：预编译正则，避免 _scan_memory_conflicts 中每条记忆重复编译
 _CONFLICT_KEYWORD_RE = re.compile(r"[\u4e00-\u9fff]{2,4}|[a-zA-Z]{3,}")
 
+
 class ActionRegistry:
     def __init__(self):
         self._actions = {}
@@ -52,7 +52,10 @@ class ActionRegistry:
     def execute(self, name, **kwargs):
         handler = self._actions.get(name)
         if handler is None:
-            return {"error": f"Unknown governance action: {name}", "available_actions": list(self._actions.keys())}
+            return {
+                "error": f"Unknown governance action: {name}",
+                "available_actions": list(self._actions.keys()),
+            }
         return handler(**kwargs)
 
     def list_actions(self):
@@ -215,7 +218,8 @@ def _action_resolve_conflict(provider: Any, params: dict) -> str:
                 semantic_candidates = []
         all_memories = provider._store.search(limit=100)
         simple_candidates = [
-            m for m in all_memories
+            m
+            for m in all_memories
             if m.get("memory_id", "") != target
             and m.get("type", "") in ("fact", "preference", "correction")
         ]
@@ -225,9 +229,7 @@ def _action_resolve_conflict(provider: Any, params: dict) -> str:
             mid = m.get("memory_id", "")
             if mid and mid != target and mid not in seen_ids:
                 seen_ids.add(mid)
-                merged_candidates.append(
-                    {"content": m.get("content", ""), "memory_id": mid}
-                )
+                merged_candidates.append({"content": m.get("content", ""), "memory_id": mid})
 
         conflict = provider._conflict_resolver.check(
             target_content, existing_memories=merged_candidates
@@ -297,9 +299,7 @@ def _action_set_privacy(provider: Any, params: dict) -> str:
     """设置隐私级别：同步更新 index/store/wing。"""
     target = params.get("target", "")
     # ★ 从多个位置读取 level：params.level / params.privacy / args 顶层
-    level = params.get(
-        "level", params.get("privacy", "personal")
-    )
+    level = params.get("level", params.get("privacy", "personal"))
     # ★ R33修复Minor-4：先计算 new_wing，再传给所有更新操作
     existing = provider._store.get(target)
     existing_type = existing.get("type", existing.get("memory_type", "")) if existing else ""
@@ -332,9 +332,17 @@ def _action_set_privacy(provider: Any, params: dict) -> str:
     if actual_wing != new_wing:
         logger.warning(
             "govern set_privacy wing mismatch: expected=%s actual=%s for %s",
-            new_wing, actual_wing, target,
+            new_wing,
+            actual_wing,
+            target,
         )
-    provider._audit_logger.log("govern_set_privacy", memory_id=target, details={"privacy": actual_privacy, "wing": actual_wing}, result="success", instance_id=getattr(provider, "_instance_id", None))
+    provider._audit_logger.log(
+        "govern_set_privacy",
+        memory_id=target,
+        details={"privacy": actual_privacy, "wing": actual_wing},
+        result="success",
+        instance_id=getattr(provider, "_instance_id", None),
+    )
     return json.dumps(
         {
             "status": "updated",
@@ -350,17 +358,24 @@ def _action_archive(provider: Any, params: dict) -> str:
     target = params.get("target", "")
     dry_run = params.get("dry_run", False)
     if dry_run:
-        return json.dumps({
-            "status": "dry_run",
-            "action": "archive",
-            "target": target,
-            "hint": "Set dry_run=false to actually execute",
-        })
+        return json.dumps(
+            {
+                "status": "dry_run",
+                "action": "archive",
+                "target": target,
+                "hint": "Set dry_run=false to actually execute",
+            }
+        )
     # ★ 封存模式：只更新遗忘曲线阶段，不删除底层数据
     provider._forgetting.archive(target)
     # 不再删除 retriever/index/store — 数据保留，召回时降权 + 标记 sealed
     result = {"status": "sealed", "memory_id": target, "note": "数据保留，召回时降权显示"}
-    provider._audit_logger.log("govern_archive", memory_id=target, result="sealed", instance_id=getattr(provider, "_instance_id", None))
+    provider._audit_logger.log(
+        "govern_archive",
+        memory_id=target,
+        result="sealed",
+        instance_id=getattr(provider, "_instance_id", None),
+    )
     return json.dumps(result)
 
 
@@ -369,14 +384,21 @@ def _action_reactivate(provider: Any, params: dict) -> str:
     target = params.get("target", "")
     dry_run = params.get("dry_run", False)
     if dry_run:
-        return json.dumps({
-            "status": "dry_run",
-            "action": "reactivate",
-            "target": target,
-            "hint": "Set dry_run=false to actually execute",
-        })
+        return json.dumps(
+            {
+                "status": "dry_run",
+                "action": "reactivate",
+                "target": target,
+                "hint": "Set dry_run=false to actually execute",
+            }
+        )
     provider._forgetting.reactivate(target)
-    provider._audit_logger.log("govern_reactivate", memory_id=target, result="success", instance_id=getattr(provider, "_instance_id", None))
+    provider._audit_logger.log(
+        "govern_reactivate",
+        memory_id=target,
+        result="success",
+        instance_id=getattr(provider, "_instance_id", None),
+    )
     return json.dumps({"status": "reactivated", "memory_id": target})
 
 
@@ -413,12 +435,14 @@ def _action_shade_switch(provider: Any, params: dict) -> str:
     dry_run = params.get("dry_run", False)
     if dry_run:
         shade_name = params.get("shade") or target or "default"
-        return json.dumps({
-            "status": "dry_run",
-            "action": "shade_switch",
-            "target": shade_name,
-            "hint": "Set dry_run=false to actually execute",
-        })
+        return json.dumps(
+            {
+                "status": "dry_run",
+                "action": "shade_switch",
+                "target": shade_name,
+                "hint": "Set dry_run=false to actually execute",
+            }
+        )
     if not provider._lora_trainer:
         return json.dumps({"status": "error", "reason": "LoRA trainer not available"})
     try:
@@ -548,7 +572,9 @@ def _action_audit_log(provider: Any, params: dict) -> str:
             to_time=to_time,
             limit=limit,
         )
-        return json.dumps({"status": "ok", "count": len(entries), "entries": entries}, ensure_ascii=False)
+        return json.dumps(
+            {"status": "ok", "count": len(entries), "entries": entries}, ensure_ascii=False
+        )
     except Exception as e:
         return json.dumps({"error": f"Audit log query failed: {e}"})
 
@@ -602,7 +628,9 @@ def _action_check_permission(provider: Any, params: dict) -> str:
     if not permission:
         return json.dumps({"error": "permission is required"})
     allowed = provider._rbac.check_permission(user_id, permission)
-    return json.dumps({"status": "ok", "user_id": user_id, "permission": permission, "allowed": allowed})
+    return json.dumps(
+        {"status": "ok", "user_id": user_id, "permission": permission, "allowed": allowed}
+    )
 
 
 def _action_get_permissions(provider: Any, params: dict) -> str:
@@ -620,7 +648,12 @@ def _action_configure_kms(provider: Any, params: dict) -> str:
     config_kwargs = {k: v for k, v in raw_params.items() if k != "provider"}
     try:
         provider._kms.configure_provider(provider_name, **config_kwargs)
-        provider._audit_logger.log("govern_configure_kms", details={"provider": provider_name}, result="success", instance_id=getattr(provider, "_instance_id", None))
+        provider._audit_logger.log(
+            "govern_configure_kms",
+            details={"provider": provider_name},
+            result="success",
+            instance_id=getattr(provider, "_instance_id", None),
+        )
         return json.dumps({"status": "configured", "provider": provider_name})
     except ValueError as e:
         return json.dumps({"error": str(e)})
@@ -630,17 +663,24 @@ def _action_rotate_key(provider: Any, params: dict) -> str:
     """轮换密钥。"""
     key_id = params.get("key_id", "default")
     provider._kms.rotate_key(key_id)
-    provider._audit_logger.log("govern_rotate_key", details={"key_id": key_id}, result="success", instance_id=getattr(provider, "_instance_id", None))
+    provider._audit_logger.log(
+        "govern_rotate_key",
+        details={"key_id": key_id},
+        result="success",
+        instance_id=getattr(provider, "_instance_id", None),
+    )
     return json.dumps({"status": "rotated", "key_id": key_id})
 
 
 def _action_kms_status(provider: Any, params: dict) -> str:
     """查看 KMS 状态。"""
-    return json.dumps({
-        "status": "ok",
-        "provider": provider._kms.provider,
-        "config": provider._kms._config,
-    })
+    return json.dumps(
+        {
+            "status": "ok",
+            "provider": provider._kms.provider,
+            "config": provider._kms._config,
+        }
+    )
 
 
 def _action_rebuild_index(provider: Any, params: dict) -> str:
@@ -650,12 +690,14 @@ def _action_rebuild_index(provider: Any, params: dict) -> str:
         if not entries:
             return json.dumps({"status": "no_data", "reason": "No entries in index to rebuild"})
         stats = provider._retriever.rebuild_all_from_entries(entries)
-        return json.dumps({
-            "status": "rebuilt",
-            "entries_processed": len(entries),
-            "vector_rebuilt": stats.get("vector", 0),
-            "bm25_rebuilt": stats.get("bm25", 0),
-        })
+        return json.dumps(
+            {
+                "status": "rebuilt",
+                "entries_processed": len(entries),
+                "vector_rebuilt": stats.get("vector", 0),
+                "bm25_rebuilt": stats.get("bm25", 0),
+            }
+        )
     except Exception as e:
         logger.warning("OmniMem rebuild_index failed: %s", e)
         return json.dumps({"status": "error", "reason": str(e)})
@@ -682,25 +724,33 @@ def _action_purge_test_data(provider: Any, params: dict) -> str:
                         )
                 except Exception as e:
                     logger.warning("purge_test_data delete failed for %s: %s", memory_id, e)
-    return json.dumps({
-        "status": "dry_run" if dry_run else "purged",
-        "test_entries_found": len(purged),
-        "entries": purged[:20],
-        "hint": "Set dry_run=false to actually delete" if dry_run else None,
-    }, ensure_ascii=False)
+    return json.dumps(
+        {
+            "status": "dry_run" if dry_run else "purged",
+            "test_entries_found": len(purged),
+            "entries": purged[:20],
+            "hint": "Set dry_run=false to actually delete" if dry_run else None,
+        },
+        ensure_ascii=False,
+    )
 
 
 def _action_wiki_upgrade(provider: Any, params: dict) -> str:
     """获取升级候选并执行升级。"""
     candidates = provider._forgetting.get_upgrade_candidates()
     if not candidates:
-        return json.dumps({"status": "no_candidates", "message": "No memories eligible for Wiki upgrade."})
-    return json.dumps({
-        "status": "candidates",
-        "count": len(candidates),
-        "candidates": candidates[:10],
-        "hint": "Use llm-wiki skill to create Wiki pages for these memories."
-    }, ensure_ascii=False)
+        return json.dumps(
+            {"status": "no_candidates", "message": "No memories eligible for Wiki upgrade."}
+        )
+    return json.dumps(
+        {
+            "status": "candidates",
+            "count": len(candidates),
+            "candidates": candidates[:10],
+            "hint": "Use llm-wiki skill to create Wiki pages for these memories.",
+        },
+        ensure_ascii=False,
+    )
 
 
 def _action_mark_wiki(provider: Any, params: dict) -> str:
@@ -755,11 +805,13 @@ def _action_backup(provider: Any, params: dict) -> str:
         backup_path, backup_size = provider._create_backup()
         backup_max_copies = provider._config.get("backup_max_copies", 3)
         provider._cleanup_old_backups(backup_max_copies)
-        return json.dumps({
-            "status": "ok",
-            "backup_path": backup_path,
-            "backup_size_kb": round(backup_size / 1024, 1),
-        })
+        return json.dumps(
+            {
+                "status": "ok",
+                "backup_path": backup_path,
+                "backup_size_kb": round(backup_size / 1024, 1),
+            }
+        )
     except Exception as e:
         logger.warning("OmniMem 手动备份失败: %s", e)
         return json.dumps({"status": "error", "reason": str(e)})

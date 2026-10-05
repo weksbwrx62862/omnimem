@@ -22,20 +22,20 @@ print_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
 # 启动服务
 start() {
     print_info "启动共享记忆服务..."
-    
+
     # 检查是否已运行
     if [ -f "$PID_FILE" ] && kill -0 $(cat "$PID_FILE") 2>/dev/null; then
         print_warn "服务已在运行 (PID: $(cat $PID_FILE))"
         return 1
     fi
-    
+
     # 启动 Plur 服务器
     cd ~/.hermes/plugins/omnimem
     nohup python3 core/plur_server.py --host "$PLUR_HOST" --port "$PLUR_PORT" --log-level INFO > "$LOG_FILE" 2>&1 &
     echo $! > "$PID_FILE"
-    
+
     sleep 2
-    
+
     # 检查启动状态
     if kill -0 $(cat "$PID_FILE") 2>/dev/null; then
         print_info "✅ Plur 服务器已启动"
@@ -47,7 +47,7 @@ start() {
         cat "$LOG_FILE"
         return 1
     fi
-    
+
     # 测试连接
     if curl -s "http://localhost:$PLUR_PORT/health" > /dev/null 2>&1; then
         print_info "✅ 健康检查通过"
@@ -60,7 +60,7 @@ start() {
 # 停止服务
 stop() {
     print_info "停止共享记忆服务..."
-    
+
     if [ -f "$PID_FILE" ]; then
         PID=$(cat "$PID_FILE")
         if kill -0 "$PID" 2>/dev/null; then
@@ -86,12 +86,12 @@ restart() {
 # 查看状态
 status() {
     print_info "共享记忆服务状态:"
-    
+
     if [ -f "$PID_FILE" ] && kill -0 $(cat "$PID_FILE") 2>/dev/null; then
         PID=$(cat "$PID_FILE")
         print_info "✅ 运行中 (PID: $PID)"
         print_info "   地址: http://localhost:$PLUR_PORT"
-        
+
         # 获取统计信息
         echo ""
         print_info "服务器统计:"
@@ -113,7 +113,7 @@ logs() {
 # 健康检查
 health() {
     print_info "健康检查..."
-    
+
     if curl -s "http://localhost:$PLUR_PORT/health" | python3 -m json.tool; then
         print_info "✅ 健康检查通过"
     else
