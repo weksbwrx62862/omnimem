@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from typing import Any
-
 
 class OmniMemLangChainMemory:
     def __init__(self, storage_dir: str | None = None, config: dict | None = None):

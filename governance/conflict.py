@@ -227,7 +227,9 @@ class ConflictResolver:
                 return result
         return None
 
-    def _find_candidates(self, content_lower: str, memories: list[dict[str, Any]]) -> list[tuple[str, str, str, float]]:
+    def _find_candidates(
+        self, content_lower: str, memories: list[dict[str, Any]]
+    ) -> list[tuple[str, str, str, float]]:
         """从记忆列表中筛选候选记忆，计算重叠率。"""
         candidates = []
         for mem in memories:
@@ -327,9 +329,21 @@ class ConflictResolver:
         被 overlap>0.3 门控，导致低重叠矛盾对漏检。
         """
         negation_indicators = [
-            "不是", "不对", "并非", "不再", "改为", "而不是",
-            "不用", "改用", "不要", "无法", "没能",
-            "not", "no longer", "instead of", "rather than",
+            "不是",
+            "不对",
+            "并非",
+            "不再",
+            "改为",
+            "而不是",
+            "不用",
+            "改用",
+            "不要",
+            "无法",
+            "没能",
+            "not",
+            "no longer",
+            "instead of",
+            "rather than",
         ]
         for ni in negation_indicators:
             if ni in content_lower:
