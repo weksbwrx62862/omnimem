@@ -11,10 +11,8 @@ MemoryVisualizer — 记忆系统可视化模块。
 
 from __future__ import annotations
 
-import json
 import logging
-from typing import Optional, Any
-from datetime import datetime
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +20,7 @@ logger = logging.getLogger(__name__)
 class MemoryVisualizer:
     """记忆系统可视化器"""
 
-    def __init__(self, output_dir: Optional[str] = None):
+    def __init__(self, output_dir: str | None = None):
         self._output_dir = output_dir or "/tmp/omnimem_charts"
 
     def generate_heat_distribution_chart(self, heat_data: dict[str, int]) -> str:
@@ -168,19 +166,19 @@ class MemoryVisualizer:
             <h2>📊 总览</h2>
             <div class="stat-row">
                 <span class="stat-label">总记忆数</span>
-                <span class="stat-value">{stats.get('total_memories', 0)}</span>
+                <span class="stat-value">{stats.get("total_memories", 0)}</span>
             </div>
             <div class="stat-row">
                 <span class="stat-label">平均保持率</span>
-                <span class="stat-value">{fsrs_stats.get('avg_retention', 0):.1%}</span>
+                <span class="stat-value">{fsrs_stats.get("avg_retention", 0):.1%}</span>
             </div>
             <div class="stat-row">
                 <span class="stat-label">平均稳定性</span>
-                <span class="stat-value">{fsrs_stats.get('avg_stability', 0):.1f} 天</span>
+                <span class="stat-value">{fsrs_stats.get("avg_stability", 0):.1f} 天</span>
             </div>
             <div class="stat-row">
                 <span class="stat-label">升级候选</span>
-                <span class="stat-value">{stats.get('upgrade_candidates', 0)}</span>
+                <span class="stat-value">{stats.get("upgrade_candidates", 0)}</span>
             </div>
         </div>
 
@@ -203,21 +201,21 @@ class MemoryVisualizer:
             <h2>⏰ 最近活动</h2>
             <div class="stat-row">
                 <span class="stat-label">24h 内访问</span>
-                <span class="stat-value">{stats.get('recent_24h', 0)}</span>
+                <span class="stat-value">{stats.get("recent_24h", 0)}</span>
             </div>
             <div class="stat-row">
                 <span class="stat-label">7d 内访问</span>
-                <span class="stat-value">{stats.get('recent_7d', 0)}</span>
+                <span class="stat-value">{stats.get("recent_7d", 0)}</span>
             </div>
             <div class="stat-row">
                 <span class="stat-label">30d 内访问</span>
-                <span class="stat-value">{stats.get('recent_30d', 0)}</span>
+                <span class="stat-value">{stats.get("recent_30d", 0)}</span>
             </div>
         </div>
 
         <div class="card">
             <h2>🎯 阶段分布</h2>
-            {self._generate_stage_bars(stats.get('stages', {}))}
+            {self._generate_stage_bars(stats.get("stages", {}))}
         </div>
     </div>
 </body>
@@ -263,7 +261,7 @@ class MemoryVisualizer:
             </div>
             """
 
-        html += '</div></div>'
+        html += "</div></div>"
         return html
 
     def _generate_bar_chart(self, title: str, labels: list, values: list, colors: list) -> str:
@@ -280,10 +278,12 @@ class MemoryVisualizer:
             </div>
             """
 
-        html += '</div>'
+        html += "</div>"
         return html
 
-    def save_dashboard(self, stats: dict[str, Any], filename: str = "dashboard.html", output_dir: Optional[str] = None) -> str:
+    def save_dashboard(
+        self, stats: dict[str, Any], filename: str = "dashboard.html", output_dir: str | None = None
+    ) -> str:
         """保存仪表盘到文件
 
         Args:
@@ -295,13 +295,14 @@ class MemoryVisualizer:
             文件路径
         """
         import os
+
         target_dir = output_dir or self._output_dir
         os.makedirs(target_dir, exist_ok=True)
 
         filepath = os.path.join(target_dir, filename)
         html = self.generate_dashboard(stats)
 
-        with open(filepath, 'w', encoding='utf-8') as f:
+        with open(filepath, "w", encoding="utf-8") as f:
             f.write(html)
 
         logger.info("Dashboard saved to %s", filepath)
@@ -309,10 +310,10 @@ class MemoryVisualizer:
 
 
 # 全局实例
-_visualizer: Optional[MemoryVisualizer] = None
+_visualizer: MemoryVisualizer | None = None
 
 
-def get_visualizer(output_dir: Optional[str] = None) -> MemoryVisualizer:
+def get_visualizer(output_dir: str | None = None) -> MemoryVisualizer:
     """获取全局可视化器实例"""
     global _visualizer
     if _visualizer is None:
@@ -320,7 +321,7 @@ def get_visualizer(output_dir: Optional[str] = None) -> MemoryVisualizer:
     return _visualizer
 
 
-def generate_dashboard(stats: dict[str, Any], output_dir: Optional[str] = None) -> str:
+def generate_dashboard(stats: dict[str, Any], output_dir: str | None = None) -> str:
     """便捷函数：生成仪表盘"""
     visualizer = get_visualizer(output_dir)
     return visualizer.save_dashboard(stats)

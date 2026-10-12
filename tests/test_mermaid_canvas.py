@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
 import pytest
 
@@ -14,6 +13,7 @@ class TestMermaidCanvas:
     @pytest.fixture
     def canvas(self, omni_tmp_path):
         from omnimem.compression.mermaid_canvas import MermaidCanvas
+
         return MermaidCanvas(omni_tmp_path)
 
     def test_offload_and_compress(self, canvas):
@@ -47,6 +47,7 @@ class TestMermaidCanvas:
     def test_stale_refs_cleanup(self, omni_tmp_path):
         """过期 refs 文件应被清理。"""
         from omnimem.compression.mermaid_canvas import MermaidCanvas
+
         config = {"max_refs_age_days": 1}  # 1天过期
         canvas = MermaidCanvas(omni_tmp_path, config=config)
 
@@ -54,6 +55,7 @@ class TestMermaidCanvas:
         old_file = canvas._refs_dir / "old.md"
         old_file.write_text("old data")
         import os
+
         os.utime(old_file, (0, 0))  # 设置时间为 epoch
 
         # 创建一个新文件
@@ -84,6 +86,7 @@ class TestMermaidCanvas:
     def test_is_tool_log_custom_pattern(self, omni_tmp_path):
         """自定义 pattern 应生效。"""
         from omnimem.compression.mermaid_canvas import MermaidCanvas
+
         config = {"mermaid_tool_log_patterns": [r"MY_TOOL_TAG"]}
         canvas = MermaidCanvas(omni_tmp_path, config=config)
         assert canvas.is_tool_log("MY_TOOL_TAG: something") is True
@@ -101,8 +104,8 @@ class TestCompressionPipelineMermaid:
 
     def test_tool_log_goes_mermaid(self, omni_tmp_path):
         """工具日志应走 Mermaid 路径。"""
-        from omnimem.compression.pipeline import CompressionPipeline
         from omnimem.compression.mermaid_canvas import MermaidCanvas
+        from omnimem.compression.pipeline import CompressionPipeline
 
         canvas = MermaidCanvas(omni_tmp_path)
         pipeline = CompressionPipeline(
@@ -117,8 +120,8 @@ class TestCompressionPipelineMermaid:
 
     def test_normal_content_skips_mermaid(self, omni_tmp_path):
         """普通内容不应走 Mermaid 路径。"""
-        from omnimem.compression.pipeline import CompressionPipeline
         from omnimem.compression.mermaid_canvas import MermaidCanvas
+        from omnimem.compression.pipeline import CompressionPipeline
 
         canvas = MermaidCanvas(omni_tmp_path)
         pipeline = CompressionPipeline(

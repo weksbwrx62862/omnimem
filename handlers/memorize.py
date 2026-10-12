@@ -11,7 +11,7 @@ import re
 from datetime import datetime, timezone
 from typing import Any
 
-from omnimem.core.llm_memory_manager import LLMMemoryManager, MemoryAction
+from omnimem.core.llm_memory_manager import LLMMemoryManager
 from omnimem.core.saga import SagaStep
 from omnimem.memory.wing_room import _PRIVACY_TO_WING
 from omnimem.utils.security import SecurityValidator
@@ -38,7 +38,9 @@ def _enrich_retriever_content(content: str, memory_type: str, room: str = "") ->
     return content
 
 
-def handle_memorize(provider: Any, args: dict[str, Any], llm_memory_manager: LLMMemoryManager | None = None) -> str:
+def handle_memorize(
+    provider: Any, args: dict[str, Any], llm_memory_manager: LLMMemoryManager | None = None
+) -> str:
     """处理 omni_memorize 工具调用。
 
     存储流程（安全扫描→去重→存储→索引）:
@@ -71,7 +73,9 @@ def handle_memorize(provider: Any, args: dict[str, Any], llm_memory_manager: LLM
     dry_run = args.get("dry_run", False)
     user_id = args.get("user_id", "default")
     if hasattr(provider, "_rbac") and not provider._rbac.check_permission(user_id, "write"):
-        return json.dumps({"status": "blocked", "reason": f"User '{user_id}' lacks 'write' permission"})
+        return json.dumps(
+            {"status": "blocked", "reason": f"User '{user_id}' lacks 'write' permission"}
+        )
 
     # ★ 还原转义字符：LLM 传入的 content 可能含字面量 \\n \\t
     # 在 JSON 解析后这些变成 \n \t 字面量（两个字符），需要还原为实际控制字符
@@ -225,9 +229,13 @@ def handle_memorize(provider: Any, args: dict[str, Any], llm_memory_manager: LLM
                         old_provenance = {}
                 old_provenance["llm_update_reason"] = dedup_result.get("reason", "")
                 old_provenance["replaced_by_llm_decision"] = True
-                old_provenance["original_content_preview"] = (existing_entry.get("content", "") or "")[:200]
+                old_provenance["original_content_preview"] = (
+                    existing_entry.get("content", "") or ""
+                )[:200]
                 try:
-                    provider._store.update_field(existing_id, provenance=json.dumps(old_provenance, ensure_ascii=False))
+                    provider._store.update_field(
+                        existing_id, provenance=json.dumps(old_provenance, ensure_ascii=False)
+                    )
                 except Exception as e:
                     logger.warning("OmniMem: 更新 provenance 失败: %s", e)
             except Exception as e:
@@ -249,13 +257,16 @@ def handle_memorize(provider: Any, args: dict[str, Any], llm_memory_manager: LLM
     # ★ Dry-run 模式：执行去重检测和 wing 映射后返回预览，不执行写入操作
     if dry_run:
         room = provider._wing_room.resolve_room(content, wing, memory_type)
-        return json.dumps({
-            "status": "dry_run",
-            "wing": wing,
-            "room": room,
-            "dedup_result": dedup_result,
-            "content_preview": content[:200],
-        }, ensure_ascii=False)
+        return json.dumps(
+            {
+                "status": "dry_run",
+                "wing": wing,
+                "room": room,
+                "dedup_result": dedup_result,
+                "content_preview": content[:200],
+            },
+            ensure_ascii=False,
+        )
 
     # 治理：冲突检测
     # ★ 合并候选：语义搜索结果 + 同 room 的记忆（捕捉主题矛盾但语义不相似的情况）
@@ -362,11 +373,13 @@ def handle_memorize(provider: Any, args: dict[str, Any], llm_memory_manager: LLM
             ),
             SagaStep(
                 "knowledge_graph",
-                lambda: provider._knowledge_graph.extract_and_store(
-                    content, memory_id=memory_id, confidence=confidence / 5.0
-                )
-                if provider._knowledge_graph
-                else None,
+                lambda: (
+                    provider._knowledge_graph.extract_and_store(
+                        content, memory_id=memory_id, confidence=confidence / 5.0
+                    )
+                    if provider._knowledge_graph
+                    else None
+                ),
             ),
         ],
     )
@@ -386,19 +399,23 @@ def handle_memorize(provider: Any, args: dict[str, Any], llm_memory_manager: LLM
     provider._forgetting.record_access(memory_id)
 
     # ★ OPT: 记录溯源链 L0 对话 → L1 原子事实
-    if hasattr(provider, '_trace_chain') and provider._trace_chain:
+    if hasattr(provider, "_trace_chain") and provider._trace_chain:
         try:
             provider._trace_chain.record_derivation(
-                parent_node_ids=[f"conv-{provider._session_id}-turn-{getattr(provider, '_turn_count', 0)}"],
+                parent_node_ids=[
+                    f"conv-{provider._session_id}-turn-{getattr(provider, '_turn_count', 0)}"
+                ],
                 child_node_id=memory_id,
                 child_layer="L1",
-                ref_path=str(provider._data_dir / "conversations" / f"{provider._session_id}.jsonl"),
+                ref_path=str(
+                    provider._data_dir / "conversations" / f"{provider._session_id}.jsonl"
+                ),
             )
         except Exception as e:
             logger.warning("TraceChain record failed for %s: %s", memory_id, e)
 
     # ★ OPT: 通知 PipelineScheduler 有新记忆写入（L3 画像触发）
-    if hasattr(provider, '_pipeline_scheduler') and provider._pipeline_scheduler:
+    if hasattr(provider, "_pipeline_scheduler") and provider._pipeline_scheduler:
         provider._pipeline_scheduler.on_new_memory(session_key=provider._session_id)
 
     # ★ R25修复Minor-3：写入后确保向量索引就绪
@@ -423,9 +440,11 @@ def handle_memorize(provider: Any, args: dict[str, Any], llm_memory_manager: LLM
 
     # ★ 嵌入缓存持久化（确保新记忆的 embedding 写入磁盘）
     try:
-        if hasattr(provider._retriever, '_vector') and hasattr(provider._retriever._vector, '_embedding_fn'):
+        if hasattr(provider._retriever, "_vector") and hasattr(
+            provider._retriever._vector, "_embedding_fn"
+        ):
             emb_fn = provider._retriever._vector._embedding_fn
-            if emb_fn and hasattr(emb_fn, 'persist'):
+            if emb_fn and hasattr(emb_fn, "persist"):
                 emb_fn.persist()
     except Exception as e:
         logger.debug("Embedding cache persist skipped: %s", e)
