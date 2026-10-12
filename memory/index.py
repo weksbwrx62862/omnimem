@@ -34,6 +34,7 @@ def _retry_db_op(fn, *args, **kwargs):
         except sqlite3.OperationalError as e:
             if "locked" in str(e).lower() and attempt < _DB_RETRY_COUNT - 1:
                 import time
+
                 time.sleep(_DB_RETRY_DELAY * (attempt + 1))
                 continue
             raise
@@ -220,7 +221,7 @@ class ThreeLevelIndex:
         except Exception as e:
             logger.warning("L0 search failed: %s", e)
             raise
-    
+
     def search_by_directory(
         self,
         wing: str = "",
@@ -228,16 +229,16 @@ class ThreeLevelIndex:
         room: str = "",
     ) -> list[dict[str, Any]]:
         """按目录结构查询索引条目。
-        
+
         内化 OpenViking 的目录定位能力：
         通过 Wing/Hall/Room 三级目录缩小搜索空间，
         返回目录内所有条目的 memory_id 和摘要。
-        
+
         Args:
             wing: Wing 名称（personal/team/public）
             hall: Hall 名称（facts/preferences/...）
             room: Room 名称（话题）
-        
+
         Returns:
             匹配的索引条目列表
         """
@@ -270,7 +271,7 @@ class ThreeLevelIndex:
         except Exception as e:
             logger.warning("Directory search failed: %s", e)
             raise
-    
+
     def search_l1(self, wing: str = "", type: str = "", limit: int = 50) -> list[dict[str, Any]]:
         """L1 摘要索引：返回摘要记录（含 content 用于 warm_up）。"""
         assert self._conn is not None

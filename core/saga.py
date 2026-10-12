@@ -62,10 +62,13 @@ class SagaCoordinator:
       4. 指数退避 + 最大重试次数，超限后丢弃并告警
     """
 
-    def __init__(self, pending_path: Path | None = None,
-                 max_retry: int = _MAX_RETRY_COUNT,
-                 base_backoff: float = _BASE_BACKOFF_SECONDS,
-                 max_backoff: float = _MAX_BACKOFF_SECONDS):
+    def __init__(
+        self,
+        pending_path: Path | None = None,
+        max_retry: int = _MAX_RETRY_COUNT,
+        base_backoff: float = _BASE_BACKOFF_SECONDS,
+        max_backoff: float = _MAX_BACKOFF_SECONDS,
+    ):
         """初始化 Saga 协调器。
 
         Args:
@@ -190,17 +193,26 @@ class SagaCoordinator:
                 self._dead_letters.append(record)
                 logger.warning(
                     "Saga record %s step '%s' exceeded max retry (%d) — moved to dead_letter. Error: %s",
-                    memory_id, failed_step, self._max_retry, record.get("error", "unknown"),
+                    memory_id,
+                    failed_step,
+                    self._max_retry,
+                    record.get("error", "unknown"),
                 )
                 continue
 
             if backoff_enabled:
-                backoff = min(self._base_backoff * (2 ** retry_count), self._max_backoff)
+                backoff = min(self._base_backoff * (2**retry_count), self._max_backoff)
                 time.sleep(backoff)
 
             try:
                 action(memory_id)
-                logger.info("Saga %s OK: %s step '%s' (attempt %d)", label, memory_id, failed_step, retry_count + 1)
+                logger.info(
+                    "Saga %s OK: %s step '%s' (attempt %d)",
+                    label,
+                    memory_id,
+                    failed_step,
+                    retry_count + 1,
+                )
                 self._total_retries += 1
                 fixed += 1
             except Exception as e:
@@ -208,7 +220,12 @@ class SagaCoordinator:
                 record["last_error"] = str(e)
                 logger.warning(
                     "Saga %s failed: %s step '%s' (attempt %d/%d): %s",
-                    label, memory_id, failed_step, retry_count + 1, self._max_retry, e,
+                    label,
+                    memory_id,
+                    failed_step,
+                    retry_count + 1,
+                    self._max_retry,
+                    e,
                 )
                 self._total_retries += 1
                 still_pending.append(record)

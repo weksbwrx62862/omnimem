@@ -272,8 +272,11 @@ class FeedbackCollector:
             if last_click and last_click[0]:
                 try:
                     from datetime import datetime, timezone
+
                     last_dt = datetime.fromisoformat(last_click[0].replace("Z", "+00:00"))
-                    days_ago = (datetime.now(timezone.utc) - last_dt.replace(tzinfo=timezone.utc)).days
+                    days_ago = (
+                        datetime.now(timezone.utc) - last_dt.replace(tzinfo=timezone.utc)
+                    ).days
                     recency_bonus = max(0, 0.1 - days_ago * 0.01)  # 10天内有效
                     base_trust = min(base_trust + recency_bonus, 1.0)
                 except (ValueError, TypeError):

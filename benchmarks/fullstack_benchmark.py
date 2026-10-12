@@ -13,17 +13,15 @@ import time
 from pathlib import Path
 from typing import Any
 
-from omnimem.core.action_memory import ActionRecord, ActionMemoryService
+from omnimem.core.action_memory import ActionMemoryService, ActionRecord
 from omnimem.core.dedup import SemanticDedupService
 from omnimem.deep.knowledge_graph import (
     KnowledgeGraph,
-    extract_entities,
-    extract_triples,
     _classify_entity_poleo,
+    extract_entities,
 )
 from omnimem.governance.feedback import FeedbackCollector
 from omnimem.utils.security import SecurityValidator
-
 
 # ── 测试数据 ──
 
@@ -115,11 +113,23 @@ class FullStackBenchmark:
         dedup = SemanticDedupService(store, retriever)
 
         test_pairs = [
-            ("exact match here test", "exact match here test", "skip"),    # exact duplicate
-            ("OmniMem memory system testing", "OmniMem memory system validation", "skip"),  # near duplicate
-            ("Python programming guide book", "Rust programming tutorial guide", "create"),  # different
-            ("R36 regression test results", "R37 regression test results", "create"),        # numeric diff
-            ("deploy to production server", "deploy to production server", "skip"),          # exact
+            ("exact match here test", "exact match here test", "skip"),  # exact duplicate
+            (
+                "OmniMem memory system testing",
+                "OmniMem memory system validation",
+                "skip",
+            ),  # near duplicate
+            (
+                "Python programming guide book",
+                "Rust programming tutorial guide",
+                "create",
+            ),  # different
+            (
+                "R36 regression test results",
+                "R37 regression test results",
+                "create",
+            ),  # numeric diff
+            ("deploy to production server", "deploy to production server", "skip"),  # exact
         ]
 
         total = len(test_pairs)
@@ -127,8 +137,9 @@ class FullStackBenchmark:
         for a, b, expected in test_pairs:
             candidates = [{"content": b, "memory_id": f"dup-{hash(b) % 10000}"}]
             result = dedup.semantic_dedup(a, "fact", candidates=candidates)
-            if (expected == "skip" and result["action"] in ("skip", "update")) or \
-               (expected == "create" and result["action"] == "create"):
+            if (expected == "skip" and result["action"] in ("skip", "update")) or (
+                expected == "create" and result["action"] == "create"
+            ):
                 correct += 1
 
         return {
@@ -227,32 +238,64 @@ class FullStackBenchmark:
 
 # ── 轻量 Mock ──
 
+
 class MagicMockStore:
-    def add(self, **kw): return f"mem-{hash(str(kw)) % 100000:05d}"
-    def flush(self): pass
-    def get(self, mid): return {"memory_id": mid, "type": "action"}
-    def search(self, **kw): return []
+    def add(self, **kw):
+        return f"mem-{hash(str(kw)) % 100000:05d}"
+
+    def flush(self):
+        pass
+
+    def get(self, mid):
+        return {"memory_id": mid, "type": "action"}
+
+    def search(self, **kw):
+        return []
+
 
 class MagicMockIndex:
-    def add(self, **kw): pass
-    def flush(self): pass
+    def add(self, **kw):
+        pass
+
+    def flush(self):
+        pass
+
 
 class MagicMockRetriever:
-    def search(self, **kw): return []
-    def add(self, **kw): pass
+    def search(self, **kw):
+        return []
+
+    def add(self, **kw):
+        pass
+
 
 class MagicMockWingRoom:
-    def resolve_wing(self, *a, **kw): return "personal"
+    def resolve_wing(self, *a, **kw):
+        return "personal"
+
     def resolve_wing_from_privacy(self, privacy, *a, **kw):
-        return {"public": "public", "team": "team", "private": "personal", "secret": "personal"}.get(privacy, "personal")
-    def resolve_room(self, *a, **kw): return "action"
-    def resolve_hall(self, *a, **kw): return "general"
+        return {
+            "public": "public",
+            "team": "team",
+            "private": "personal",
+            "secret": "personal",
+        }.get(privacy, "personal")
+
+    def resolve_room(self, *a, **kw):
+        return "action"
+
+    def resolve_hall(self, *a, **kw):
+        return "general"
+
 
 class MagicMockProvenance:
     pass
 
+
 class MagicMockForgetting:
-    def record_access(self, mid): pass
+    def record_access(self, mid):
+        pass
+
 
 class MagicMockDedupStore:
     def search_by_content(self, text, limit=10):
