@@ -9,20 +9,22 @@ OmniMem 遗忘曲线系统测试套件
 - API 接口测试
 """
 
-import pytest
-import tempfile
 import os
+import tempfile
+from datetime import datetime, timedelta
 from pathlib import Path
-from datetime import datetime, timedelta, timezone
 
+import pytest
 
 # ── FSRS 引擎测试 ──────────────────────────────────────────────────────────
+
 
 class TestFSRSEngine:
     """FSRS 引擎测试"""
 
     def setup_method(self):
         from governance.fsrs_engine import FSRSEngine
+
         self.engine = FSRSEngine()
 
     def test_forgetting_curve(self):
@@ -98,11 +100,13 @@ class TestFSRSEngine:
 
 # ── 记忆强度评估测试 ──────────────────────────────────────────────────────
 
+
 class TestMemoryStrengthEvaluator:
     """记忆强度评估器测试"""
 
     def setup_method(self):
         from governance.memory_strength import MemoryStrengthEvaluator
+
         self.evaluator = MemoryStrengthEvaluator()
 
     def test_calculate_strength(self):
@@ -156,11 +160,13 @@ class TestMemoryStrengthEvaluator:
 
 # ── 语义重要性测试 ──────────────────────────────────────────────────────
 
+
 class TestSemanticImportanceEvaluator:
     """语义重要性评估器测试"""
 
     def setup_method(self):
         from governance.semantic_importance import SemanticImportanceEvaluator
+
         self.evaluator = SemanticImportanceEvaluator()
 
     def test_cosine_similarity(self):
@@ -194,26 +200,29 @@ class TestSemanticImportanceEvaluator:
         """测试语义评估"""
         features = self.evaluator.evaluate("test_001")
 
-        assert hasattr(features, 'vector_centrality')
-        assert hasattr(features, 'connection_density')
-        assert hasattr(features, 'graph_importance')
-        assert hasattr(features, 'content_richness')
-        assert hasattr(features, 'uniqueness')
+        assert hasattr(features, "vector_centrality")
+        assert hasattr(features, "connection_density")
+        assert hasattr(features, "graph_importance")
+        assert hasattr(features, "content_richness")
+        assert hasattr(features, "uniqueness")
 
 
 # ── 遗忘曲线集成测试 ──────────────────────────────────────────────────────
+
 
 class TestForgettingCurveIntegration:
     """遗忘曲线集成测试"""
 
     def setup_method(self):
         from governance.forgetting import ForgettingCurve
+
         self.tmpdir = tempfile.mkdtemp()
         self.curve = ForgettingCurve(Path(self.tmpdir) / "governance")
 
     def teardown_method(self):
         self.curve.close()
         import shutil
+
         shutil.rmtree(self.tmpdir, ignore_errors=True)
 
     def test_record_access(self):
@@ -276,17 +285,20 @@ class TestForgettingCurveIntegration:
 
 # ── API 接口测试 ──────────────────────────────────────────────────────
 
+
 class TestMemoryAPI:
     """API 接口测试"""
 
     def setup_method(self):
         from governance.api import MemoryAPI
+
         self.tmpdir = tempfile.mkdtemp()
         self.api = MemoryAPI(Path(self.tmpdir) / "governance")
 
     def teardown_method(self):
         self.api.close()
         import shutil
+
         shutil.rmtree(self.tmpdir, ignore_errors=True)
 
     def test_get_system_stats(self):

@@ -13,7 +13,6 @@ logger = logging.getLogger(__name__)
 
 
 class MemoryExporter:
-
     def __init__(self, store: Any, index: Any, meta_store: Any):
         self._store = store
         self._index = index
@@ -58,9 +57,7 @@ class MemoryExporter:
         }
 
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_text(
-            json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
-        )
+        output_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
         return len(records)
 
     def export_markdown(
@@ -86,13 +83,13 @@ class MemoryExporter:
             file_path = file_dir / f"{mid}.md"
 
             front_matter_lines = [
-                f"memory_id: \"{mid}\"",
-                f"type: \"{entry_type}\"",
-                f"wing: \"{entry_wing}\"",
-                f"room: \"{entry_room}\"",
-                f"privacy: \"{full.get('privacy', 'personal')}\"",
+                f'memory_id: "{mid}"',
+                f'type: "{entry_type}"',
+                f'wing: "{entry_wing}"',
+                f'room: "{entry_room}"',
+                f'privacy: "{full.get("privacy", "personal")}"',
                 f"confidence: {full.get('confidence', 3)}",
-                f"created_at: \"{full.get('stored_at', '')}\"",
+                f'created_at: "{full.get("stored_at", "")}"',
             ]
             fm = "\n".join(front_matter_lines)
             content = full.get("content", "")
@@ -104,7 +101,6 @@ class MemoryExporter:
 
 
 class MemoryImporter:
-
     def __init__(
         self,
         store: Any,
