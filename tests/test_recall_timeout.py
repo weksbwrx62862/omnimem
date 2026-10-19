@@ -4,10 +4,7 @@ from __future__ import annotations
 
 import time
 from concurrent.futures import ThreadPoolExecutor
-from pathlib import Path
 from unittest.mock import MagicMock, patch
-
-import pytest
 
 
 class TestRecallTimeoutDegradation:
@@ -79,6 +76,7 @@ class TestRecallTimeoutDegradation:
 
     def test_timeout_returns_empty(self):
         """超时后应返回空结果，不阻塞。"""
+
         # 模拟一个超时的搜索
         def slow_search(query, top_k):
             time.sleep(10)  # 远超超时时间
@@ -97,7 +95,6 @@ class TestRecallTimeoutDegradation:
 
     def test_single_channel_vector_empty_weights(self):
         """向量通道为空时，权重应为 [0.0, 1.0]。"""
-        from omnimem.retrieval.engine import RRFFusion
 
         # 验证单通道降级逻辑
         vector_results = []

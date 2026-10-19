@@ -24,18 +24,14 @@ class TestSemanticDedupService(unittest.TestCase):
 
     def test_exact_duplicate_short(self) -> None:
         """短内容精确重复应被跳过。"""
-        self.store.search_by_content.return_value = [
-            {"content": "hello world", "memory_id": "m1"}
-        ]
+        self.store.search_by_content.return_value = [{"content": "hello world", "memory_id": "m1"}]
         result = self.dedup.semantic_dedup("hello world", "fact")
         self.assertEqual(result["action"], "skip")
         self.assertEqual(result["existing_id"], "m1")
 
     def test_exact_no_match_short(self) -> None:
         """短内容不重复应创建。"""
-        self.store.search_by_content.return_value = [
-            {"content": "different", "memory_id": "m1"}
-        ]
+        self.store.search_by_content.return_value = [{"content": "different", "memory_id": "m1"}]
         result = self.dedup.semantic_dedup("unique text", "fact")
         self.assertEqual(result["action"], "create")
 
@@ -79,7 +75,9 @@ class TestSemanticDedupService(unittest.TestCase):
         mock_ctx._content_fingerprint.return_value = "fp_long"
         mock_ctx._fingerprint_similarity.return_value = 0.87
         content = "A" * 30 + " this is a long piece of text for testing purposes"
-        candidates = [{"content": "B" * 30 + " this is a long piece of text for testing", "memory_id": "c1"}]
+        candidates = [
+            {"content": "B" * 30 + " this is a long piece of text for testing", "memory_id": "c1"}
+        ]
         result = self.dedup.semantic_dedup(content, "fact", candidates=candidates)
         self.assertEqual(result["action"], "skip")
 
@@ -89,7 +87,9 @@ class TestSemanticDedupService(unittest.TestCase):
         mock_ctx._content_fingerprint.return_value = "fp_sim"
         mock_ctx._fingerprint_similarity.return_value = 0.7
         content = "This is a long document about machine learning and AI systems"
-        candidates = [{"content": "This is about machine learning and deep learning", "memory_id": "c1"}]
+        candidates = [
+            {"content": "This is about machine learning and deep learning", "memory_id": "c1"}
+        ]
         result = self.dedup.semantic_dedup(content, "fact", candidates=candidates)
         self.assertEqual(result["action"], "update")
         self.assertIn("c1", result["existing_id"])
@@ -113,27 +113,21 @@ class TestSemanticDedupService(unittest.TestCase):
     def test_search_candidates_vector(self) -> None:
         """向量搜索成功时返回向量结果。"""
         self.retriever._vector = MagicMock()
-        self.retriever._vector.search.return_value = [
-            {"content": "vec result", "memory_id": "v1"}
-        ]
+        self.retriever._vector.search.return_value = [{"content": "vec result", "memory_id": "v1"}]
         candidates = self.dedup.search_candidates("test content")
         self.assertEqual(len(candidates), 1)
 
     def test_search_candidates_fallback(self) -> None:
         """向量搜索失败时回退到 store search_by_content。"""
         self.retriever._vector = None
-        self.store.search_by_content.return_value = [
-            {"content": "store result", "memory_id": "s1"}
-        ]
+        self.store.search_by_content.return_value = [{"content": "store result", "memory_id": "s1"}]
         candidates = self.dedup.search_candidates("test")
-        self.assertTrue(any("store result" == c.get("content", "") for c in candidates))
+        self.assertTrue(any(c.get("content", "") == "store result" for c in candidates))
 
     def test_search_candidates_long_mid_chunk(self) -> None:
         """长文本搜索时添加中间片段候选。"""
         self.retriever._vector = None
-        self.store.search_by_content.return_value = [
-            {"content": "prefix match", "memory_id": "s1"}
-        ]
+        self.store.search_by_content.return_value = [{"content": "prefix match", "memory_id": "s1"}]
         content = "PREFIX_" + "X" * 80 + "_MIDDLE_" + "Y" * 30 + "_SUFFIX"
         candidates = self.dedup.search_candidates(content)
         # 第一次调用于content[:50]，因为content>100会再调用content[50:100]
@@ -152,16 +146,12 @@ class TestSemanticDedupService(unittest.TestCase):
 
     def test_exact_duplicate_short_numeric(self) -> None:
         """纯数字差异的短文本也应正确处理。"""
-        self.store.search_by_content.return_value = [
-            {"content": "R37 test v1", "memory_id": "m1"}
-        ]
+        self.store.search_by_content.return_value = [{"content": "R37 test v1", "memory_id": "m1"}]
         result = self.dedup.semantic_dedup("R37 test v1", "fact")
         self.assertEqual(result["action"], "skip")
 
     def test_exact_duplicate_short_different_numbers(self) -> None:
         """数字不同的短文本不算是精确匹配。"""
-        self.store.search_by_content.return_value = [
-            {"content": "R36 test v1", "memory_id": "m1"}
-        ]
+        self.store.search_by_content.return_value = [{"content": "R36 test v1", "memory_id": "m1"}]
         result = self.dedup.semantic_dedup("R37 test v1", "fact")
         self.assertEqual(result["action"], "create")
