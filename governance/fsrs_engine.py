@@ -15,11 +15,10 @@ FSRS 是目前最优的间隔重复算法：
 
 from __future__ import annotations
 
+import logging
 import math
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
-from typing import Optional, Any
-import logging
+from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
 
@@ -27,15 +26,16 @@ logger = logging.getLogger(__name__)
 @dataclass
 class FSRSItem:
     """FSRS 记忆项状态"""
-    stability: float = 0.0      # 稳定性 (天)
-    difficulty: float = 0.0     # 难度 (0-1)
-    due: Optional[datetime] = None
-    last_review: Optional[datetime] = None
+
+    stability: float = 0.0  # 稳定性 (天)
+    difficulty: float = 0.0  # 难度 (0-1)
+    due: datetime | None = None
+    last_review: datetime | None = None
     elapsed_days: int = 0
     scheduled_days: int = 0
-    reps: int = 0               # 复习次数
-    lapses: int = 0             # 遗忘次数
-    state: int = 0              # 0=New, 1=Learning, 2=Review, 3=Relearning
+    reps: int = 0  # 复习次数
+    lapses: int = 0  # 遗忘次数
+    state: int = 0  # 0=New, 1=Learning, 2=Review, 3=Relearning
 
 
 @dataclass
@@ -44,18 +44,35 @@ class FSRSParameters:
 
     基于大量用户数据训练的默认参数
     """
-    w: list = field(default_factory=lambda: [
-        # 初始稳定性 (Again, Hard, Good, Easy)
-        0.4, 0.6, 2.4, 5.8,
-        # 初始难度参数
-        4.93, 0.94,
-        # 稳定性增长参数
-        0.86, 0.01, 1.49, 0.14, 0.94, 2.18,
-        # 难度调整参数
-        0.05, 0.34, 1.26, 0.29, 2.61,
-        # 遗忘曲线参数 (α, β)
-        0.0, 0.0
-    ])
+
+    w: list = field(
+        default_factory=lambda: [
+            # 初始稳定性 (Again, Hard, Good, Easy)
+            0.4,
+            0.6,
+            2.4,
+            5.8,
+            # 初始难度参数
+            4.93,
+            0.94,
+            # 稳定性增长参数
+            0.86,
+            0.01,
+            1.49,
+            0.14,
+            0.94,
+            2.18,
+            # 难度调整参数
+            0.05,
+            0.34,
+            1.26,
+            0.29,
+            2.61,
+            # 遗忘曲线参数 (α, β)
+            0.0,
+            0.0,
+        ]
+    )
 
     # 默认 α 和 β（当 w[17], w[18] 为 0 时使用）
     default_alpha: float = 9.0
@@ -72,7 +89,7 @@ class FSRSEngine:
     - 个性化参数学习
     """
 
-    def __init__(self, parameters: Optional[FSRSParameters] = None):
+    def __init__(self, parameters: FSRSParameters | None = None):
         self.p = parameters or FSRSParameters()
         self._alpha = self.p.w[17] if self.p.w[17] > 0 else self.p.default_alpha
         self._beta = self.p.w[18] if self.p.w[18] > 0 else self.p.default_beta
@@ -149,8 +166,8 @@ class FSRSEngine:
             growth = 0.0
         else:
             # 基础增长
-            growth = self.p.w[6] * (11 - d) * s ** (-self.p.w[7]) * (
-                math.exp(self.p.w[8] * (1 - r)) - 1
+            growth = (
+                self.p.w[6] * (11 - d) * s ** (-self.p.w[7]) * (math.exp(self.p.w[8] * (1 - r)) - 1)
             )
 
             # 困难/容易调整
@@ -195,7 +212,9 @@ class FSRSEngine:
 
         return self.forgetting_curve(elapsed, item.stability)
 
-    def suggest_review(self, item: FSRSItem, now: datetime, desired_retention: float = 0.9) -> datetime:
+    def suggest_review(
+        self, item: FSRSItem, now: datetime, desired_retention: float = 0.9
+    ) -> datetime:
         """建议下次复习时间
 
         Args:
@@ -275,10 +294,7 @@ class FSRSEngine:
         return item
 
     def calculate_retention_from_recall(
-        self,
-        recall_count: int,
-        days_since_creation: int,
-        last_recall_days_ago: int = 0
+        self, recall_count: int, days_since_creation: int, last_recall_days_ago: int = 0
     ) -> float:
         """基于访问历史估算保持率
 
@@ -329,13 +345,13 @@ class FSRSEngine:
         # 根据平均评分调整参数
         if avg_rating >= 3.5:  # 用户记得很好
             self.p.w[17] = 12.0  # α 更大，衰减更慢
-            self.p.w[18] = 0.4   # β 更小，曲线更平缓
+            self.p.w[18] = 0.4  # β 更小，曲线更平缓
         elif avg_rating >= 2.5:  # 一般
-            self.p.w[17] = 9.0   # 默认
+            self.p.w[17] = 9.0  # 默认
             self.p.w[18] = 0.5
         else:  # 用户经常忘记
-            self.p.w[17] = 6.0   # α 更小，衰减更快
-            self.p.w[18] = 0.6   # β 更大，曲线更陡峭
+            self.p.w[17] = 6.0  # α 更小，衰减更快
+            self.p.w[18] = 0.6  # β 更大，曲线更陡峭
 
         self._alpha = self.p.w[17] if self.p.w[17] > 0 else self.p.default_alpha
         self._beta = self.p.w[18] if self.p.w[18] > 0 else self.p.default_beta
@@ -346,10 +362,10 @@ class FSRSEngine:
 
 
 # 全局实例
-_engine: Optional[FSRSEngine] = None
+_engine: FSRSEngine | None = None
 
 
-def get_fsrs_engine(parameters: Optional[FSRSParameters] = None) -> FSRSEngine:
+def get_fsrs_engine(parameters: FSRSParameters | None = None) -> FSRSEngine:
     """获取全局 FSRS 引擎实例"""
     global _engine
     if _engine is None or parameters is not None:
@@ -358,9 +374,7 @@ def get_fsrs_engine(parameters: Optional[FSRSParameters] = None) -> FSRSEngine:
 
 
 def calculate_retention(
-    recall_count: int,
-    days_since_creation: int,
-    last_recall_days_ago: int = 0
+    recall_count: int, days_since_creation: int, last_recall_days_ago: int = 0
 ) -> float:
     """便捷函数：计算保持率"""
     engine = get_fsrs_engine()
