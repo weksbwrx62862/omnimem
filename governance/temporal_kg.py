@@ -18,7 +18,7 @@ import logging
 import sqlite3
 import threading
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -121,18 +121,14 @@ class TemporalKnowledgeGraph:
             migrations=[],
         )
 
-        self._conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_tt_subject ON temporal_triples(subject)"
-        )
+        self._conn.execute("CREATE INDEX IF NOT EXISTS idx_tt_subject ON temporal_triples(subject)")
         self._conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_tt_predicate ON temporal_triples(predicate)"
         )
         self._conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_tt_valid ON temporal_triples(valid_at, invalid_at)"
         )
-        self._conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_tt_object ON temporal_triples(object)"
-        )
+        self._conn.execute("CREATE INDEX IF NOT EXISTS idx_tt_object ON temporal_triples(object)")
 
         self._conn.commit()
 
@@ -170,9 +166,7 @@ class TemporalKnowledgeGraph:
 
             try:
                 # 矛盾检测：同一 subject+predicate 的当前有效三元组
-                contradiction = self._detect_contradiction_locked(
-                    subject, predicate, obj
-                )
+                contradiction = self._detect_contradiction_locked(subject, predicate, obj)
                 if contradiction:
                     self._invalidate_triple_locked(
                         contradiction.id,
@@ -241,9 +235,7 @@ class TemporalKnowledgeGraph:
 
     # ─── 时序查询 ───────────────────────────────────────────────
 
-    def query_current(
-        self, subject: str, predicate: str
-    ) -> list[TemporalTriple]:
+    def query_current(self, subject: str, predicate: str) -> list[TemporalTriple]:
         """查询当前有效的三元组（invalid_at IS NULL）。
 
         Args:
@@ -274,9 +266,7 @@ class TemporalKnowledgeGraph:
             logger.warning("query_current 失败: %s", e)
             return []
 
-    def query_at_time(
-        self, subject: str, predicate: str, at_time: str
-    ) -> list[TemporalTriple]:
+    def query_at_time(self, subject: str, predicate: str, at_time: str) -> list[TemporalTriple]:
         """查询指定时间有效的三元组。
 
         条件: valid_at <= at_time AND (invalid_at IS NULL OR invalid_at > at_time)
@@ -315,9 +305,7 @@ class TemporalKnowledgeGraph:
 
     # ─── 矛盾检测 ───────────────────────────────────────────────
 
-    def detect_contradiction(
-        self, subject: str, predicate: str, obj: str
-    ) -> TemporalTriple | None:
+    def detect_contradiction(self, subject: str, predicate: str, obj: str) -> TemporalTriple | None:
         """检测与已有事实的矛盾。
 
         查找同一 subject+predicate 下当前有效但 object 不同的三元组。
@@ -478,9 +466,7 @@ class TemporalKnowledgeGraph:
 
         return all_triples[:limit]
 
-    def temporal_rag_context(
-        self, query_entities: list[str], at_time: str | None = None
-    ) -> str:
+    def temporal_rag_context(self, query_entities: list[str], at_time: str | None = None) -> str:
         """生成时序图谱的 RAG 上下文文本。
 
         Args:
@@ -520,9 +506,7 @@ class TemporalKnowledgeGraph:
         if not self._conn:
             return stats
         try:
-            row = self._conn.execute(
-                "SELECT COUNT(*) FROM temporal_triples"
-            ).fetchone()
+            row = self._conn.execute("SELECT COUNT(*) FROM temporal_triples").fetchone()
             stats["total_triples"] = row[0] if row else 0
 
             row = self._conn.execute(

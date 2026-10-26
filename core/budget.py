@@ -34,7 +34,9 @@ class BudgetManager:
         except (ImportError, Exception):
             return max(1, len(text) // _CHARS_PER_TOKEN)
 
-    def trim_to_budget(self, items: list[dict[str, Any]], max_tokens: int = 0) -> list[dict[str, Any]]:
+    def trim_to_budget(
+        self, items: list[dict[str, Any]], max_tokens: int = 0
+    ) -> list[dict[str, Any]]:
         """裁剪检索结果到 Token 预算内。
 
         items 中每项需有 "content" 字段。

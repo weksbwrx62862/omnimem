@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 OmniMem 与开源项目 LongMemEval 评测对比报告生成器。
 
@@ -316,25 +315,29 @@ def generate_overall_table(
     # 汇总所有项目分数
     rows: list[tuple[str, float | None, str, str, Any, bool, str]] = []
     for name, info in open_scores.items():
-        rows.append((
-            name,
-            info.get("overall"),
-            info.get("generator", "N/A"),
-            info.get("judge", "N/A"),
-            info.get("top_k", "N/A"),
-            info.get("oracle", False),
-            info.get("source", "N/A"),
-        ))
+        rows.append(
+            (
+                name,
+                info.get("overall"),
+                info.get("generator", "N/A"),
+                info.get("judge", "N/A"),
+                info.get("top_k", "N/A"),
+                info.get("oracle", False),
+                info.get("source", "N/A"),
+            )
+        )
     if omnimem is not None and omnimem.get("overall") is not None:
-        rows.append((
-            "OmniMem (本地评测)",
-            omnimem.get("overall"),
-            omnimem.get("generator", "N/A"),
-            omnimem.get("judge", "N/A"),
-            omnimem.get("top_k", "N/A"),
-            omnimem.get("oracle", False),
-            omnimem.get("source", "N/A"),
-        ))
+        rows.append(
+            (
+                "OmniMem (本地评测)",
+                omnimem.get("overall"),
+                omnimem.get("generator", "N/A"),
+                omnimem.get("judge", "N/A"),
+                omnimem.get("top_k", "N/A"),
+                omnimem.get("oracle", False),
+                omnimem.get("source", "N/A"),
+            )
+        )
 
     # 按 overall 降序排列（None 排最后）
     rows.sort(key=lambda r: (r[1] is None, -(r[1] if r[1] is not None else 0)))
@@ -499,10 +502,18 @@ def generate_report(
     lines.append("")
     lines.append("主要差异包括：")
     lines.append("")
-    lines.append("- **Generator LLM 不同**：Mem0 Platform/OSS 使用 GPT-5，HeLa-Mem 系列复现使用 gpt-4o-mini，论文 baseline 使用 GPT-4o。更强的 generator LLM 会显著拉高分数。")
-    lines.append("- **Judge LLM 不同**：不同项目使用不同的 judge 模型（GPT-5 / GPT-4o / gpt-4o-mini），评判尺度可能不一致。")
-    lines.append("- **Retrieval Budget 不同**：Mem0 Platform/OSS 使用 top_k=200，而多数论文复现项目未公开 retrieval budget。")
-    lines.append("- **Oracle 设置**：Offline Reading 为 oracle 上限（直接提供标准答案所在上下文），非真实检索场景。")
+    lines.append(
+        "- **Generator LLM 不同**：Mem0 Platform/OSS 使用 GPT-5，HeLa-Mem 系列复现使用 gpt-4o-mini，论文 baseline 使用 GPT-4o。更强的 generator LLM 会显著拉高分数。"
+    )
+    lines.append(
+        "- **Judge LLM 不同**：不同项目使用不同的 judge 模型（GPT-5 / GPT-4o / gpt-4o-mini），评判尺度可能不一致。"
+    )
+    lines.append(
+        "- **Retrieval Budget 不同**：Mem0 Platform/OSS 使用 top_k=200，而多数论文复现项目未公开 retrieval budget。"
+    )
+    lines.append(
+        "- **Oracle 设置**：Offline Reading 为 oracle 上限（直接提供标准答案所在上下文），非真实检索场景。"
+    )
     lines.append("- **评测范围不同**：OmniMem 为本地评测，题数与配置可能与其他项目不同。")
     lines.append("")
 
@@ -536,9 +547,15 @@ def generate_report(
     # ── 数据来源说明 ──
     lines.append("## 四、数据来源说明")
     lines.append("")
-    lines.append("- **Mem0 Platform (v3) / Mem0 OSS**：来自 mem0ai/memory-benchmarks 仓库（2026/04），使用 GPT-5 作为 generator 与 judge，top_k=200。")
-    lines.append("- **HeLa-Mem / A-MEM / NaiveRAG / FullText / Mem0(复现) / MemoryOS / LangMem**：来自 HeLa-Mem 论文（ACL 2026）及其复现实验，统一使用 gpt-4o-mini 作为 generator 与 judge。")
-    lines.append("- **ChatGPT / Coze / Offline Reading**：来自 LongMemEval 论文 Figure 3a，使用 GPT-4o 作为 generator 与 judge。Offline Reading 为 oracle 上限。")
+    lines.append(
+        "- **Mem0 Platform (v3) / Mem0 OSS**：来自 mem0ai/memory-benchmarks 仓库（2026/04），使用 GPT-5 作为 generator 与 judge，top_k=200。"
+    )
+    lines.append(
+        "- **HeLa-Mem / A-MEM / NaiveRAG / FullText / Mem0(复现) / MemoryOS / LangMem**：来自 HeLa-Mem 论文（ACL 2026）及其复现实验，统一使用 gpt-4o-mini 作为 generator 与 judge。"
+    )
+    lines.append(
+        "- **ChatGPT / Coze / Offline Reading**：来自 LongMemEval 论文 Figure 3a，使用 GPT-4o 作为 generator 与 judge。Offline Reading 为 oracle 上限。"
+    )
     if omnimem is not None:
         lines.append("- **OmniMem**：本地 LongMemEval 评测结果，generator/judge 配置见评测脚本。")
     lines.append("")
@@ -590,8 +607,7 @@ def main() -> int:
             print("警告: OmniMem 结果文件解析失败，将仅输出开源项目分数表。", file=sys.stderr)
     else:
         print(
-            f"未在 {args.result_dir} 下找到 scores.json 文件，"
-            "将仅输出开源项目分数表。",
+            f"未在 {args.result_dir} 下找到 scores.json 文件，将仅输出开源项目分数表。",
             file=sys.stderr,
         )
 
