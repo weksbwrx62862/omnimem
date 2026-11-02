@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import tempfile
 from pathlib import Path
 
 import pytest
@@ -15,6 +14,7 @@ class TestTraceChain:
     @pytest.fixture
     def chain(self, omni_tmp_path):
         from omnimem.core.trace_chain import TraceChain
+
         tc = TraceChain(omni_tmp_path)
         yield tc
         tc.close()
@@ -74,7 +74,7 @@ class TestTraceChain:
         """超过 max_depth 应停止。"""
         # 创建 15 层链
         for i in range(15):
-            parent = [f"node-{i-1}"] if i > 0 else ["root"]
+            parent = [f"node-{i - 1}"] if i > 0 else ["root"]
             chain.record_derivation(
                 parent_node_ids=parent,
                 child_node_id=f"node-{i}",

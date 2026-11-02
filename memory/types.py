@@ -22,8 +22,8 @@ class MemoryType(str, enum.Enum):
     SKILL = "skill"
     PROCEDURAL = "procedural"
     EVENT = "event"
-    ACTION = "action"       # Agent 的工具调用/决策行为
-    REASONING = "reasoning" # 推理链条/踩过的坑/经验教训
+    ACTION = "action"  # Agent 的工具调用/决策行为
+    REASONING = "reasoning"  # 推理链条/踩过的坑/经验教训
 
 
 class PrivacyLevel(str, enum.Enum):

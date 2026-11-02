@@ -91,6 +91,7 @@ print(f"评分: {strength['score']}, 等级: {strength['grade']}")
 
 # 生成仪表盘
 from governance.api import MemoryAPI
+
 api = MemoryAPI()
 result = api.generate_dashboard()
 print(f"仪表盘: {result['filepath']}")

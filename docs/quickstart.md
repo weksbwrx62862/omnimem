@@ -234,13 +234,15 @@ OmniMem 通过 `config.yaml` 文件管理配置，支持热重载。配置文件
 ```python
 from omnimem.sdk import OmniMemSDK
 
-sdk = OmniMemSDK(config={
-    "save_interval": 10,
-    "retrieval_mode": "rag",
-    "enable_compression": True,
-    "budget_tokens": 3000,
-    "forgetting_active_days": 14,
-})
+sdk = OmniMemSDK(
+    config={
+        "save_interval": 10,
+        "retrieval_mode": "rag",
+        "enable_compression": True,
+        "budget_tokens": 3000,
+        "forgetting_active_days": 14,
+    }
+)
 ```
 
 ### YAML 配置文件
