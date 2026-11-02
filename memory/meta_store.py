@@ -34,6 +34,7 @@ def _retry_db_op(fn, *args, **kwargs):
         except sqlite3.OperationalError as e:
             if "locked" in str(e).lower() and attempt < _DB_RETRY_COUNT - 1:
                 import time
+
                 time.sleep(_DB_RETRY_DELAY * (attempt + 1))
                 continue
             raise
@@ -48,9 +49,21 @@ class MetaStore:
     """
 
     _VALID_COLUMNS = {
-        "memory_id", "wing", "hall", "room", "type", "confidence",
-        "privacy", "stored_at", "summary", "content_preview",
-        "drawer_path", "vc", "created_at", "conflicting_with", "conflict_type",
+        "memory_id",
+        "wing",
+        "hall",
+        "room",
+        "type",
+        "confidence",
+        "privacy",
+        "stored_at",
+        "summary",
+        "content_preview",
+        "drawer_path",
+        "vc",
+        "created_at",
+        "conflicting_with",
+        "conflict_type",
     }
 
     def __init__(self, db_dir: Path):
@@ -163,7 +176,9 @@ class MetaStore:
         if not self._conn:
             return
         with self._lock:
-            cols = ["memory_id"] + [k for k in fields if k != "memory_id" and k in self._VALID_COLUMNS]
+            cols = ["memory_id"] + [
+                k for k in fields if k != "memory_id" and k in self._VALID_COLUMNS
+            ]
             vals = [memory_id] + [fields.get(k, "") for k in cols[1:]]
             placeholders = ",".join("?" * len(cols))
             try:
@@ -316,7 +331,7 @@ class MetaStore:
                 ).fetchall()
                 return [self._row_to_dict(r) for r in rows]
                 # R46修复：转义内容中的双引号（FTS5 用 "" 表示字面量双引号）
-                escaped = query.replace('"', '""') if query else ''
+                escaped = query.replace('"', '""') if query else ""
                 safe_query = f'"{escaped}"'
                 try:
                     rows = self._conn.execute(
@@ -331,7 +346,9 @@ class MetaStore:
                         return [self._row_to_dict(r) for r in rows]
                 except Exception:
                     # FTS5 查询失败（特殊字符等），降级到 LIKE
-                    logger.debug("FTS5 match failed, falling back to LIKE for query: %s", query[:50])
+                    logger.debug(
+                        "FTS5 match failed, falling back to LIKE for query: %s", query[:50]
+                    )
             # LIKE 查询（FTS5 不可用、失败、或返回空结果时的降级路径）
             escaped_query = query.replace("%", "\\%").replace("_", "\\_")
             q = f"%{escaped_query}%"
