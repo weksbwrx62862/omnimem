@@ -26,9 +26,15 @@ class TestMemoryExporter(unittest.TestCase):
 
     def test_export_json_basic(self) -> None:
         self.store.search.return_value = [
-            {"memory_id": "m1", "type": "fact", "wing": "personal",
-             "room": "test", "privacy": "personal", "confidence": 3,
-             "stored_at": "2026-01-01T00:00:00Z"}
+            {
+                "memory_id": "m1",
+                "type": "fact",
+                "wing": "personal",
+                "room": "test",
+                "privacy": "personal",
+                "confidence": 3,
+                "stored_at": "2026-01-01T00:00:00Z",
+            }
         ]
         self.store.get.return_value = None  # falls back to entry itself
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -46,7 +52,15 @@ class TestMemoryExporter(unittest.TestCase):
             {"memory_id": "m2", "wing": "team", "type": "fact"},
             {"memory_id": "m3", "wing": "personal", "type": "preference"},
         ]
-        self.store.get.side_effect = lambda mid: {"memory_id": mid, "wing": "personal" if mid != "m2" else "team", "type": "fact", "room": "r", "privacy": "personal", "confidence": 3, "stored_at": ""}
+        self.store.get.side_effect = lambda mid: {
+            "memory_id": mid,
+            "wing": "personal" if mid != "m2" else "team",
+            "type": "fact",
+            "room": "r",
+            "privacy": "personal",
+            "confidence": 3,
+            "stored_at": "",
+        }
         with tempfile.TemporaryDirectory() as tmpdir:
             out = Path(tmpdir) / "export_wing.json"
             count = self.exporter.export_json(out, wing="personal")
@@ -57,7 +71,15 @@ class TestMemoryExporter(unittest.TestCase):
             {"memory_id": "m1", "type": "fact", "wing": "personal"},
             {"memory_id": "m2", "type": "preference", "wing": "personal"},
         ]
-        self.store.get.side_effect = lambda mid: {"memory_id": mid, "type": "preference" if mid == "m2" else "fact", "wing": "personal", "room": "r", "privacy": "personal", "confidence": 3, "stored_at": ""}
+        self.store.get.side_effect = lambda mid: {
+            "memory_id": mid,
+            "type": "preference" if mid == "m2" else "fact",
+            "wing": "personal",
+            "room": "r",
+            "privacy": "personal",
+            "confidence": 3,
+            "stored_at": "",
+        }
         with tempfile.TemporaryDirectory() as tmpdir:
             out = Path(tmpdir) / "export_type.json"
             count = self.exporter.export_json(out, memory_type="preference")
@@ -65,15 +87,25 @@ class TestMemoryExporter(unittest.TestCase):
 
     def test_export_markdown(self) -> None:
         self.store.search.return_value = [
-            {"memory_id": "md1", "type": "fact", "wing": "personal",
-             "room": "notes", "privacy": "personal", "confidence": 4,
-             "stored_at": "2026-01-01T00:00:00Z"}
+            {
+                "memory_id": "md1",
+                "type": "fact",
+                "wing": "personal",
+                "room": "notes",
+                "privacy": "personal",
+                "confidence": 4,
+                "stored_at": "2026-01-01T00:00:00Z",
+            }
         ]
         self.store.get.return_value = {
-            "memory_id": "md1", "type": "fact", "wing": "personal",
-            "room": "notes", "privacy": "personal", "confidence": 4,
+            "memory_id": "md1",
+            "type": "fact",
+            "wing": "personal",
+            "room": "notes",
+            "privacy": "personal",
+            "confidence": 4,
             "stored_at": "2026-01-01T00:00:00Z",
-            "content": "# Hello Markdown\n\nTest content."
+            "content": "# Hello Markdown\n\nTest content.",
         }
         with tempfile.TemporaryDirectory() as tmpdir:
             out_dir = Path(tmpdir) / "md_export"
@@ -91,9 +123,14 @@ class TestMemoryExporter(unittest.TestCase):
             {"memory_id": "md_b", "wing": "personal", "type": "fact"},
         ]
         self.store.get.side_effect = lambda mid: {
-            "memory_id": mid, "wing": "public" if mid == "md_a" else "personal",
-            "room": "r", "type": "fact", "privacy": "public", "confidence": 3,
-            "stored_at": "", "content": "test"
+            "memory_id": mid,
+            "wing": "public" if mid == "md_a" else "personal",
+            "room": "r",
+            "type": "fact",
+            "privacy": "public",
+            "confidence": 3,
+            "stored_at": "",
+            "content": "test",
         }
         with tempfile.TemporaryDirectory() as tmpdir:
             out_dir = Path(tmpdir) / "md_wing"
@@ -117,8 +154,7 @@ class TestMemoryImporter(unittest.TestCase):
         self.conflict = MagicMock()
         self.forgetting = MagicMock()
         self.importer = MemoryImporter(
-            self.store, self.index, self.retriever,
-            self.dedup, self.conflict, self.forgetting
+            self.store, self.index, self.retriever, self.dedup, self.conflict, self.forgetting
         )
 
     def test_import_basic(self) -> None:
@@ -129,21 +165,28 @@ class TestMemoryImporter(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmpdir:
             inp = Path(tmpdir) / "import.json"
-            inp.write_text(json.dumps({
-                "version": "1.0",
-                "exported_at": "2026-01-01T00:00:00Z",
-                "count": 1,
-                "memories": [{
-                    "memory_id": "imp-1",
-                    "content": "imported content",
-                    "type": "fact",
-                    "wing": "personal",
-                    "room": "test",
-                    "privacy": "personal",
-                    "confidence": 4,
-                    "created_at": "2026-01-01T00:00:00Z",
-                }]
-            }), encoding="utf-8")
+            inp.write_text(
+                json.dumps(
+                    {
+                        "version": "1.0",
+                        "exported_at": "2026-01-01T00:00:00Z",
+                        "count": 1,
+                        "memories": [
+                            {
+                                "memory_id": "imp-1",
+                                "content": "imported content",
+                                "type": "fact",
+                                "wing": "personal",
+                                "room": "test",
+                                "privacy": "personal",
+                                "confidence": 4,
+                                "created_at": "2026-01-01T00:00:00Z",
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
             result = self.importer.import_json(inp)
             self.assertEqual(result["total"], 1)
             self.assertEqual(result["imported"], 1)
@@ -154,14 +197,21 @@ class TestMemoryImporter(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmpdir:
             inp = Path(tmpdir) / "import_dup.json"
-            inp.write_text(json.dumps({
-                "version": "1.0",
-                "memories": [{
-                    "memory_id": "dup-entry",
-                    "content": "duplicate text",
-                    "type": "fact",
-                }]
-            }), encoding="utf-8")
+            inp.write_text(
+                json.dumps(
+                    {
+                        "version": "1.0",
+                        "memories": [
+                            {
+                                "memory_id": "dup-entry",
+                                "content": "duplicate text",
+                                "type": "fact",
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
             result = self.importer.import_json(inp)
             self.assertEqual(result["skipped"], 1)
             self.assertEqual(result["imported"], 0)
@@ -174,27 +224,39 @@ class TestMemoryImporter(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmpdir:
             inp = Path(tmpdir) / "import_nodup.json"
-            inp.write_text(json.dumps({
-                "version": "1.0",
-                "memories": [{
-                    "memory_id": "imp-2",
-                    "content": "content here",
-                    "type": "fact",
-                }]
-            }), encoding="utf-8")
+            inp.write_text(
+                json.dumps(
+                    {
+                        "version": "1.0",
+                        "memories": [
+                            {
+                                "memory_id": "imp-2",
+                                "content": "content here",
+                                "type": "fact",
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
             result = self.importer.import_json(inp, skip_duplicates=False)
             self.assertEqual(result["imported"], 1)
 
     def test_import_empty_content(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             inp = Path(tmpdir) / "import_empty.json"
-            inp.write_text(json.dumps({
-                "version": "1.0",
-                "memories": [
-                    {"memory_id": "e1", "content": "", "type": "fact"},
-                    {"memory_id": "e2", "content": "valid", "type": "fact"},
-                ]
-            }), encoding="utf-8")
+            inp.write_text(
+                json.dumps(
+                    {
+                        "version": "1.0",
+                        "memories": [
+                            {"memory_id": "e1", "content": "", "type": "fact"},
+                            {"memory_id": "e2", "content": "valid", "type": "fact"},
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
             self.dedup.semantic_dedup.return_value = {"action": "create"}
             conflict_result = MagicMock()
             conflict_result.has_conflict = False
@@ -214,14 +276,21 @@ class TestMemoryImporter(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmpdir:
             inp = Path(tmpdir) / "import_conflict.json"
-            inp.write_text(json.dumps({
-                "version": "1.0",
-                "memories": [{
-                    "memory_id": "c1",
-                    "content": "conflicting content",
-                    "type": "fact",
-                }]
-            }), encoding="utf-8")
+            inp.write_text(
+                json.dumps(
+                    {
+                        "version": "1.0",
+                        "memories": [
+                            {
+                                "memory_id": "c1",
+                                "content": "conflicting content",
+                                "type": "fact",
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
             result = self.importer.import_json(inp)
             self.assertEqual(result["conflicts"], 1)
             self.assertEqual(result["imported"], 0)
@@ -236,14 +305,21 @@ class TestMemoryImporter(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmpdir:
             inp = Path(tmpdir) / "import_collision.json"
-            inp.write_text(json.dumps({
-                "version": "1.0",
-                "memories": [{
-                    "memory_id": "collision",
-                    "content": "new content",
-                    "type": "fact",
-                }]
-            }), encoding="utf-8")
+            inp.write_text(
+                json.dumps(
+                    {
+                        "version": "1.0",
+                        "memories": [
+                            {
+                                "memory_id": "collision",
+                                "content": "new content",
+                                "type": "fact",
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
             result = self.importer.import_json(inp)
             self.assertEqual(result["imported"], 1)
             # store.add should have been called with a new ID (not "collision")

@@ -575,18 +575,27 @@ class ReflectEngine:
                     except Exception as e:
                         logger.warning(
                             "ReflectEngine _llm_fn failed (attempt %d/%d): %s: %s",
-                            attempt + 1, max_retries, type(e).__name__, e,
+                            attempt + 1,
+                            max_retries,
+                            type(e).__name__,
+                            e,
                         )
                 if not raw and self._llm_client is not None:
                     try:
                         result = self._llm_client.call_sync(
-                            prompt=prompt, system=system, max_tokens=max_tokens, temperature=0.5,
+                            prompt=prompt,
+                            system=system,
+                            max_tokens=max_tokens,
+                            temperature=0.5,
                         )
                         raw = result.content if result else None
                     except Exception as e:
                         logger.warning(
                             "ReflectEngine _llm_client failed (attempt %d/%d): %s: %s",
-                            attempt + 1, max_retries, type(e).__name__, e,
+                            attempt + 1,
+                            max_retries,
+                            type(e).__name__,
+                            e,
                         )
                 if not raw or not raw.strip():
                     if attempt < max_retries - 1:
