@@ -34,8 +34,9 @@ _PRIVACY_ORDER = {level: i for i, level in enumerate(_PRIVACY_LEVELS)}
 class PrivacyManager:
     """隐私分级管理，支持 secret 级加密存储。"""
 
-    def __init__(self, default_level: str = "personal", session_id: str = "",
-                 kms_manager: Any = None):
+    def __init__(
+        self, default_level: str = "personal", session_id: str = "", kms_manager: Any = None
+    ):
         self._default_level = default_level
         self._overrides: dict[str, str] = {}
         self._store: Any | None = None  # ★ 延迟绑定存储层，用于回填

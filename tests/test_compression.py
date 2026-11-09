@@ -1,7 +1,5 @@
-import pytest
-
-from omnimem.compression.micro import microcompact
 from omnimem.compression.line_compress import structured_line_compress
+from omnimem.compression.micro import microcompact
 from omnimem.compression.pipeline import CompressionPipeline
 
 

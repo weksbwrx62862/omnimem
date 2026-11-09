@@ -8,7 +8,6 @@ from omnimem.deep.knowledge_graph import extract_entities
 
 
 class TestBareNameExtraction(unittest.TestCase):
-
     def test_bare_name_without_context(self) -> None:
         """裸中文名（无上下文标记）应被识别。"""
         entities = extract_entities("徐信豪在杭州创办了 Nous Research")

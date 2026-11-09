@@ -14,12 +14,12 @@ SemanticImportance — 语义重要性评估模块。
 
 from __future__ import annotations
 
-import math
 import logging
-from dataclasses import dataclass, field
-from typing import Optional, Any
-import sqlite3
+import math
 import os
+import sqlite3
+from dataclasses import dataclass
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -27,11 +27,12 @@ logger = logging.getLogger(__name__)
 @dataclass
 class SemanticFeatures:
     """语义特征向量"""
-    vector_centrality: float = 0.5    # 向量中心性 (0-1)
-    connection_density: float = 0.5   # 关联密度 (0-1)
-    graph_importance: float = 0.5     # 图结构重要性 (0-1)
-    content_richness: float = 0.5     # 内容丰富度 (0-1)
-    uniqueness: float = 0.5           # 独特性 (0-1)
+
+    vector_centrality: float = 0.5  # 向量中心性 (0-1)
+    connection_density: float = 0.5  # 关联密度 (0-1)
+    graph_importance: float = 0.5  # 图结构重要性 (0-1)
+    content_richness: float = 0.5  # 内容丰富度 (0-1)
+    uniqueness: float = 0.5  # 独特性 (0-1)
 
     def to_dict(self) -> dict[str, float]:
         return {
@@ -46,6 +47,7 @@ class SemanticFeatures:
 @dataclass
 class SemanticWeights:
     """语义重要性权重"""
+
     centrality: float = 0.30
     density: float = 0.25
     graph: float = 0.20
@@ -65,12 +67,14 @@ class SemanticImportanceEvaluator:
 
     def __init__(
         self,
-        db_path: Optional[str] = None,
-        embedding_path: Optional[str] = None,
-        weights: Optional[SemanticWeights] = None,
+        db_path: str | None = None,
+        embedding_path: str | None = None,
+        weights: SemanticWeights | None = None,
     ):
         self._db_path = db_path or os.path.expanduser("~/.hermes/omnimem/index/index.db")
-        self._embedding_path = embedding_path or os.path.expanduser("~/.hermes/omnimem/retrieval/embedding_cache.json")
+        self._embedding_path = embedding_path or os.path.expanduser(
+            "~/.hermes/omnimem/retrieval/embedding_cache.json"
+        )
         self._weights = weights or SemanticWeights()
         self._embeddings: dict[str, list[float]] = {}
         self._connections: dict[str, set[str]] = {}
@@ -85,6 +89,7 @@ class SemanticImportanceEvaluator:
         try:
             if os.path.exists(self._embedding_path):
                 import json
+
                 with open(self._embedding_path) as f:
                     self._embeddings = json.load(f)
                 logger.info("Loaded %d embeddings", len(self._embeddings))
@@ -96,9 +101,7 @@ class SemanticImportanceEvaluator:
             kg_path = os.path.expanduser("~/.hermes/omnimem/deep/knowledge_graph.db")
             if os.path.exists(kg_path):
                 conn = sqlite3.connect(kg_path)
-                rows = conn.execute(
-                    "SELECT source_id, target_id FROM relationships"
-                ).fetchall()
+                rows = conn.execute("SELECT source_id, target_id FROM relationships").fetchall()
                 for src, tgt in rows:
                     if src not in self._connections:
                         self._connections[src] = set()
@@ -214,7 +217,7 @@ class SemanticImportanceEvaluator:
 
         return min(1.0, base_score + importance_bonus)
 
-    def calculate_content_richness(self, content: Optional[str] = None) -> float:
+    def calculate_content_richness(self, content: str | None = None) -> float:
         """计算内容丰富度
 
         基于:
@@ -240,13 +243,13 @@ class SemanticImportanceEvaluator:
         diversity = len(unique_words) / len(words) if words else 0.0
 
         # 结构复杂度 (标点符号和换行)
-        structure_chars = sum(1 for c in content if c in '.,;:!?\\n')
+        structure_chars = sum(1 for c in content if c in ".,;:!?\\n")
         structure_score = min(1.0, structure_chars / 20.0)
 
         # 综合
-        return (length_score * 0.4 + diversity * 0.3 + structure_score * 0.3)
+        return length_score * 0.4 + diversity * 0.3 + structure_score * 0.3
 
-    def calculate_uniqueness(self, memory_id: str, content: Optional[str] = None) -> float:
+    def calculate_uniqueness(self, memory_id: str, content: str | None = None) -> float:
         """计算独特性
 
         基于:
@@ -288,7 +291,7 @@ class SemanticImportanceEvaluator:
     def evaluate(
         self,
         memory_id: str,
-        content: Optional[str] = None,
+        content: str | None = None,
     ) -> SemanticFeatures:
         """评估记忆的语义重要性
 
@@ -319,11 +322,11 @@ class SemanticImportanceEvaluator:
         w = self._weights
 
         importance = (
-            w.centrality * features.vector_centrality +
-            w.density * features.connection_density +
-            w.graph * features.graph_importance +
-            w.richness * features.content_richness +
-            w.uniqueness * features.uniqueness
+            w.centrality * features.vector_centrality
+            + w.density * features.connection_density
+            + w.graph * features.graph_importance
+            + w.richness * features.content_richness
+            + w.uniqueness * features.uniqueness
         )
 
         return max(0.0, min(1.0, importance))
@@ -331,7 +334,7 @@ class SemanticImportanceEvaluator:
     def evaluate_importance(
         self,
         memory_id: str,
-        content: Optional[str] = None,
+        content: str | None = None,
     ) -> dict[str, Any]:
         """评估记忆的语义重要性
 
@@ -349,13 +352,13 @@ class SemanticImportanceEvaluator:
 
 
 # 全局实例
-_evaluator: Optional[SemanticImportanceEvaluator] = None
+_evaluator: SemanticImportanceEvaluator | None = None
 
 
 def get_semantic_evaluator(
-    db_path: Optional[str] = None,
-    embedding_path: Optional[str] = None,
-    weights: Optional[SemanticWeights] = None,
+    db_path: str | None = None,
+    embedding_path: str | None = None,
+    weights: SemanticWeights | None = None,
 ) -> SemanticImportanceEvaluator:
     """获取全局语义评估器实例"""
     global _evaluator
@@ -366,7 +369,7 @@ def get_semantic_evaluator(
 
 def evaluate_semantic_importance(
     memory_id: str,
-    content: Optional[str] = None,
+    content: str | None = None,
 ) -> dict[str, Any]:
     """便捷函数：评估语义重要性"""
     evaluator = get_semantic_evaluator()

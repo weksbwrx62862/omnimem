@@ -2,22 +2,23 @@ import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock
 
-import pytest
-
 from omnimem.deep.consolidation import (
+    ConsolidatedItem,
     ConsolidationEngine,
     ConsolidationResult,
-    ConsolidatedItem,
-    _extract_keywords,
     _cluster_by_topic,
-    _generate_observation,
+    _extract_keywords,
     _generate_mental_model,
+    _generate_observation,
 )
 
 
 class TestExtractKeywords:
     def test_chinese_keywords(self):
-        texts = ["\u7528\u6237\u559c\u6b22Python\u7f16\u7a0b", "\u7528\u6237\u504f\u597dPython\u5f00\u53d1"]
+        texts = [
+            "\u7528\u6237\u559c\u6b22Python\u7f16\u7a0b",
+            "\u7528\u6237\u504f\u597dPython\u5f00\u53d1",
+        ]
         kws = _extract_keywords(texts, top_k=5)
         assert isinstance(kws, list)
         assert len(kws) > 0
@@ -65,7 +66,9 @@ class TestGenerateObservation:
 
 class TestGenerateMentalModel:
     def test_basic_model(self):
-        observations = ["\u5173\u4e8ePython\uff0c\u89c2\u5bdf\u5230\uff1a\u7528\u6237\u559c\u6b22\u7f16\u7a0b"]
+        observations = [
+            "\u5173\u4e8ePython\uff0c\u89c2\u5bdf\u5230\uff1a\u7528\u6237\u559c\u6b22\u7f16\u7a0b"
+        ]
         result = _generate_mental_model(observations)
         assert isinstance(result, str)
         assert len(result) > 0
