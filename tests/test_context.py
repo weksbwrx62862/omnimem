@@ -127,7 +127,6 @@ class TestContextManager(unittest.TestCase):
 
 
 class TestContextManagerEdgeCases(unittest.TestCase):
-
     def test_zero_budget(self) -> None:
         cm = ContextManager(
             budget=ContextBudget(
@@ -181,8 +180,18 @@ class TestContextManagerEdgeCases(unittest.TestCase):
             )
         )
         raw = [
-            {"content": "User prefers Python for backend development", "type": "fact", "memory_id": "m1", "confidence": 3},
-            {"content": "用户偏好使用React进行前端开发", "type": "preference", "memory_id": "m2", "confidence": 4},
+            {
+                "content": "User prefers Python for backend development",
+                "type": "fact",
+                "memory_id": "m1",
+                "confidence": 3,
+            },
+            {
+                "content": "用户偏好使用React进行前端开发",
+                "type": "preference",
+                "memory_id": "m2",
+                "confidence": 4,
+            },
         ]
         result = cm.refine_prefetch_results(raw)
         self.assertIn("### Relevant Memories", result)

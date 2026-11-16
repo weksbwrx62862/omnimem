@@ -58,8 +58,11 @@ class OmniMemSDK:
 
         # 初始化治理层
         self._governance = GovernanceFacade(
-            self._data_dir, self._config, self._session_id,
-            self._storage, self._retrieval.retriever,
+            self._data_dir,
+            self._config,
+            self._session_id,
+            self._storage,
+            self._retrieval.retriever,
         )
 
         # 显式绑定子组件
@@ -73,7 +76,9 @@ class OmniMemSDK:
         self._perception = self._retrieval.perception
         self._dedup = SemanticDedupService(self._store, self._retriever)
 
-        logger.info("OmniMemSDK initialized: session=%s, data_dir=%s", self._session_id, self._data_dir)
+        logger.info(
+            "OmniMemSDK initialized: session=%s, data_dir=%s", self._session_id, self._data_dir
+        )
 
     def memorize(self, content: str, memory_type: str = "fact", **kwargs: Any) -> dict:
         """存储记忆。"""
@@ -182,9 +187,7 @@ class OmniMemSDK:
 
         return result
 
-    def export_memories(
-        self, output_path: str, format: str = "json", **kwargs: Any
-    ) -> dict:
+    def export_memories(self, output_path: str, format: str = "json", **kwargs: Any) -> dict:
         """导出记忆。"""
         from omnimem.core.import_export import MemoryExporter
 
