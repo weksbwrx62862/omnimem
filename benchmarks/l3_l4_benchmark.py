@@ -1,6 +1,6 @@
-import time
 import json
 import statistics
+import time
 from pathlib import Path
 from typing import Any
 
@@ -8,7 +8,6 @@ from omnimem.deep.consolidation import ConsolidationEngine
 from omnimem.deep.reflect import ReflectEngine
 from omnimem.internalize.kv_cache import KVCacheManager
 from omnimem.retrieval.engine import HybridRetriever
-
 
 _TEST_FACTS = [
     "用户喜欢使用Python进行数据分析",
@@ -85,9 +84,7 @@ class L3L4Benchmark:
 
     def _benchmark_reflection(self) -> dict:
         data_dir = self._storage_dir / "bench_reflect"
-        consolidation = ConsolidationEngine(
-            data_dir=data_dir / "consolidation", fact_threshold=3
-        )
+        consolidation = ConsolidationEngine(data_dir=data_dir / "consolidation", fact_threshold=3)
 
         for i, fact in enumerate(_TEST_FACTS):
             consolidation.submit(memory_id=f"bench-ref-{i:03d}", content=fact)
@@ -144,15 +141,17 @@ class L3L4Benchmark:
                 source_memory_ids=[f"mem-{i:03d}"],
             )
 
-        cache.preload([
-            {
-                "key": f"pattern-{i:03d}",
-                "content": f"缓存测试内容 #{i}: 关于主题{i % 5}的频繁访问记忆",
-                "metadata": {"index": i},
-                "source_memory_ids": [f"mem-{i:03d}"],
-            }
-            for i in range(n_cached)
-        ])
+        cache.preload(
+            [
+                {
+                    "key": f"pattern-{i:03d}",
+                    "content": f"缓存测试内容 #{i}: 关于主题{i % 5}的频繁访问记忆",
+                    "metadata": {"index": i},
+                    "source_memory_ids": [f"mem-{i:03d}"],
+                }
+                for i in range(n_cached)
+            ]
+        )
 
         hits = 0
         latencies: list[float] = []
@@ -220,7 +219,9 @@ class L3L4Benchmark:
         p50_idx = int(len(sorted_latencies) * 0.5)
         p95_idx = int(len(sorted_latencies) * 0.95)
         p50_ms = sorted_latencies[p50_idx] if sorted_latencies else 0.0
-        p95_ms = sorted_latencies[min(p95_idx, len(sorted_latencies) - 1)] if sorted_latencies else 0.0
+        p95_ms = (
+            sorted_latencies[min(p95_idx, len(sorted_latencies) - 1)] if sorted_latencies else 0.0
+        )
 
         return {
             "entries": n_entries,
