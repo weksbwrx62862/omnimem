@@ -472,10 +472,10 @@ Agent 调用 omni_reflect({"query": "用户技术栈", "disposition": {...}})
 **公共接口**：
 ```python
 class StorageFacade:
-    async def store(self, memory: MemoryRecord) -> str: ...      # 存储记忆
-    async def retrieve(self, memory_id: str) -> MemoryRecord: ... # 按 ID 获取
-    async def update(self, memory_id: str, **kwargs): ...         # 更新记忆
-    async def delete(self, memory_id: str): ...                   # 删除记忆
+    async def store(self, memory: MemoryRecord) -> str: ...  # 存储记忆
+    async def retrieve(self, memory_id: str) -> MemoryRecord: ...  # 按 ID 获取
+    async def update(self, memory_id: str, **kwargs): ...  # 更新记忆
+    async def delete(self, memory_id: str): ...  # 删除记忆
     async def list_by_wing(self, wing: str) -> list[MemoryRecord]: ...  # 按空间列举
     async def compact(self, memories: list[MemoryRecord]) -> CompressedResult: ...  # 压缩
 ```
@@ -787,9 +787,9 @@ RRF 融合得分（k=60）：
 class ProvenanceRecord:
     memory_id: str
     created_at: datetime
-    created_by: str              # 创建者（agent_id / user_id）
-    source_type: SourceType      # agent_memorize / user_input / perception / consolidation
-    source_reference: str        # 来源引用（如 Turn ID / 感知信号 ID）
+    created_by: str  # 创建者（agent_id / user_id）
+    source_type: SourceType  # agent_memorize / user_input / perception / consolidation
+    source_reference: str  # 来源引用（如 Turn ID / 感知信号 ID）
     change_history: list[ChangeEvent]  # 变更历史
     # ChangeEvent: {timestamp, operator, field, old_value, new_value, reason}
 ```
@@ -822,13 +822,13 @@ Permissions:
 @dataclass
 class AuditEntry:
     timestamp: datetime
-    actor: str                 # 操作者
-    action: str                # 操作类型
-    target: str                # 目标资源 (memory_id / *)
-    details: dict              # 操作详情
-    ip_address: str | None     # 来源 IP（REST API 场景）
-    session_id: str            # 会话 ID
-    result: str                # success / denied / error
+    actor: str  # 操作者
+    action: str  # 操作类型
+    target: str  # 目标资源 (memory_id / *)
+    details: dict  # 操作详情
+    ip_address: str | None  # 来源 IP（REST API 场景）
+    session_id: str  # 会话 ID
+    result: str  # success / denied / error
     error_message: str | None  # 错误信息（如有）
 ```
 

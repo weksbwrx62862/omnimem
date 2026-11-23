@@ -4,7 +4,8 @@ import json
 import logging
 import re
 import time
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from omnimem.context.manager import ContextManager
 
@@ -104,9 +105,7 @@ def handle_detail(
         items = context_manager.get_injected_items()
         if items:
             items = [
-                item
-                for item in items
-                if item.get("memory_id") and store.get(item["memory_id"])
+                item for item in items if item.get("memory_id") and store.get(item["memory_id"])
             ]
         if not items:
             return json.dumps(
@@ -270,7 +269,9 @@ def build_system_prompt(
     max_summary = context_manager.max_summary_chars
     seen_fps = set(context_manager.get_injected_fingerprints())
 
-    def _refine_and_add(entries: list[dict[str, Any]], budget_remaining: int) -> tuple[list[str], int]:
+    def _refine_and_add(
+        entries: list[dict[str, Any]], budget_remaining: int
+    ) -> tuple[list[str], int]:
         lines = []
         used = 0
         for entry in entries:
@@ -348,7 +349,7 @@ def run_prefetch(
         prefetch_cache = ""
     if cached and cached.startswith("___RAW_RESULTS___"):
         try:
-            async_results = json.loads(cached[len("___RAW_RESULTS___"):])
+            async_results = json.loads(cached[len("___RAW_RESULTS___") :])
         except Exception as e:
             logger.warning("Async prefetch cache JSON parse failed: %s", e)
             async_results = []
@@ -479,7 +480,9 @@ def init_llm_client(config: Any) -> Any:
     matched_models: list[str] = []
     try:
         from pathlib import Path
+
         import yaml
+
         cfg_file = Path.home() / ".hermes" / "config.yaml"
         if cfg_file.exists():
             cfg = yaml.safe_load(cfg_file.read_text(encoding="utf-8"))
@@ -487,8 +490,12 @@ def init_llm_client(config: Any) -> Any:
                 if isinstance(pval, dict) and pval.get("base_url") == actual_base_url:
                     matched_models = pval.get("models", [])
                     if matched_models:
-                        logger.warning("Matched provider '%s' for base_url %s, models: %s",
-                                     _pname, actual_base_url, matched_models)
+                        logger.warning(
+                            "Matched provider '%s' for base_url %s, models: %s",
+                            _pname,
+                            actual_base_url,
+                            matched_models,
+                        )
                         break
     except Exception as e:
         logger.warning("ToolRouter init_llm_client provider match failed: %s", e)
@@ -506,7 +513,9 @@ def init_llm_client(config: Any) -> Any:
             model = default_model
     else:
         model = default_model
-    logger.warning("Selected model=%s (actual_base_url=%s, default=%s)", model, actual_base_url, default_model)
+    logger.warning(
+        "Selected model=%s (actual_base_url=%s, default=%s)", model, actual_base_url, default_model
+    )
 
     # ★ R25修复ARCH-1：凭证有效性检测
     has_api_key = bool(creds.get("api_key", "").strip())
@@ -527,7 +536,9 @@ def init_llm_client(config: Any) -> Any:
         timeout=30.0,
         cache_ttl=_REFLECT_CACHE_TTL,
     )
-    logger.warning("AsyncLLMClient initialized: model=%s, has_creds=%s", model, has_api_key and has_base_url)
+    logger.warning(
+        "AsyncLLMClient initialized: model=%s, has_creds=%s", model, has_api_key and has_base_url
+    )
     return llm_client
 
 
@@ -560,11 +571,7 @@ def call_llm_for_reflect(
     if len(reflect_cache) > max_reflect_cache:
         reflect_cache.clear()
         reflect_cache.update(
-            {
-                k: (v, t)
-                for k, (v, t) in reflect_cache.items()
-                if now - t < _REFLECT_CACHE_TTL
-            }
+            {k: (v, t) for k, (v, t) in reflect_cache.items() if now - t < _REFLECT_CACHE_TTL}
         )
     if cache_key in reflect_cache:
         cached_result, cached_time = reflect_cache[cache_key]
@@ -645,7 +652,9 @@ def retry_kg_extract(memory_id: str, store: Any, knowledge_graph: Any) -> None:
         )
 
 
-def apply_sync_change(change: dict[str, Any], store: Any, index: Any, retriever: Any, forgetting: Any) -> bool:
+def apply_sync_change(
+    change: dict[str, Any], store: Any, index: Any, retriever: Any, forgetting: Any
+) -> bool:
     data = change.get("data", {})
     op = change.get("operation", "INSERT")
     memory_id = data.get("memory_id", "")

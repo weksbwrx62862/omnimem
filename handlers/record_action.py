@@ -36,17 +36,19 @@ def handle_record_action(provider: Any, args: dict[str, Any]) -> str:
         JSON: {"status": "stored", "action_id": "...", "memory_id": "..."}
     """
     if not hasattr(provider, "_action_memory") or provider._action_memory is None:
-        return json.dumps({
-            "status": "unavailable",
-            "reason": "ActionMemoryService not initialized. Check omnimem config.",
-        })
+        return json.dumps(
+            {
+                "status": "unavailable",
+                "reason": "ActionMemoryService not initialized. Check omnimem config.",
+            }
+        )
 
     try:
         record = ActionRecord.from_args(args)
         mid = provider._action_memory.record_action(record)
 
         # ★ OPT: 记录行为溯源链
-        if hasattr(provider, '_trace_chain') and provider._trace_chain:
+        if hasattr(provider, "_trace_chain") and provider._trace_chain:
             try:
                 provider._trace_chain.record_derivation(
                     parent_node_ids=[f"action-{provider._session_id}-{record.turn_index or 0}"],
@@ -57,17 +59,22 @@ def handle_record_action(provider: Any, args: dict[str, Any]) -> str:
             except Exception as e:
                 logger.warning("TraceChain record_action failed: %s", e)
 
-        return json.dumps({
-            "status": "stored",
-            "action_id": record.action_id,
-            "memory_id": mid,
-            "action_type": record.action_type,
-            "outcome": record.outcome,
-        }, ensure_ascii=False)
+        return json.dumps(
+            {
+                "status": "stored",
+                "action_id": record.action_id,
+                "memory_id": mid,
+                "action_type": record.action_type,
+                "outcome": record.outcome,
+            },
+            ensure_ascii=False,
+        )
 
     except Exception as e:
         logger.warning("omni_record_action failed: %s", e)
-        return json.dumps({
-            "status": "error",
-            "reason": str(e),
-        })
+        return json.dumps(
+            {
+                "status": "error",
+                "reason": str(e),
+            }
+        )

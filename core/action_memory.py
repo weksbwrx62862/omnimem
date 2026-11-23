@@ -27,17 +27,17 @@ class ActionRecord:
     """一次 Agent 行为（工具调用 / 决策 / 子代理创建）的结构化记录。"""
 
     action_id: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
-    parent_task_id: str = ""         # 所属任务 ID
-    agent_role: str = "leaf"         # 执行者角色: leaf / orchestrator / reviewer
-    action_type: str = "tool_call"   # tool_call / decision / spawn / error_handling
-    tool_name: str = ""              # 工具名（action_type=tool_call 时）
-    tool_args_summary: str = ""      # 参数摘要（脱敏截断）
-    tool_result_summary: str = ""    # 结果摘要
-    decision_rationale: str = ""     # 决策理由（为什么要这么做）
-    outcome: str = "unknown"         # success / failure / partial / unknown
-    lesson_learned: str = ""         # 从这次行为中学到的教训
-    duration_ms: int = 0             # 执行耗时（毫秒）
-    turn_index: int = 0              # 发生在第几轮迭代
+    parent_task_id: str = ""  # 所属任务 ID
+    agent_role: str = "leaf"  # 执行者角色: leaf / orchestrator / reviewer
+    action_type: str = "tool_call"  # tool_call / decision / spawn / error_handling
+    tool_name: str = ""  # 工具名（action_type=tool_call 时）
+    tool_args_summary: str = ""  # 参数摘要（脱敏截断）
+    tool_result_summary: str = ""  # 结果摘要
+    decision_rationale: str = ""  # 决策理由（为什么要这么做）
+    outcome: str = "unknown"  # success / failure / partial / unknown
+    lesson_learned: str = ""  # 从这次行为中学到的教训
+    duration_ms: int = 0  # 执行耗时（毫秒）
+    turn_index: int = 0  # 发生在第几轮迭代
     timestamp: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
     def to_content(self) -> str:
@@ -99,7 +99,7 @@ class ActionRecord:
     def _truncate(text: str, max_len: int) -> str:
         if len(text) <= max_len:
             return text
-        return text[:max_len - 3] + "..."
+        return text[: max_len - 3] + "..."
 
     @staticmethod
     def from_memory_entry(entry: dict[str, Any]) -> ActionRecord | None:
@@ -138,8 +138,15 @@ class ActionRecord:
 class ActionMemoryService:
     """Agent 行为记忆的读写查询服务。"""
 
-    def __init__(self, store: Any, index: Any, retriever: Any,
-                 wing_room: Any, provenance: Any, forgetting: Any) -> None:
+    def __init__(
+        self,
+        store: Any,
+        index: Any,
+        retriever: Any,
+        wing_room: Any,
+        provenance: Any,
+        forgetting: Any,
+    ) -> None:
         self._store = store
         self._index = index
         self._retriever = retriever
@@ -240,12 +247,14 @@ class ActionMemoryService:
         for f in failures:
             lesson = f.lesson_learned or self._auto_extract_lesson(f)
             if lesson:
-                lessons.append({
-                    "tool": f.tool_name,
-                    "error": f.tool_result_summary,
-                    "lesson": lesson,
-                    "task_id": f.parent_task_id,
-                })
+                lessons.append(
+                    {
+                        "tool": f.tool_name,
+                        "error": f.tool_result_summary,
+                        "lesson": lesson,
+                        "task_id": f.parent_task_id,
+                    }
+                )
         return lessons
 
     # ── 内部方法 ──
