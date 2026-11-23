@@ -3,12 +3,14 @@ from __future__ import annotations
 import functools
 import logging
 import threading
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
 _warned: set[str] = set()
 _warn_lock = threading.Lock()
+
 
 def experimental(func: Callable[..., Any]) -> Callable[..., Any]:
     _original_doc = func.__doc__ or ""
@@ -20,9 +22,7 @@ def experimental(func: Callable[..., Any]) -> Callable[..., Any]:
         with _warn_lock:
             if key not in _warned:
                 _warned.add(key)
-                logger.warning(
-                    "%s is experimental, API may change without notice", key
-                )
+                logger.warning("%s is experimental, API may change without notice", key)
         return func(*args, **kwargs)
 
     return wrapper
@@ -40,9 +40,7 @@ def experimental_class(cls: type) -> type:
         with _warn_lock:
             if key not in _warned:
                 _warned.add(key)
-                logger.warning(
-                    "%s is experimental, API may change without notice", key
-                )
+                logger.warning("%s is experimental, API may change without notice", key)
         original_init(self, *args, **kwargs)
 
     cls.__init__ = new_init

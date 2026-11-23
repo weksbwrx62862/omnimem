@@ -10,7 +10,6 @@ logger = logging.getLogger(__name__)
 
 
 class SemanticDedupService:
-
     def __init__(self, store, retriever):
         self._store = store
         self._retriever = retriever

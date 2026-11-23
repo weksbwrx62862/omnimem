@@ -10,7 +10,6 @@ from omnimem.benchmarks.fullstack_benchmark import FullStackBenchmark
 
 
 class TestFullStackBenchmark(unittest.TestCase):
-
     def test_runs_without_error(self) -> None:
         bm = FullStackBenchmark(tempfile.mkdtemp())
         results = bm.run_all()

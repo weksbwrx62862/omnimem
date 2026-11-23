@@ -6,23 +6,21 @@
 
 from __future__ import annotations
 
-import json
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 from omnimem.governance.audit_log import AuditLogger
 from omnimem.governance.kms import KMSManager
 from omnimem.governance.rbac import RBACManager
 
-
 # ──────────────────────────────────────────────
 # AuditLogger
 # ──────────────────────────────────────────────
 
-class TestAuditLogger(unittest.TestCase):
 
+class TestAuditLogger(unittest.TestCase):
     def setUp(self) -> None:
         self.tmpdir = tempfile.mkdtemp()
         self.gov_dir = Path(self.tmpdir) / "governance"
@@ -56,6 +54,7 @@ class TestAuditLogger(unittest.TestCase):
 
     def test_query_time_filter(self) -> None:
         import time
+
         before = time.time()
         self.audit.log("write", memory_id="m1")
         after = time.time()
@@ -89,8 +88,8 @@ class TestAuditLogger(unittest.TestCase):
 # KMSManager
 # ──────────────────────────────────────────────
 
-class TestKMSManager(unittest.TestCase):
 
+class TestKMSManager(unittest.TestCase):
     def setUp(self) -> None:
         self.tmpdir = tempfile.mkdtemp()
         self.gov_dir = Path(self.tmpdir) / "governance"
@@ -133,6 +132,7 @@ class TestKMSManager(unittest.TestCase):
 
     def test_aws_kms_fallback_to_local(self) -> None:
         import sys
+
         mock_boto3 = MagicMock()
         mock_boto3.client.side_effect = RuntimeError("AWS not available")
         with patch.dict(sys.modules, {"boto3": mock_boto3}):
@@ -151,8 +151,9 @@ class TestKMSManager(unittest.TestCase):
 
     def test_gcp_fallback_to_local(self) -> None:
         kms = KMSManager(self.gov_dir)
-        kms.configure_provider("gcp", gcp_project_id="fake-project",
-                               gcp_location="global", gcp_key_ring="fake-ring")
+        kms.configure_provider(
+            "gcp", gcp_project_id="fake-project", gcp_location="global", gcp_key_ring="fake-ring"
+        )
         key = kms.get_encryption_key("gcp-fallback")
         self.assertIsInstance(key, bytes)
         self.assertGreater(len(key), 10)
@@ -162,8 +163,8 @@ class TestKMSManager(unittest.TestCase):
 # RBACManager
 # ──────────────────────────────────────────────
 
-class TestRBACManager(unittest.TestCase):
 
+class TestRBACManager(unittest.TestCase):
     def setUp(self) -> None:
         self.tmpdir = tempfile.mkdtemp()
         self.gov_dir = Path(self.tmpdir) / "governance"

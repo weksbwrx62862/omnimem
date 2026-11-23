@@ -21,6 +21,7 @@ logger = logging.getLogger(__name__)
 
 class LongMemEvalCapability(str, Enum):
     """LongMemEval 能力维度枚举。"""
+
     INFORMATION_EXTRACTION = "information_extraction"
     MULTI_SESSION_REASONING = "multi_session_reasoning"
     TEMPORAL_REASONING = "temporal_reasoning"
@@ -31,6 +32,7 @@ class LongMemEvalCapability(str, Enum):
 @dataclass
 class LongMemEvalQuestion:
     """LongMemEval 单条问题数据。"""
+
     question_id: str
     question: str
     answer: str
@@ -41,6 +43,7 @@ class LongMemEvalQuestion:
 @dataclass
 class LongMemEvalDataset:
     """LongMemEval 数据集容器。"""
+
     questions: list[LongMemEvalQuestion] = field(default_factory=list)
     name: str = "longmemeval"
 
@@ -67,7 +70,7 @@ class LongMemEvalDataset:
             raise FileNotFoundError(f"LongMemEval 数据集文件不存在: {path}")
 
         try:
-            with open(path, "r", encoding="utf-8") as f:
+            with open(path, encoding="utf-8") as f:
                 data = json.load(f)
         except json.JSONDecodeError as e:
             raise ValueError(f"LongMemEval 数据集 JSON 解析失败: {e}") from e
@@ -79,17 +82,20 @@ class LongMemEvalDataset:
             except ValueError:
                 logger.warning(
                     "跳过未知能力维度 '%s' (question_id=%s)",
-                    item.get("capability"), item.get("question_id"),
+                    item.get("capability"),
+                    item.get("question_id"),
                 )
                 continue
 
-            questions.append(LongMemEvalQuestion(
-                question_id=item["question_id"],
-                question=item["question"],
-                answer=item["answer"],
-                capability=cap,
-                evidence_ids=item.get("evidence_ids", []),
-            ))
+            questions.append(
+                LongMemEvalQuestion(
+                    question_id=item["question_id"],
+                    question=item["question"],
+                    answer=item["answer"],
+                    capability=cap,
+                    evidence_ids=item.get("evidence_ids", []),
+                )
+            )
 
         if not questions:
             raise ValueError("LongMemEval 数据集为空或所有问题的能力维度均无效")
@@ -108,8 +114,7 @@ class LongMemEvalDataset:
             from datasets import load_dataset
         except ImportError:
             raise ImportError(
-                "加载 HuggingFace 数据集需要 datasets 库，"
-                "请安装: pip install datasets"
+                "加载 HuggingFace 数据集需要 datasets 库，请安装: pip install datasets"
             )
 
         try:
@@ -125,15 +130,19 @@ class LongMemEvalDataset:
             except ValueError:
                 cap = LongMemEvalCapability.INFORMATION_EXTRACTION
 
-            questions.append(LongMemEvalQuestion(
-                question_id=item.get("question_id", f"hf-{idx:04d}"),
-                question=item["question"],
-                answer=item.get("answer", ""),
-                capability=cap,
-                evidence_ids=item.get("evidence_ids", []),
-            ))
+            questions.append(
+                LongMemEvalQuestion(
+                    question_id=item.get("question_id", f"hf-{idx:04d}"),
+                    question=item["question"],
+                    answer=item.get("answer", ""),
+                    capability=cap,
+                    evidence_ids=item.get("evidence_ids", []),
+                )
+            )
 
-        logger.info("LongMemEval 数据集从 HuggingFace 加载完成: %d 道题目, split=%s", len(questions), split)
+        logger.info(
+            "LongMemEval 数据集从 HuggingFace 加载完成: %d 道题目, split=%s", len(questions), split
+        )
         return cls(questions=questions, name=f"longmemeval_hf_{split}")
 
 
@@ -194,7 +203,9 @@ class LongMemEvalEvaluator:
         logger.warning("LongMemEvalEvaluator: 无法初始化 Judge LLM 客户端，将使用关键词匹配")
         return None
 
-    def _judge_answer(self, prediction: str, gold_answer: str, capability: LongMemEvalCapability) -> bool:
+    def _judge_answer(
+        self, prediction: str, gold_answer: str, capability: LongMemEvalCapability
+    ) -> bool:
         """使用 LLM-as-Judge 判断预测答案是否正确。"""
         if not prediction.strip():
             return False
@@ -223,8 +234,16 @@ class LongMemEvalEvaluator:
     def _judge_refusal(self, prediction: str, gold_answer: str) -> bool:
         """评估拒绝类问题：预测答案应合理拒绝回答。"""
         refusal_indicators = [
-            "不知道", "无法", "不能", "没有", "不确定",
-            "don't know", "cannot", "unable", "not sure", "no information",
+            "不知道",
+            "无法",
+            "不能",
+            "没有",
+            "不确定",
+            "don't know",
+            "cannot",
+            "unable",
+            "not sure",
+            "no information",
         ]
         pred_lower = prediction.lower()
         has_refusal = any(ind in pred_lower for ind in refusal_indicators)
@@ -236,7 +255,7 @@ class LongMemEvalEvaluator:
             f"标准答案: {gold_answer}\n"
             f"预测答案: {prediction}\n\n"
             f"这是一个拒绝类问题，预测答案是否合理地表示无法回答？"
-            f"只回答 \"correct\" 或 \"incorrect\"。"
+            f'只回答 "correct" 或 "incorrect"。'
         )
         try:
             result = self._llm_client.call_sync(
@@ -299,19 +318,23 @@ class LongMemEvalEvaluator:
 
         for i, q in enumerate(dataset.questions):
             prediction, latency_ms, token_count = self._recall_question(q.question)
-            is_correct = self._judge_answer(prediction, q.answer, q.capability) if prediction else False
+            is_correct = (
+                self._judge_answer(prediction, q.answer, q.capability) if prediction else False
+            )
 
-            results.append({
-                "question_id": q.question_id,
-                "capability": q.capability.value,
-                "question": q.question,
-                "gold_answer": q.answer,
-                "prediction": prediction[:500],
-                "is_correct": is_correct,
-                "latency_ms": round(latency_ms, 3),
-                "token_count": token_count,
-                "evidence_ids": q.evidence_ids,
-            })
+            results.append(
+                {
+                    "question_id": q.question_id,
+                    "capability": q.capability.value,
+                    "question": q.question,
+                    "gold_answer": q.answer,
+                    "prediction": prediction[:500],
+                    "is_correct": is_correct,
+                    "latency_ms": round(latency_ms, 3),
+                    "token_count": token_count,
+                    "evidence_ids": q.evidence_ids,
+                }
+            )
 
             if (i + 1) % 10 == 0 or (i + 1) == total:
                 logger.info("LongMemEval 评估进度: %d/%d", i + 1, total)
@@ -338,9 +361,7 @@ class LongMemEvalEvaluator:
                 "avg_token_count": 0.0,
             }
 
-        cap_stats: dict[str, list[bool]] = {
-            c.value: [] for c in LongMemEvalCapability
-        }
+        cap_stats: dict[str, list[bool]] = {c.value: [] for c in LongMemEvalCapability}
         latencies: list[float] = []
         token_counts: list[int] = []
 
@@ -373,9 +394,7 @@ class LongMemEvalEvaluator:
             "knowledge_update_accuracy": round(
                 _cap_accuracy(LongMemEvalCapability.KNOWLEDGE_UPDATE.value), 4
             ),
-            "refusal_accuracy": round(
-                _cap_accuracy(LongMemEvalCapability.REFUSAL.value), 4
-            ),
+            "refusal_accuracy": round(_cap_accuracy(LongMemEvalCapability.REFUSAL.value), 4),
             "avg_latency_ms": round(sum(latencies) / len(latencies), 3),
             "avg_token_count": round(sum(token_counts) / len(token_counts), 1),
         }

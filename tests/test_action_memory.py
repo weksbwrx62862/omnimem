@@ -6,12 +6,11 @@ import json
 import unittest
 from unittest.mock import MagicMock
 
-from omnimem.core.action_memory import ActionRecord, ActionMemoryService
+from omnimem.core.action_memory import ActionMemoryService, ActionRecord
 from omnimem.handlers.record_action import handle_record_action
 
 
 class TestActionRecord(unittest.TestCase):
-
     def test_basic_record(self) -> None:
         rec = ActionRecord(
             action_type="tool_call",
@@ -25,25 +24,29 @@ class TestActionRecord(unittest.TestCase):
         self.assertIn("success", content)
 
     def test_from_args(self) -> None:
-        rec = ActionRecord.from_args({
-            "action_type": "tool_call",
-            "tool_name": "web_search",
-            "outcome": "failure",
-            "tool_result_summary": "network timeout",
-            "lesson_learned": "需要增加重试逻辑",
-            "parent_task_id": "task-001",
-            "duration_ms": 1500,
-        })
+        rec = ActionRecord.from_args(
+            {
+                "action_type": "tool_call",
+                "tool_name": "web_search",
+                "outcome": "failure",
+                "tool_result_summary": "network timeout",
+                "lesson_learned": "需要增加重试逻辑",
+                "parent_task_id": "task-001",
+                "duration_ms": 1500,
+            }
+        )
         self.assertEqual(rec.outcome, "failure")
         self.assertEqual(rec.duration_ms, 1500)
         self.assertEqual(rec.parent_task_id, "task-001")
 
     def test_from_args_truncation(self) -> None:
-        rec = ActionRecord.from_args({
-            "action_type": "decision",
-            "tool_args_summary": "A" * 300,
-            "tool_result_summary": "B" * 400,
-        })
+        rec = ActionRecord.from_args(
+            {
+                "action_type": "decision",
+                "tool_args_summary": "A" * 300,
+                "tool_result_summary": "B" * 400,
+            }
+        )
         self.assertLessEqual(len(rec.tool_args_summary), 200)
         self.assertLessEqual(len(rec.tool_result_summary), 300)
 
@@ -63,12 +66,14 @@ class TestActionRecord(unittest.TestCase):
             "memory_id": "act-001",
             "type": "action",
             "stored_at": "2026-01-01T00:00:00Z",
-            "metadata": json.dumps({
-                "action_type": "tool_call",
-                "tool_name": "browser_navigate",
-                "outcome": "success",
-                "agent_role": "leaf",
-            }),
+            "metadata": json.dumps(
+                {
+                    "action_type": "tool_call",
+                    "tool_name": "browser_navigate",
+                    "outcome": "success",
+                    "agent_role": "leaf",
+                }
+            ),
         }
         rec = ActionRecord.from_memory_entry(entry)
         self.assertIsNotNone(rec)
@@ -80,7 +85,6 @@ class TestActionRecord(unittest.TestCase):
 
 
 class TestActionMemoryService(unittest.TestCase):
-
     def setUp(self) -> None:
         self.store = MagicMock()
         self.store.add = MagicMock(return_value="act-test-001")
@@ -95,8 +99,12 @@ class TestActionMemoryService(unittest.TestCase):
         self.forgetting = MagicMock()
 
         self.svc = ActionMemoryService(
-            self.store, self.index, self.retriever,
-            self.wing_room, self.provenance, self.forgetting,
+            self.store,
+            self.index,
+            self.retriever,
+            self.wing_room,
+            self.provenance,
+            self.forgetting,
         )
 
     def test_record_action(self) -> None:
@@ -122,23 +130,27 @@ class TestActionMemoryService(unittest.TestCase):
                 "memory_id": "act-1",
                 "type": "action",
                 "stored_at": "2026-01-01T00:00:00Z",
-                "metadata": json.dumps({
-                    "action_type": "tool_call",
-                    "tool_name": "web_search",
-                    "outcome": "success",
-                    "parent_task_id": "task-001",
-                }),
+                "metadata": json.dumps(
+                    {
+                        "action_type": "tool_call",
+                        "tool_name": "web_search",
+                        "outcome": "success",
+                        "parent_task_id": "task-001",
+                    }
+                ),
             },
             {
                 "memory_id": "act-2",
                 "type": "action",
                 "stored_at": "2026-01-01T00:01:00Z",
-                "metadata": json.dumps({
-                    "action_type": "tool_call",
-                    "tool_name": "patch",
-                    "outcome": "failure",
-                    "parent_task_id": "task-001",
-                }),
+                "metadata": json.dumps(
+                    {
+                        "action_type": "tool_call",
+                        "tool_name": "patch",
+                        "outcome": "failure",
+                        "parent_task_id": "task-001",
+                    }
+                ),
             },
         ]
         results = self.svc.query_actions(parent_task_id="task-001")
@@ -151,16 +163,26 @@ class TestActionMemoryService(unittest.TestCase):
         ]
         self.store.get.side_effect = [
             {
-                "memory_id": "act-1", "type": "action",
-                "stored_at": "", "metadata": json.dumps({
-                    "outcome": "success", "tool_name": "a",
-                }),
+                "memory_id": "act-1",
+                "type": "action",
+                "stored_at": "",
+                "metadata": json.dumps(
+                    {
+                        "outcome": "success",
+                        "tool_name": "a",
+                    }
+                ),
             },
             {
-                "memory_id": "act-2", "type": "action",
-                "stored_at": "", "metadata": json.dumps({
-                    "outcome": "failure", "tool_name": "b",
-                }),
+                "memory_id": "act-2",
+                "type": "action",
+                "stored_at": "",
+                "metadata": json.dumps(
+                    {
+                        "outcome": "failure",
+                        "tool_name": "b",
+                    }
+                ),
             },
         ]
         failures = self.svc.query_actions(outcome="failure")
@@ -174,18 +196,30 @@ class TestActionMemoryService(unittest.TestCase):
         ]
         self.store.get.side_effect = [
             {
-                "memory_id": "act-3", "type": "action",
-                "stored_at": "", "metadata": json.dumps({
-                    "parent_task_id": "t", "turn_index": 2,
-                    "tool_name": "step2", "outcome": "success",
-                }),
+                "memory_id": "act-3",
+                "type": "action",
+                "stored_at": "",
+                "metadata": json.dumps(
+                    {
+                        "parent_task_id": "t",
+                        "turn_index": 2,
+                        "tool_name": "step2",
+                        "outcome": "success",
+                    }
+                ),
             },
             {
-                "memory_id": "act-1", "type": "action",
-                "stored_at": "", "metadata": json.dumps({
-                    "parent_task_id": "t", "turn_index": 1,
-                    "tool_name": "step1", "outcome": "success",
-                }),
+                "memory_id": "act-1",
+                "type": "action",
+                "stored_at": "",
+                "metadata": json.dumps(
+                    {
+                        "parent_task_id": "t",
+                        "turn_index": 1,
+                        "tool_name": "step1",
+                        "outcome": "success",
+                    }
+                ),
             },
         ]
         chain = self.svc.get_task_chain("t")
@@ -222,13 +256,17 @@ class TestActionMemoryService(unittest.TestCase):
         ]
         self.store.get.side_effect = [
             {
-                "memory_id": "fail-1", "type": "action",
-                "stored_at": "", "metadata": json.dumps({
-                    "outcome": "failure",
-                    "tool_name": "browser_navigate",
-                    "tool_result_summary": "Connection timed out",
-                    "parent_task_id": "task-x",
-                }),
+                "memory_id": "fail-1",
+                "type": "action",
+                "stored_at": "",
+                "metadata": json.dumps(
+                    {
+                        "outcome": "failure",
+                        "tool_name": "browser_navigate",
+                        "tool_result_summary": "Connection timed out",
+                        "parent_task_id": "task-x",
+                    }
+                ),
             },
         ]
         lessons = self.svc.learn_from_failures()
@@ -237,25 +275,34 @@ class TestActionMemoryService(unittest.TestCase):
 
 
 class TestHandleRecordAction(unittest.TestCase):
-
     def setUp(self) -> None:
         self.provider = MagicMock()
         self.provider._action_memory = MagicMock()
         self.provider._action_memory.record_action.return_value = "mem-001"
 
     def test_basic_record(self) -> None:
-        result = json.loads(handle_record_action(self.provider, {
-            "action_type": "tool_call",
-            "tool_name": "search_files",
-            "outcome": "success",
-        }))
+        result = json.loads(
+            handle_record_action(
+                self.provider,
+                {
+                    "action_type": "tool_call",
+                    "tool_name": "search_files",
+                    "outcome": "success",
+                },
+            )
+        )
         self.assertEqual(result["status"], "stored")
         self.assertEqual(result["memory_id"], "mem-001")
 
     def test_unavailable(self) -> None:
         provider = MagicMock()
         provider._action_memory = None
-        result = json.loads(handle_record_action(provider, {
-            "action_type": "tool_call",
-        }))
+        result = json.loads(
+            handle_record_action(
+                provider,
+                {
+                    "action_type": "tool_call",
+                },
+            )
+        )
         self.assertEqual(result["status"], "unavailable")

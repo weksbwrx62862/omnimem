@@ -149,7 +149,6 @@ class TestDrawerClosetStore(unittest.TestCase):
 
 
 class TestDrawerClosetEdgeCases(unittest.TestCase):
-
     def setUp(self) -> None:
         self.tmpdir = tempfile.mkdtemp()
         self.store = DrawerClosetStore(Path(self.tmpdir))
